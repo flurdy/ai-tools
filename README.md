@@ -39,3 +39,8 @@ docs/
 
 These scripts are extracted from my own environment, so they intentionally keep some local workflow assumptions. The per-tool READMEs call those out where they matter.
 
+## Author
+
+Created and maintained by [Ivar Abrahamsen](https://flurdy.com) / [@flurdy](https://github.com/flurdy).
+
+PRs, issues, forks, and adaptations are welcome. These tools are personal and opinionated, but shared in case they are useful as-is or as a starting point.
