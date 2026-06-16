@@ -47,5 +47,5 @@ Picker keys:
 - Requires `bash`, `git`, and `fzf`.
 - Uses `gh` when available to show cached PR state.
 - Uses `~/.claude/skills/handoffs/scripts/list.sh` when the handoffs skill is installed.
+- Shows handoffs owned by the current repo as separate rows and starts a fresh Claude session seeded with the selected handoff note.
 - `cl-mkworktree` has a local fallback parent of `../claude-blc-2/worktrees`; edit that before using it outside my layout.
-
