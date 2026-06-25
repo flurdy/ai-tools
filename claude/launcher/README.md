@@ -40,6 +40,7 @@ Picker keys:
 - `ctrl-n`: force new session
 - `ctrl-r`: resume picker
 - `ctrl-f`: continue and fork session
+- `ctrl-w`: start the row in a fresh worktree (prompts for a branch; a handoff row also seeds its note)
 
 ## Runtime Assumptions
 
