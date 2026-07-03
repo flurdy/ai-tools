@@ -271,6 +271,8 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					effort: effort ? theme.fg("accent", effort) : "",
 					bars: `${bar(usage.ctxPct, 3, 20, 50, colors)} ${bar((usage.input / Math.max(usage.ctxMax, 1)) * 100, 3, 60, 80, colors)} ${bar((usage.output / Math.max(usage.ctxMax, 1)) * 100, 3, 60, 80, colors)}`,
 					ctx: `${bar(usage.ctxPct, 6, 20, 50, colors)} ${theme.fg("dim", "ctx")}`,
+					inputBar: `${bar((usage.input / Math.max(usage.ctxMax, 1)) * 100, 6, 60, 80, colors)} ${theme.fg("dim", "in")}`,
+					outputBar: `${bar((usage.output / Math.max(usage.ctxMax, 1)) * 100, 6, 60, 80, colors)} ${theme.fg("dim", "out")}`,
 					tokens: theme.fg("dim", `↑${fmtNumber(usage.input)} ↓${fmtNumber(usage.output)}`),
 					cache: usage.cacheRead || usage.cacheWrite ? theme.fg("dim", `R${fmtNumber(usage.cacheRead)} W${fmtNumber(usage.cacheWrite)}`) : "",
 					cost: theme.fg("success", `$${usage.cost.toFixed(2)}`),
@@ -302,7 +304,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const s = segments();
 				const border = (text: string) => theme.fg("border", text);
 				let row1 = [s.host, s.path, s.repo, s.branch, s.pr].filter(Boolean);
-				const row2 = [s.model, s.effort, s.ctx, s.tokens, s.cache, s.cost, s.duration, s.clock].filter(Boolean);
+				const row2 = [s.model, s.effort, s.ctx, s.inputBar, s.outputBar, s.tokens, s.cache, s.cost, s.duration, s.clock].filter(Boolean);
 
 				function widthsFor(cells: string[]): number[] {
 					return cells.map((cell) => visibleWidth(cell) + 2);
