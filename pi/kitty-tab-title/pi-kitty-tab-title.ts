@@ -38,11 +38,11 @@ function run(command: string, args: string[], cwd?: string): string {
 function getGitInfo(cwd: string): GitInfo {
 	const root = run("git", ["rev-parse", "--show-toplevel"], cwd);
 	const branch = run("git", ["branch", "--show-current"], cwd);
-	if (!root) return { repo: basename(cwd) || DEFAULT_REPO, branch: "", mark: "󰉋" };
+	if (!root) return { repo: basename(cwd) || DEFAULT_REPO, branch: "", mark: "π·󰉋" };
 
 	const commonDir = run("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd);
 	const repo = commonDir ? basename(dirname(commonDir)) : basename(root);
-	return { repo: repo || DEFAULT_REPO, branch, mark: "" };
+	return { repo: repo || DEFAULT_REPO, branch, mark: "π·" };
 }
 
 function shortBranch(branch: string): string {
