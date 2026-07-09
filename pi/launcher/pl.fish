@@ -26,6 +26,22 @@ function pl --description 'Pi launcher: pick a context (main/worktree/handoff/ne
         end
     end
 
+    # not a repo (e.g. a workspace dir of symlinked repos): there is no repo to
+    # build the worktree/handoff menu from — just launch pi here instead.
+    if not command git rev-parse --git-dir >/dev/null 2>&1
+        echo "pl: not a git repo — launching pi here" >&2
+        set -l pargs
+        test -n "$model"; and set pargs $pargs --model $model
+        test -n "$thinking"; and set pargs $pargs --thinking $thinking
+        test -n "$name"; and set pargs $pargs --name $name
+        if test $dry -eq 1
+            echo "pi $pargs   # from "(pwd)
+            return 0
+        end
+        command pi $pargs
+        return
+    end
+
     set -l desc (command $bin/pl-gather)
     or return 1
     set -l parts (string split \t -- $desc[1])

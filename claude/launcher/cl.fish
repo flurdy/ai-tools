@@ -23,6 +23,21 @@ function cl --description 'Claude launcher: pick a context (main/worktree/handof
         end
     end
 
+    # not a repo (e.g. a workspace dir of symlinked repos): there is no repo to
+    # build the worktree/handoff menu from — just launch claude here instead.
+    if not command git rev-parse --git-dir >/dev/null 2>&1
+        echo "cl: not a git repo — launching claude here" >&2
+        set -l cargs
+        test $chrome -eq 1; and set cargs $cargs --chrome
+        test -n "$model"; and set cargs $cargs --model $model
+        if test $dry -eq 1
+            echo "claude $cargs   # from "(pwd)
+            return 0
+        end
+        command claude $cargs
+        return
+    end
+
     set -l desc (command $bin/cl-gather)
     or return 1
     set -l parts (string split \t -- $desc[1])
