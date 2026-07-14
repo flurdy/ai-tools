@@ -284,6 +284,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const usage = getUsage(ctx);
 				const provider = shortProvider(ctx.model?.provider);
 				const model = shortModel(ctx.model?.id ?? "no-model");
+				const sessionName = pi.getSessionName();
 				const effort = thinking ? `⚡${thinking === "high" ? "Hi" : thinking === "medium" ? "Md" : thinking.slice(0, 2)}` : "";
 				const status = `${git.dirty ? "●" : ""}${git.untracked ? "…" : ""}${git.staged ? "✚" : ""}`;
 				const contextPct = Math.max(0, Math.min(100, Math.round(usage.ctxPct)));
@@ -297,6 +298,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					host: theme.fg("accent", `▣ ${hostname().split(".")[0]}`),
 					model: theme.fg("success", theme.bold(`${provider} ${model}`)),
 					effort: effort ? theme.fg("accent", effort) : "",
+					session: sessionName ? theme.fg("accent", `◈ ${truncateToWidth(sessionName, 24, "…")}`) : "",
 					bars: `${bar(usage.ctxPct, 3, 34, 67, colors)} ${theme.fg("dim", `ctx ${contextPct}%`)}`,
 					ctx: `${bar(usage.ctxPct, 6, 34, 67, colors)} ${theme.fg("dim", `ctx ${contextPct}%`)}`,
 					tokens: theme.fg("dim", `↑${fmtNumber(usage.input)} ↓${fmtNumber(usage.output)}${cache ? ` · ${cache}` : ""}`),
@@ -315,20 +317,20 @@ export default function piStatusline(pi: ExtensionAPI): void {
 
 			function compact(width: number): string[] {
 				const s = segments();
-				let cells = [s.clock, joinCells([s.model, s.effort]), s.bars, s.duration, s.path, s.repo, s.branch, s.pr].filter(Boolean);
+				let cells = [s.clock, joinCells([s.model, s.effort]), s.bars, s.duration, s.path, s.repo, s.branch, s.pr, s.session].filter(Boolean);
 				let line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
-				cells = [joinCells([s.model, s.effort]), s.bars, s.duration, s.repo, s.branch, s.pr].filter(Boolean);
+				cells = [joinCells([s.model, s.effort]), s.bars, s.duration, s.repo, s.branch, s.pr, s.session].filter(Boolean);
 				line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
-				cells = [s.model, s.bars, s.branch].filter(Boolean);
+				cells = [s.model, s.bars, s.branch, s.session].filter(Boolean);
 				return [truncateToWidth(joinCells(cells), width)];
 			}
 
 			function table(width: number): string[] {
 				const s = segments();
 				const border = (text: string) => theme.fg("border", text);
-				let row1 = [s.host, s.path, s.repo, s.branch, s.pr].filter(Boolean);
+				let row1 = [s.host, s.path, s.repo, s.branch, s.pr, s.session].filter(Boolean);
 				const row2 = [s.model, s.effort, s.ctx, s.tokens, s.cost, s.duration, s.clock].filter(Boolean);
 
 				function widthsFor(cells: string[]): number[] {
@@ -350,7 +352,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				// If the on-disk path makes the table too wide, drop only that cell first;
 				// the worktree repo + branch usually carry the more useful context.
 				if (target > width && s.path) {
-					row1 = [s.host, s.repo, s.branch, s.pr].filter(Boolean);
+					row1 = [s.host, s.repo, s.branch, s.pr, s.session].filter(Boolean);
 					row1Widths = widthsFor(row1);
 					target = Math.max(totalWidth(row1Widths), totalWidth(row2Widths));
 				}
