@@ -10,6 +10,7 @@ import modelTierRouter from "./index.ts";
 import {
 	canonicalPath,
 	decideTier,
+	maxThinkingLevel,
 	parseSkillRouting,
 	requiresMeteredConfirmation,
 	selectCandidate,
@@ -39,6 +40,7 @@ model-tier: premium-review
 model-cost-policy: deliberate-premium
 model-metered-policy: ask-above-standard
 model-second-opinion-tier: independent-reasoning
+effort: xhigh
 ---
 Body
 `);
@@ -46,6 +48,7 @@ Body
 			tier: "premium-review",
 			costPolicy: "deliberate-premium",
 			meteredPolicy: "ask-above-standard",
+			effort: "xhigh",
 		});
 	});
 });
@@ -59,6 +62,12 @@ describe("tier decisions", () => {
 
 	it("retains the root route for equal-ranked tiers", () => {
 		assert.equal(decideTier({ tier: "premium-review", rank: 40 }, { tier: "premium-reasoning", rank: 40 }), "retain-equal");
+	});
+
+	it("permits thinking upgrades but not downgrades", () => {
+		assert.equal(maxThinkingLevel("medium", "xhigh"), "xhigh");
+		assert.equal(maxThinkingLevel("high", "low"), "high");
+		assert.equal(maxThinkingLevel("max", "xhigh"), "max");
 	});
 });
 
@@ -185,7 +194,8 @@ interface RouterHarness {
 }
 
 async function createRouterHarness(
-	skills: Record<string, { tier: string; rank: number; configure?: boolean }>,
+	skills: Record<string, { tier: string; rank: number; effort?: string; configure?: boolean; available?: boolean }>,
+	options: { clampThinking?: (requested: string, modelId: string) => string } = {},
 ): Promise<RouterHarness> {
 	const root = mkdtempSync(join(tmpdir(), "model-tier-router-events-"));
 	const cwd = join(root, "project");
@@ -197,7 +207,10 @@ async function createRouterHarness(
 	const tiers: Record<string, unknown> = {};
 	for (const [name, skill] of Object.entries(skills)) {
 		const path = join(skillDir, `${name}.md`);
-		writeFileSync(path, `---\nname: ${name}\ndescription: test\nmodel-tier: ${skill.tier}\n---\nRun ${name}.\n`);
+		writeFileSync(
+			path,
+			`---\nname: ${name}\ndescription: test\nmodel-tier: ${skill.tier}${skill.effort ? `\neffort: ${skill.effort}` : ""}\n---\nRun ${name}.\n`,
+		);
 		commands.push({
 			name: `skill:${name}`,
 			source: "skill",
@@ -219,7 +232,13 @@ async function createRouterHarness(
 	const original = model("provider", "original");
 	let currentModel = original;
 	let thinking = "low";
-	const available = [original, model("provider", "manual"), ...Object.values(skills).map((skill) => model("provider", skill.tier))];
+	const available = [
+		original,
+		model("provider", "manual"),
+		...Object.values(skills)
+			.filter((skill) => skill.available !== false)
+			.map((skill) => model("provider", skill.tier)),
+	];
 	const handlers = new Map<string, EventHandler[]>();
 	const modelSelections: string[] = [];
 	const thinkingSelections: string[] = [];
@@ -255,8 +274,8 @@ async function createRouterHarness(
 		getCommands: () => commands,
 		getThinkingLevel: () => thinking,
 		setThinkingLevel(next: string) {
-			thinking = next;
-			thinkingSelections.push(next);
+			thinking = options.clampThinking?.(next, currentModel.id) ?? next;
+			thinkingSelections.push(thinking);
 		},
 		async setModel(next: Model<Api>) {
 			const previousModel = currentModel;
@@ -309,7 +328,7 @@ async function createRouterHarness(
 
 describe("extension lifecycle", () => {
 	it("stages explicit routing until the expanded skill starts, then restores after settlement", async () => {
-		const harness = await createRouterHarness({ review: { tier: "standard", rank: 20 } });
+		const harness = await createRouterHarness({ review: { tier: "standard", rank: 20, effort: "medium" } });
 		await harness.stageSkill("review");
 		assert.deepEqual(harness.modelSelections, []);
 
@@ -319,7 +338,7 @@ describe("extension lifecycle", () => {
 
 		await harness.emit("agent_settled");
 		assert.deepEqual(harness.modelSelections, ["provider/standard", "provider/original"]);
-		assert.deepEqual(harness.thinkingSelections, ["high", "low"]);
+		assert.deepEqual(harness.thinkingSelections, ["medium", "low"]);
 	});
 
 	it("discards stale routes when a later input handler changes the request", async () => {
@@ -344,6 +363,52 @@ describe("extension lifecycle", () => {
 
 		await harness.emit("agent_settled");
 		assert.equal(harness.ctx.model.id, "original");
+	});
+
+	it("raises nested effort without downgrading the active model or thinking", async () => {
+		const harness = await createRouterHarness({
+			build: { tier: "standard", rank: 30, effort: "medium" },
+			"deep-check": { tier: "cheap", rank: 10, effort: "xhigh" },
+			"quick-check": { tier: "cheap", rank: 10, effort: "low" },
+		});
+		await harness.invokeSkill("build");
+		await harness.invokeSkill("deep-check");
+		await harness.invokeSkill("quick-check");
+
+		assert.deepEqual(harness.modelSelections, ["provider/standard"]);
+		assert.deepEqual(harness.thinkingSelections, ["medium", "xhigh"]);
+		assert.match(harness.notifications.join("\n"), /raised thinking to xhigh for nested deep-check/);
+		assert.equal(harness.ctx.model.id, "standard");
+	});
+
+	it("preserves requested effort across model-specific clamping and later upgrades", async () => {
+		const harness = await createRouterHarness(
+			{
+				deep: { tier: "limited", rank: 20, effort: "xhigh" },
+				upgrade: { tier: "capable", rank: 40, effort: "low" },
+			},
+			{
+				clampThinking: (requested, modelId) => modelId === "limited" && requested === "xhigh" ? "high" : requested,
+			},
+		);
+		await harness.invokeSkill("deep");
+		await harness.invokeSkill("upgrade");
+
+		assert.deepEqual(harness.modelSelections, ["provider/limited", "provider/capable"]);
+		assert.deepEqual(harness.thinkingSelections, ["high", "xhigh"]);
+	});
+
+	it("raises effort even when a higher-tier model is unavailable", async () => {
+		const harness = await createRouterHarness({
+			build: { tier: "standard", rank: 30, effort: "medium" },
+			audit: { tier: "unavailable", rank: 40, effort: "xhigh", available: false },
+		});
+		await harness.invokeSkill("build");
+		await harness.invokeSkill("audit");
+
+		assert.deepEqual(harness.modelSelections, ["provider/standard"]);
+		assert.deepEqual(harness.thinkingSelections, ["medium", "xhigh"]);
+		assert.equal(harness.ctx.model.id, "standard");
 	});
 
 	it("does not route nested skills after a manual model selection", async () => {

@@ -7,6 +7,7 @@ import {
 	canonicalPath,
 	decideTier,
 	findExactModel,
+	maxThinkingLevel,
 	parseSkillRouting,
 	requiresMeteredConfirmation,
 	selectCandidate,
@@ -22,6 +23,8 @@ interface RunState {
 	originalThinking: ThinkingLevel;
 	activeTier: string;
 	activeRank: number;
+	requestedThinking: ThinkingLevel;
+	activeThinking: ThinkingLevel;
 	routedSkills: string[];
 	manualModelOverride: boolean;
 	restorePending: boolean;
@@ -62,7 +65,10 @@ export default function modelTierRouter(pi: ExtensionAPI): void {
 	}
 
 	function updateStatus(ctx: ExtensionContext): void {
-		ctx.ui.setStatus(STATUS_KEY, run ? `tier:${run.activeTier}${run.restorePending ? ":restore-pending" : ""}` : undefined);
+		ctx.ui.setStatus(
+			STATUS_KEY,
+			run ? `tier:${run.activeTier}:thinking:${run.activeThinking}${run.restorePending ? ":restore-pending" : ""}` : undefined,
+		);
 	}
 
 	function reloadConfig(ctx: ExtensionContext): void {
@@ -82,6 +88,20 @@ export default function modelTierRouter(pi: ExtensionAPI): void {
 			warnOnce(ctx, `skill:${path}`, `could not read skill metadata from ${path}: ${error instanceof Error ? error.message : String(error)}`);
 			return undefined;
 		}
+	}
+
+	function raiseRunThinking(state: RunState, requested: ThinkingLevel, skillName: string, ctx: ExtensionContext): void {
+		const previousThinking = pi.getThinkingLevel();
+		state.requestedThinking = maxThinkingLevel(
+			maxThinkingLevel(state.requestedThinking, requested),
+			previousThinking,
+		);
+		if (state.requestedThinking !== previousThinking) pi.setThinkingLevel(state.requestedThinking);
+		state.activeThinking = pi.getThinkingLevel();
+		if (state.activeThinking !== previousThinking) {
+			notify(ctx, `model-tier: raised thinking to ${state.activeThinking} for nested ${skillName}`, "info");
+		}
+		updateStatus(ctx);
 	}
 
 	async function routeSkill(skillName: string, path: string, ctx: ExtensionContext): Promise<void> {
@@ -105,14 +125,17 @@ export default function modelTierRouter(pi: ExtensionAPI): void {
 			return;
 		}
 
+		const requestedThinking = metadata.effort ?? route.thinking;
 		const decision = decideTier(run ? { tier: run.activeTier, rank: run.activeRank } : undefined, {
 			tier: metadata.tier,
 			rank: route.rank,
 		});
 		if (decision === "retain-lower" || decision === "retain-equal") {
-			if (run && !run.routedSkills.includes(skillName)) run.routedSkills.push(skillName);
+			if (!run) return;
+			if (!run.routedSkills.includes(skillName)) run.routedSkills.push(skillName);
+			raiseRunThinking(run, requestedThinking, skillName, ctx);
 			if (decision === "retain-lower") {
-				notify(ctx, `model-tier: retained ${run?.activeTier}; ignored nested ${metadata.tier}`, "info");
+				notify(ctx, `model-tier: retained ${run.activeTier}; ignored nested ${metadata.tier}`, "info");
 			}
 			return;
 		}
@@ -121,12 +144,14 @@ export default function modelTierRouter(pi: ExtensionAPI): void {
 		const candidate = selectCandidate(route, available);
 		const target = candidate ? findExactModel(candidate, available) : undefined;
 		if (!candidate || !target) {
+			if (run) raiseRunThinking(run, requestedThinking, skillName, ctx);
 			warnOnce(ctx, `unavailable:${metadata.tier}`, `no available candidate for ${metadata.tier}; retained ${modelId(ctx.model)}`);
 			return;
 		}
 
 		if (requiresMeteredConfirmation(candidate, metadata)) {
 			if (!ctx.hasUI) {
+				if (run) raiseRunThinking(run, requestedThinking, skillName, ctx);
 				warnOnce(ctx, `metered:${metadata.tier}`, `skipped metered ${candidate.model} for ${metadata.tier} because no confirmation UI is available`);
 				return;
 			}
@@ -136,6 +161,7 @@ export default function modelTierRouter(pi: ExtensionAPI): void {
 				`${skillName} requests ${metadata.tier} → ${candidate.model}${policies ? ` (${policies})` : ""}. Continue?`,
 			);
 			if (!confirmed) {
+				if (run) raiseRunThinking(run, requestedThinking, skillName, ctx);
 				warnOnce(ctx, `metered:${metadata.tier}`, `declined metered ${candidate.model} for ${metadata.tier}`);
 				return;
 			}
@@ -143,15 +169,19 @@ export default function modelTierRouter(pi: ExtensionAPI): void {
 
 		const originalModel = run?.originalModel ?? ctx.model;
 		const originalThinking = run?.originalThinking ?? pi.getThinkingLevel();
+		const selectedThinking = run
+			? maxThinkingLevel(maxThinkingLevel(run.requestedThinking, requestedThinking), pi.getThinkingLevel())
+			: requestedThinking;
 		switchingModel = true;
 		let switched = false;
 		try {
 			switched = await pi.setModel(target);
-			if (switched) pi.setThinkingLevel(route.thinking);
+			if (switched) pi.setThinkingLevel(selectedThinking);
 		} finally {
 			switchingModel = false;
 		}
 		if (!switched) {
+			if (run) raiseRunThinking(run, requestedThinking, skillName, ctx);
 			warnOnce(ctx, `switch:${candidate.model}`, `could not select ${candidate.model}; retained ${modelId(ctx.model)}`);
 			return;
 		}
@@ -162,6 +192,8 @@ export default function modelTierRouter(pi: ExtensionAPI): void {
 				originalThinking,
 				activeTier: metadata.tier,
 				activeRank: route.rank,
+				requestedThinking,
+				activeThinking: pi.getThinkingLevel(),
 				routedSkills: [skillName],
 				manualModelOverride: false,
 				restorePending: false,
@@ -169,6 +201,8 @@ export default function modelTierRouter(pi: ExtensionAPI): void {
 		} else {
 			run.activeTier = metadata.tier;
 			run.activeRank = route.rank;
+			run.requestedThinking = selectedThinking;
+			run.activeThinking = pi.getThinkingLevel();
 			if (!run.routedSkills.includes(skillName)) run.routedSkills.push(skillName);
 		}
 		updateStatus(ctx);
@@ -300,6 +334,8 @@ export default function modelTierRouter(pi: ExtensionAPI): void {
 			const lines = [
 				`enabled: ${isEnabled()}`,
 				`active tier: ${run?.activeTier ?? "(none)"}`,
+				`requested thinking: ${run?.requestedThinking ?? "(none)"}`,
+				`active thinking: ${run?.activeThinking ?? "(none)"}`,
 				`skills: ${run?.routedSkills.join(", ") || "(none)"}`,
 				`selected model: ${modelId(ctx.model)}`,
 				`original model: ${modelId(run?.originalModel)}`,

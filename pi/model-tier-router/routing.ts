@@ -21,6 +21,7 @@ export interface SkillRoutingMetadata {
 	tier?: string;
 	costPolicy?: string;
 	meteredPolicy?: string;
+	effort?: ThinkingLevel;
 }
 
 export interface ActiveTier {
@@ -36,10 +37,20 @@ interface RoutingFrontmatter extends Record<string, unknown> {
 	"model-metered-policy"?: unknown;
 	model?: unknown;
 	"model-second-opinion-tier"?: unknown;
+	effort?: unknown;
 }
+
+const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 function optionalString(value: unknown): string | undefined {
 	return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function optionalThinkingLevel(value: unknown): ThinkingLevel | undefined {
+	const normalized = optionalString(value);
+	return normalized && THINKING_LEVELS.includes(normalized as ThinkingLevel)
+		? (normalized as ThinkingLevel)
+		: undefined;
 }
 
 /** Extract only router-owned metadata. Claude's `model` and second-opinion metadata are intentionally ignored. */
@@ -49,7 +60,12 @@ export function parseSkillRouting(content: string): SkillRoutingMetadata {
 		tier: optionalString(frontmatter["model-tier"]),
 		costPolicy: optionalString(frontmatter["model-cost-policy"]),
 		meteredPolicy: optionalString(frontmatter["model-metered-policy"]),
+		effort: optionalThinkingLevel(frontmatter.effort),
 	};
+}
+
+export function maxThinkingLevel(left: ThinkingLevel, right: ThinkingLevel): ThinkingLevel {
+	return THINKING_LEVELS.indexOf(left) >= THINKING_LEVELS.indexOf(right) ? left : right;
 }
 
 export function decideTier(active: ActiveTier | undefined, requested: ActiveTier): TierDecision {
