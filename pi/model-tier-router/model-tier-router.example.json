@@ -5,7 +5,7 @@
   "tiers": {
     "cheap-bulk": {
       "rank": 10,
-      "thinking": "low",
+      "thinking": "medium",
       "candidates": [{ "model": "provider/cheap-model-id", "metered": false }]
     },
     "standard-workflow": {
