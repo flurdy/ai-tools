@@ -335,10 +335,12 @@ describe("extension lifecycle", () => {
 		await harness.startSkill("review");
 		assert.deepEqual(harness.modelSelections, ["provider/standard"]);
 		assert.equal(harness.ctx.model.id, "standard");
+		assert.match(harness.notifications.join("\n"), /review → standard → provider\/standard \(thinking:medium\)/);
 
 		await harness.emit("agent_settled");
 		assert.deepEqual(harness.modelSelections, ["provider/standard", "provider/original"]);
 		assert.deepEqual(harness.thinkingSelections, ["medium", "low"]);
+		assert.match(harness.notifications.join("\n"), /restored provider\/original \(thinking:low\)/);
 	});
 
 	it("discards stale routes when a later input handler changes the request", async () => {

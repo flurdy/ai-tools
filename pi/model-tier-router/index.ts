@@ -206,7 +206,7 @@ export default function modelTierRouter(pi: ExtensionAPI): void {
 			if (!run.routedSkills.includes(skillName)) run.routedSkills.push(skillName);
 		}
 		updateStatus(ctx);
-		notify(ctx, `model-tier: ${skillName} → ${metadata.tier} → ${candidate.model}`, "info");
+		notify(ctx, `model-tier: ${skillName} → ${metadata.tier} → ${candidate.model} (thinking:${run.activeThinking})`, "info");
 	}
 
 	async function restore(ctx: ExtensionContext, announce: boolean): Promise<void> {
@@ -229,7 +229,7 @@ export default function modelTierRouter(pi: ExtensionAPI): void {
 		}
 		if (restored) {
 			run = undefined;
-			if (announce) notify(ctx, `model-tier: restored ${modelId(state.originalModel)}`, "info");
+			if (announce) notify(ctx, `model-tier: restored ${modelId(state.originalModel)} (thinking:${state.originalThinking})`, "info");
 		} else {
 			state.restorePending = true;
 			notify(ctx, `model-tier: could not restore ${modelId(state.originalModel)}; will retry when the agent next settles`, "warning");
