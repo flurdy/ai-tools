@@ -23,6 +23,16 @@
         }
       ]
     },
+    "long-context-audit": {
+      "rank": 30,
+      "thinking": "high",
+      "candidates": [
+        {
+          "model": "provider/long-context-model-id",
+          "metered": false
+        }
+      ]
+    },
     "premium-reasoning": {
       "rank": 40,
       "thinking": "high",

@@ -65,7 +65,10 @@ describe("candidate selection", () => {
 		const metered = { model: "provider/premium", metered: true };
 		assert.equal(requiresMeteredConfirmation(metered, {}), false);
 		assert.equal(requiresMeteredConfirmation(metered, { meteredPolicy: "ask-above-standard" }), true);
+		assert.equal(requiresMeteredConfirmation(metered, { meteredPolicy: "cap-or-ask" }), true);
+		assert.equal(requiresMeteredConfirmation(metered, { meteredPolicy: "ask-before-metered-panel" }), true);
 		assert.equal(requiresMeteredConfirmation(metered, { costPolicy: "deliberate-premium" }), true);
+		assert.equal(requiresMeteredConfirmation(metered, { meteredPolicy: "never" }), false);
 		assert.equal(requiresMeteredConfirmation({ ...metered, metered: false }, { costPolicy: "deliberate-premium" }), false);
 	});
 

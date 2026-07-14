@@ -25,7 +25,7 @@ cp ./pi/model-tier-router/model-tier-router.example.json \
 $EDITOR ~/.pi/agent/model-tier-router.json
 ```
 
-Candidate order is fallback order. `metered` is local cost knowledge; the router never guesses from provider or authentication details. A metered candidate needs confirmation when the skill declares `model-metered-policy: ask-above-standard` or `model-cost-policy: deliberate-premium`. Such a route is safely skipped when confirmation is required but no UI is available.
+Candidate order is fallback order. `metered` is local cost knowledge; the router never guesses from provider or authentication details. A metered candidate needs confirmation when the skill declares `model-metered-policy: ask-above-standard`, `cap-or-ask`, or `ask-before-metered-panel`, or declares `model-cost-policy: deliberate-premium`. Such a route is safely skipped when confirmation is required but no UI is available.
 
 A trusted project can override top-level options and complete tier entries in:
 
@@ -54,7 +54,7 @@ model-cost-policy: deliberate-premium
 model-metered-policy: ask-above-standard
 ```
 
-The two policy values shown above require confirmation for a metered candidate and are included in its confirmation message. Other or absent policy values do not add a confirmation gate. The router deliberately ignores Claude-specific `model: haiku` and `model-second-opinion-tier`.
+The confirmation policies documented above require confirmation for a metered candidate and are included in its confirmation message. Other or absent policy values do not add a confirmation gate. The router deliberately ignores Claude-specific `model: haiku` and `model-second-opinion-tier`.
 
 Explicit `/skill:name` commands route during Pi's `input` event, before skill expansion. Model-initiated reads route only when the canonical read path exactly matches a skill file Pi loaded for that turn. This includes `SKILL.md` and registered root skill Markdown files without scanning or reimplementing Pi's discovery rules.
 
