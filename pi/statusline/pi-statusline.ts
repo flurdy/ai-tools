@@ -52,11 +52,11 @@ function shortProvider(provider: string | undefined): string {
 		case "openai":
 			return "OpenAI";
 		case "openrouter":
-			return "OpenRouter";
+			return "OR";
 		case "github-copilot":
 			return "Copilot";
 		case "anthropic":
-			return "Anthropic";
+			return "Claude";
 		case "google":
 			return "Google";
 		default:
@@ -64,21 +64,43 @@ function shortProvider(provider: string | undefined): string {
 	}
 }
 
+function titleModelWords(value: string): string {
+	return value
+		.split(/[-_ ]+/)
+		.filter(Boolean)
+		.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+		.join(" ");
+}
+
 function shortModel(id: string): string {
 	const raw = id.split("/").pop() ?? id;
 	const s = raw.toLowerCase();
-	const gpt = s.match(/gpt[-_ ]?(\d+(?:\.\d+)?)/);
-	if (gpt) return `GPT-${gpt[1]}`;
-	const opus = s.match(/opus[-_ ]?(\d+(?:\.\d+)?)/);
-	if (opus) return `Opus ${opus[1]}`;
-	const sonnet = s.match(/sonnet[-_ ]?(\d+(?:\.\d+)?)/);
-	if (sonnet) return `Sonnet ${sonnet[1]}`;
-	const haiku = s.match(/haiku[-_ ]?(\d+(?:\.\d+)?)/);
-	if (haiku) return `Haiku ${haiku[1]}`;
-	const fable = s.match(/fable[-_ ]?(\d+(?:\.\d+)?)/);
-	if (fable) return `Fable ${fable[1]}`;
+	const gpt = s.match(/^gpt[-_ ]?(\d+(?:\.\d+)?[a-z]?)(?:[-_ ]+(.+))?$/);
+	if (gpt) {
+		const variantWords = gpt[2]?.split(/[-_ ]+/).filter(Boolean) ?? [];
+		const isPro = variantWords.at(-1) === "pro";
+		if (isPro) variantWords.pop();
+		const variant = titleModelWords(variantWords.join(" "));
+		return `GPT-${gpt[1]}${variant ? ` ${variant}` : ""}${isPro ? "+" : ""}`;
+	}
+	const gemini = s.match(/^gemini[-_ ]?(\d+(?:\.\d+)?)(?:[-_ ]+(.+))?$/);
+	if (gemini) {
+		const variant = titleModelWords(
+			(gemini[2]?.split(/[-_ ]+/).filter((word) => word !== "preview") ?? []).join(" "),
+		);
+		return `Gemini ${gemini[1]}${variant ? ` ${variant}` : ""}`;
+	}
+	const anthropicPrefix = id.toLowerCase().startsWith("anthropic/") ? "Claude " : "";
+	const opus = s.match(/opus[-_ ]?(\d+(?:[.-]\d+)?)/);
+	if (opus) return `${anthropicPrefix}Opus ${opus[1].replace("-", ".")}`;
+	const sonnet = s.match(/sonnet[-_ ]?(\d+(?:[.-]\d+)?)/);
+	if (sonnet) return `${anthropicPrefix}Sonnet ${sonnet[1].replace("-", ".")}`;
+	const haiku = s.match(/haiku[-_ ]?(\d+(?:[.-]\d+)?)/);
+	if (haiku) return `${anthropicPrefix}Haiku ${haiku[1].replace("-", ".")}`;
+	const fable = s.match(/fable[-_ ]?(\d+(?:[.-]\d+)?)/);
+	if (fable) return `${anthropicPrefix}Fable ${fable[1].replace("-", ".")}`;
 	if (s.includes("codex")) return "Codex";
-	return raw.replace(/^claude-/, "").replace(/^gpt-/, "GPT-").replace(/-/g, " ");
+	return titleModelWords(raw.replace(/^claude-/, "").replace(/^gpt-/, "GPT-"));
 }
 
 function fmtNumber(n: number): string {
@@ -264,17 +286,20 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const model = shortModel(ctx.model?.id ?? "no-model");
 				const effort = thinking ? `⚡${thinking === "high" ? "Hi" : thinking === "medium" ? "Md" : thinking.slice(0, 2)}` : "";
 				const status = `${git.dirty ? "●" : ""}${git.untracked ? "…" : ""}${git.staged ? "✚" : ""}`;
+				const contextPct = Math.max(0, Math.min(100, Math.round(usage.ctxPct)));
+				const cacheBase = usage.input + usage.cacheRead;
+				const cachePct = usage.cacheRead > 0 && cacheBase > 0 ? Math.round((usage.cacheRead / cacheBase) * 100) : null;
+				const cache = [cachePct === null ? "" : `cache ${cachePct}%`, usage.cacheWrite > 0 ? `W${fmtNumber(usage.cacheWrite)}` : ""]
+					.filter(Boolean)
+					.join(" ");
 				return {
 					clock: theme.fg("dim", new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })),
 					host: theme.fg("accent", `▣ ${hostname().split(".")[0]}`),
 					model: theme.fg("success", theme.bold(`${provider} ${model}`)),
 					effort: effort ? theme.fg("accent", effort) : "",
-					bars: `${bar(usage.ctxPct, 3, 20, 50, colors)} ${bar((usage.input / Math.max(usage.ctxMax, 1)) * 100, 3, 60, 80, colors)} ${bar((usage.output / Math.max(usage.ctxMax, 1)) * 100, 3, 60, 80, colors)}`,
-					ctx: `${bar(usage.ctxPct, 6, 20, 50, colors)} ${theme.fg("dim", "ctx")}`,
-					inputBar: `${bar((usage.input / Math.max(usage.ctxMax, 1)) * 100, 6, 60, 80, colors)} ${theme.fg("dim", "in")}`,
-					outputBar: `${bar((usage.output / Math.max(usage.ctxMax, 1)) * 100, 6, 60, 80, colors)} ${theme.fg("dim", "out")}`,
-					tokens: theme.fg("dim", `↑${fmtNumber(usage.input)} ↓${fmtNumber(usage.output)}`),
-					cache: usage.cacheRead || usage.cacheWrite ? theme.fg("dim", `R${fmtNumber(usage.cacheRead)} W${fmtNumber(usage.cacheWrite)}`) : "",
+					bars: `${bar(usage.ctxPct, 3, 34, 67, colors)} ${theme.fg("dim", `ctx ${contextPct}%`)}`,
+					ctx: `${bar(usage.ctxPct, 6, 34, 67, colors)} ${theme.fg("dim", `ctx ${contextPct}%`)}`,
+					tokens: theme.fg("dim", `↑${fmtNumber(usage.input)} ↓${fmtNumber(usage.output)}${cache ? ` · ${cache}` : ""}`),
 					cost: theme.fg("success", `$${usage.cost.toFixed(2)}`),
 					duration: theme.fg("dim", fmtDuration(Date.now() - startedAt)),
 					path: theme.fg("muted", ` ${abbrevPath(ctx.cwd)}`),
@@ -304,7 +329,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const s = segments();
 				const border = (text: string) => theme.fg("border", text);
 				let row1 = [s.host, s.path, s.repo, s.branch, s.pr].filter(Boolean);
-				const row2 = [s.model, s.effort, s.ctx, s.inputBar, s.outputBar, s.tokens, s.cache, s.cost, s.duration, s.clock].filter(Boolean);
+				const row2 = [s.model, s.effort, s.ctx, s.tokens, s.cost, s.duration, s.clock].filter(Boolean);
 
 				function widthsFor(cells: string[]): number[] {
 					return cells.map((cell) => visibleWidth(cell) + 2);

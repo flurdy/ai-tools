@@ -29,8 +29,9 @@ Then restart Pi, or run `/reload` from an existing Pi session.
 ## What it shows
 
 - clock
-- model and thinking level
-- context/token mini bars
+- model (including variants such as Sol, Terra, and Luna) and thinking level
+- cautious context-capacity bar (green through 33%, yellow through 66%, then red)
+- cumulative input/output tokens and cache-hit percentage
 - session duration
 - abbreviated cwd
 - worktree repo, branch, dirty/staged/untracked markers
