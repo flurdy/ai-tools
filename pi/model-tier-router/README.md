@@ -1,0 +1,112 @@
+# Pi Model Tier Router
+
+Small, provider-neutral Pi extension that maps semantic skill metadata such as `model-tier: standard-coding` to exact locally configured models. It restores the previous model and thinking level when the agent run settles.
+
+Exact provider/model IDs stay in local JSON configuration; the extension contains no provider defaults.
+
+## Requirements
+
+- Pi 0.80.6 or newer
+- Node.js 22.19 or newer for the development scripts
+
+## Configure
+
+List the models available with your current authentication:
+
+```bash
+pi --list-models
+```
+
+Copy the example and replace every placeholder with an exact `provider/model-id` from that output:
+
+```bash
+cp ./pi/model-tier-router/model-tier-router.example.json \
+  ~/.pi/agent/model-tier-router.json
+$EDITOR ~/.pi/agent/model-tier-router.json
+```
+
+Candidate order is fallback order. `metered` is local cost knowledge; the router never guesses from provider or authentication details. A metered candidate needs confirmation when the skill declares `model-metered-policy: ask-above-standard` or `model-cost-policy: deliberate-premium`. Such a route is safely skipped when confirmation is required but no UI is available.
+
+A trusted project can override top-level options and complete tier entries in:
+
+```text
+<project>/.pi/model-tier-router.json
+```
+
+Project configuration is ignored unless Pi trusts the project. A project tier replaces the global tier with the same name; other global tiers remain available.
+
+Supported options:
+
+- `enabled`: enable routing on load.
+- `routeImplicitSkillReads`: route model-initiated `read` calls for skills loaded into that turn's Pi system prompt.
+- `restoreAfterRun`: restore the pre-route model and thinking level at `agent_settled`.
+- `tiers.<name>.rank`: nested skills may move to a higher rank, but never to an equal or lower rank.
+- `tiers.<name>.thinking`: Pi thinking level to select after the model switch.
+- `tiers.<name>.candidates`: exact, ordered model candidates and their local `metered` flag.
+
+## Skill metadata
+
+The router reads these optional frontmatter fields with Pi's frontmatter parser:
+
+```yaml
+model-tier: premium-review
+model-cost-policy: deliberate-premium
+model-metered-policy: ask-above-standard
+```
+
+The two policy values shown above require confirmation for a metered candidate and are included in its confirmation message. Other or absent policy values do not add a confirmation gate. The router deliberately ignores Claude-specific `model: haiku` and `model-second-opinion-tier`.
+
+Explicit `/skill:name` commands route during Pi's `input` event, before skill expansion. Model-initiated reads route only when the canonical read path exactly matches a skill file Pi loaded for that turn. This includes `SKILL.md` and registered root skill Markdown files without scanning or reimplementing Pi's discovery rules.
+
+## Install for testing
+
+```bash
+pi -e ./pi/model-tier-router/index.ts
+```
+
+## Install globally
+
+From this repository:
+
+```bash
+mkdir -p ~/.pi/agent/extensions
+ln -sfn "$PWD/pi/model-tier-router" \
+  ~/.pi/agent/extensions/model-tier-router
+```
+
+Restart Pi or run `/reload`.
+
+## Commands
+
+```text
+/model-tier status
+/model-tier reload
+/model-tier on
+/model-tier off
+```
+
+`reload` rereads router JSON configuration. `on` and `off` are in-memory overrides for the current extension instance; they do not edit local files.
+
+Status reports the active tier and skills, selected/original models, pending restoration, loaded configuration paths, and route warnings.
+
+## Development
+
+Install development dependencies, then run focused tests and typechecking:
+
+```bash
+cd pi/model-tier-router
+npm install
+npm test
+npm run typecheck
+```
+
+Pi loads `index.ts` directly; no build output is required.
+
+## Lifecycle notes
+
+- The first routed skill snapshots the current model and thinking level.
+- Higher-ranked nested skills may upgrade the route. Equal- or lower-ranked skills retain the current route.
+- Candidate availability comes from `ctx.modelRegistry.getAvailable()`.
+- A manual model selection during a routed run cancels automatic restoration, so the extension does not fight `/model` or model cycling.
+- A failed restoration remains visible as pending and is retried when the agent next settles; routing pauses until restoration succeeds or the user manually chooses another model.
+- Session shutdown/reload attempts the same safe restoration when appropriate.

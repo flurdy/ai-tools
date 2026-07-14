@@ -1,0 +1,47 @@
+{
+  "enabled": true,
+  "routeImplicitSkillReads": true,
+  "restoreAfterRun": true,
+  "tiers": {
+    "cheap-bulk": {
+      "rank": 10,
+      "thinking": "low",
+      "candidates": [
+        {
+          "model": "provider/cheap-model-id",
+          "metered": false
+        }
+      ]
+    },
+    "standard-coding": {
+      "rank": 20,
+      "thinking": "high",
+      "candidates": [
+        {
+          "model": "provider/standard-model-id",
+          "metered": false
+        }
+      ]
+    },
+    "premium-reasoning": {
+      "rank": 40,
+      "thinking": "high",
+      "candidates": [
+        {
+          "model": "provider/premium-model-id",
+          "metered": true
+        }
+      ]
+    },
+    "premium-review": {
+      "rank": 40,
+      "thinking": "high",
+      "candidates": [
+        {
+          "model": "provider/premium-review-model-id",
+          "metered": true
+        }
+      ]
+    }
+  }
+}
