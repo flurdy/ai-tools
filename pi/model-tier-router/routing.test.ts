@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { loadRouterConfig } from "./config.ts";
+import modelTierRouter from "./index.ts";
 import {
 	canonicalPath,
 	decideTier,
@@ -130,6 +132,25 @@ describe("configuration", () => {
 		assert.equal(result.config.enabled, true);
 		assert.deepEqual(result.loadedPaths, [join(agentDir, "model-tier-router.json")]);
 	});
+
+	it("rejects candidates without an explicit metered classification", () => {
+		const root = mkdtempSync(join(tmpdir(), "model-tier-router-"));
+		const agentDir = join(root, "agent");
+		const cwd = join(root, "project");
+		mkdirSync(agentDir, { recursive: true });
+		writeFileSync(
+			join(agentDir, "model-tier-router.json"),
+			JSON.stringify({
+				tiers: {
+					premium: { rank: 40, thinking: "high", candidates: [{ model: "provider/premium" }] },
+				},
+			}),
+		);
+
+		const result = loadRouterConfig({ agentDir, cwd, projectTrusted: false });
+		assert.deepEqual(result.config.tiers.premium.candidates, []);
+		assert.match(result.warnings.join("\n"), /must declare a boolean metered flag/);
+	});
 });
 
 describe("path and restoration safety", () => {
@@ -146,5 +167,207 @@ describe("path and restoration safety", () => {
 		assert.equal(shouldRestoreAfterRun(true, false), true);
 		assert.equal(shouldRestoreAfterRun(true, true), false);
 		assert.equal(shouldRestoreAfterRun(false, false), false);
+	});
+});
+
+type EventHandler = (event: any, ctx: any) => unknown;
+
+interface RouterHarness {
+	ctx: any;
+	emit(event: string, payload?: Record<string, unknown>): Promise<unknown[]>;
+	stageSkill(name: string, options?: { streamingBehavior?: "steer" | "followUp" }): Promise<void>;
+	startSkill(name: string): Promise<void>;
+	invokeSkill(name: string, options?: { streamingBehavior?: "steer" | "followUp" }): Promise<void>;
+	selectManually(next: Model<Api>): Promise<void>;
+	modelSelections: string[];
+	thinkingSelections: string[];
+	notifications: string[];
+}
+
+async function createRouterHarness(
+	skills: Record<string, { tier: string; rank: number; configure?: boolean }>,
+): Promise<RouterHarness> {
+	const root = mkdtempSync(join(tmpdir(), "model-tier-router-events-"));
+	const cwd = join(root, "project");
+	const skillDir = join(root, "skills");
+	mkdirSync(join(cwd, ".pi"), { recursive: true });
+	mkdirSync(skillDir, { recursive: true });
+
+	const commands: Array<Record<string, any>> = [];
+	const tiers: Record<string, unknown> = {};
+	for (const [name, skill] of Object.entries(skills)) {
+		const path = join(skillDir, `${name}.md`);
+		writeFileSync(path, `---\nname: ${name}\ndescription: test\nmodel-tier: ${skill.tier}\n---\nRun ${name}.\n`);
+		commands.push({
+			name: `skill:${name}`,
+			source: "skill",
+			sourceInfo: { path, source: "skill", scope: "project", origin: "top-level" },
+		});
+		if (skill.configure !== false) {
+			tiers[skill.tier] = {
+				rank: skill.rank,
+				thinking: "high",
+				candidates: [{ model: `provider/${skill.tier}`, metered: false }],
+			};
+		}
+	}
+	writeFileSync(
+		join(cwd, ".pi", "model-tier-router.json"),
+		JSON.stringify({ enabled: true, routeImplicitSkillReads: true, restoreAfterRun: true, tiers }),
+	);
+
+	const original = model("provider", "original");
+	let currentModel = original;
+	let thinking = "low";
+	const available = [original, model("provider", "manual"), ...Object.values(skills).map((skill) => model("provider", skill.tier))];
+	const handlers = new Map<string, EventHandler[]>();
+	const modelSelections: string[] = [];
+	const thinkingSelections: string[] = [];
+	const notifications: string[] = [];
+
+	const ctx = {
+		cwd,
+		hasUI: true,
+		mode: "tui",
+		get model() {
+			return currentModel;
+		},
+		modelRegistry: { getAvailable: () => available },
+		isProjectTrusted: () => true,
+		ui: {
+			confirm: async () => true,
+			notify: (message: string) => notifications.push(message),
+			setStatus: () => undefined,
+		},
+	};
+
+	async function emit(event: string, payload: Record<string, unknown> = {}): Promise<unknown[]> {
+		const results: unknown[] = [];
+		for (const handler of handlers.get(event) ?? []) results.push(await handler({ type: event, ...payload }, ctx));
+		return results;
+	}
+
+	const pi = {
+		on(event: string, handler: EventHandler) {
+			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+		},
+		registerCommand() {},
+		getCommands: () => commands,
+		getThinkingLevel: () => thinking,
+		setThinkingLevel(next: string) {
+			thinking = next;
+			thinkingSelections.push(next);
+		},
+		async setModel(next: Model<Api>) {
+			const previousModel = currentModel;
+			currentModel = next;
+			modelSelections.push(`${next.provider}/${next.id}`);
+			await emit("model_select", { model: next, previousModel, source: "set" });
+			return true;
+		},
+	} as unknown as ExtensionAPI;
+
+	modelTierRouter(pi);
+	await emit("session_start", { reason: "startup" });
+
+	async function stageSkill(name: string, options: { streamingBehavior?: "steer" | "followUp" } = {}): Promise<void> {
+		await emit("input", {
+			text: `/skill:${name}`,
+			source: "interactive",
+			streamingBehavior: options.streamingBehavior,
+		});
+	}
+
+	async function startSkill(name: string): Promise<void> {
+		const command = commands.find((item) => item.name === `skill:${name}`);
+		assert.ok(command);
+		await emit("before_agent_start", {
+			prompt: `<skill name="${name}" location="${command.sourceInfo.path}">\nReferences are relative to ${skillDir}.\n\nRun ${name}.\n</skill>`,
+			systemPromptOptions: { skills: [] },
+		});
+	}
+
+	return {
+		ctx,
+		emit,
+		stageSkill,
+		startSkill,
+		async invokeSkill(name, options = {}) {
+			await stageSkill(name, options);
+			if (!options.streamingBehavior) await startSkill(name);
+		},
+		async selectManually(next) {
+			const previousModel = currentModel;
+			currentModel = next;
+			await emit("model_select", { model: next, previousModel, source: "set" });
+		},
+		modelSelections,
+		thinkingSelections,
+		notifications,
+	};
+}
+
+describe("extension lifecycle", () => {
+	it("stages explicit routing until the expanded skill starts, then restores after settlement", async () => {
+		const harness = await createRouterHarness({ review: { tier: "standard", rank: 20 } });
+		await harness.stageSkill("review");
+		assert.deepEqual(harness.modelSelections, []);
+
+		await harness.startSkill("review");
+		assert.deepEqual(harness.modelSelections, ["provider/standard"]);
+		assert.equal(harness.ctx.model.id, "standard");
+
+		await harness.emit("agent_settled");
+		assert.deepEqual(harness.modelSelections, ["provider/standard", "provider/original"]);
+		assert.deepEqual(harness.thinkingSelections, ["high", "low"]);
+	});
+
+	it("discards stale routes when a later input handler changes the request", async () => {
+		const harness = await createRouterHarness({ review: { tier: "standard", rank: 20 } });
+		await harness.stageSkill("review");
+		await harness.emit("before_agent_start", { prompt: "A later input handler changed the request", systemPromptOptions: { skills: [] } });
+
+		assert.deepEqual(harness.modelSelections, []);
+	});
+
+	it("keeps the active route when a skill is queued during streaming", async () => {
+		const harness = await createRouterHarness({
+			build: { tier: "standard", rank: 20 },
+			audit: { tier: "premium", rank: 40 },
+		});
+		await harness.invokeSkill("build");
+		await harness.stageSkill("audit", { streamingBehavior: "followUp" });
+
+		assert.deepEqual(harness.modelSelections, ["provider/standard"]);
+		assert.equal(harness.ctx.model.id, "standard");
+		assert.match(harness.notifications.join("\n"), /skipped routing queued \/skill:audit/);
+
+		await harness.emit("agent_settled");
+		assert.equal(harness.ctx.model.id, "original");
+	});
+
+	it("does not route nested skills after a manual model selection", async () => {
+		const harness = await createRouterHarness({
+			build: { tier: "standard", rank: 20 },
+			audit: { tier: "premium", rank: 40 },
+		});
+		await harness.invokeSkill("build");
+		await harness.selectManually(model("provider", "manual"));
+		await harness.invokeSkill("audit");
+
+		assert.deepEqual(harness.modelSelections, ["provider/standard"]);
+		assert.equal(harness.ctx.model.id, "manual");
+		assert.match(harness.notifications.join("\n"), /skipped audit after a manual model selection/);
+
+		await harness.emit("agent_settled");
+		assert.equal(harness.ctx.model.id, "manual");
+	});
+
+	it("treats inherited object keys as unknown tiers", async () => {
+		const harness = await createRouterHarness({ inherited: { tier: "toString", rank: 20, configure: false } });
+		await harness.invokeSkill("inherited");
+
+		assert.deepEqual(harness.modelSelections, []);
+		assert.match(harness.notifications.join("\n"), /unknown or unconfigured tier toString/);
 	});
 });

@@ -27,6 +27,11 @@ interface RunState {
 	restorePending: boolean;
 }
 
+interface PendingExplicitRoute {
+	skillName: string;
+	path: string;
+}
+
 function modelId(model: Model<Api> | undefined): string {
 	return model ? `${model.provider}/${model.id}` : "(none)";
 }
@@ -35,6 +40,7 @@ export default function modelTierRouter(pi: ExtensionAPI): void {
 	let loaded: LoadedRouterConfig | undefined;
 	let enabledOverride: boolean | undefined;
 	let run: RunState | undefined;
+	let pendingExplicitRoute: PendingExplicitRoute | undefined;
 	let switchingModel = false;
 	let loadedSkills = new Map<string, Skill>();
 	const warningKeys = new Set<string>();
@@ -84,10 +90,16 @@ export default function modelTierRouter(pi: ExtensionAPI): void {
 			warnOnce(ctx, "restore-pending", `skipped ${skillName} while restoration of ${modelId(run.originalModel)} is pending`);
 			return;
 		}
+		if (run?.manualModelOverride) {
+			warnOnce(ctx, "manual-override", `skipped ${skillName} after a manual model selection`);
+			return;
+		}
 		const metadata = readMetadata(path, ctx);
 		if (!metadata?.tier) return;
 
-		const route = loaded.config.tiers[metadata.tier];
+		const route = Object.hasOwn(loaded.config.tiers, metadata.tier)
+			? loaded.config.tiers[metadata.tier]
+			: undefined;
 		if (!route) {
 			warnOnce(ctx, `tier:${metadata.tier}`, `unknown or unconfigured tier ${metadata.tier}; retained ${modelId(ctx.model)}`);
 			return;
@@ -192,11 +204,12 @@ export default function modelTierRouter(pi: ExtensionAPI): void {
 	}
 
 	pi.on("session_start", (_event, ctx) => {
+		pendingExplicitRoute = undefined;
 		reloadConfig(ctx);
 		updateStatus(ctx);
 	});
 
-	pi.on("input", async (event, ctx) => {
+	pi.on("input", (event, ctx) => {
 		if (event.source === "extension" || !isEnabled()) return { action: "continue" };
 		const match = event.text.match(/^\/(skill:[^\s]+)(?:\s|$)/);
 		if (!match) return { action: "continue" };
@@ -206,11 +219,25 @@ export default function modelTierRouter(pi: ExtensionAPI): void {
 			const source = (item as typeof item & { source?: string }).source ?? item.sourceInfo.source;
 			return name === invocation && source === "skill";
 		});
-		if (command) await routeSkill(invocation.slice("skill:".length), command.sourceInfo.path, ctx);
+		if (!command) return { action: "continue" };
+		if (event.streamingBehavior) {
+			warnOnce(ctx, `streaming:${invocation}`, `skipped routing queued /${invocation}; retained ${modelId(ctx.model)}`);
+			return { action: "continue" };
+		}
+		pendingExplicitRoute = {
+			skillName: invocation.slice("skill:".length),
+			path: command.sourceInfo.path,
+		};
 		return { action: "continue" };
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
+		const pending = pendingExplicitRoute;
+		pendingExplicitRoute = undefined;
+		if (pending && event.prompt.startsWith(`<skill name="${pending.skillName}" location="${pending.path}">\n`)) {
+			await routeSkill(pending.skillName, pending.path, ctx);
+		}
+
 		const entries = await Promise.all(
 			(event.systemPromptOptions.skills ?? []).map(async (skill) => {
 				const path = await canonicalPath(skill.filePath, ctx.cwd);
@@ -239,6 +266,7 @@ export default function modelTierRouter(pi: ExtensionAPI): void {
 
 	pi.on("agent_settled", async (_event, ctx) => {
 		await restore(ctx, true);
+		pendingExplicitRoute = undefined;
 		loadedSkills.clear();
 		warningKeys.clear();
 		unavailableWarnings.length = 0;
@@ -246,6 +274,7 @@ export default function modelTierRouter(pi: ExtensionAPI): void {
 
 	pi.on("session_shutdown", async (_event, ctx) => {
 		await restore(ctx, false);
+		pendingExplicitRoute = undefined;
 		loadedSkills.clear();
 	});
 

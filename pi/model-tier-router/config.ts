@@ -26,11 +26,15 @@ export interface LoadConfigOptions {
 	configDirName?: string;
 }
 
+function emptyTiers(): Record<string, TierRoute> {
+	return Object.create(null) as Record<string, TierRoute>;
+}
+
 const DEFAULT_CONFIG: RouterConfig = {
 	enabled: true,
 	routeImplicitSkillReads: true,
 	restoreAfterRun: true,
-	tiers: {},
+	tiers: emptyTiers(),
 };
 
 function readJson(path: string, warnings: string[]): unknown | undefined {
@@ -73,11 +77,11 @@ function parseTier(name: string, value: unknown, path: string, warnings: string[
 			warnings.push(`${path}: tier ${name} candidate ${index + 1} must use provider/model`);
 			continue;
 		}
-		if (item.metered !== undefined && typeof item.metered !== "boolean") {
-			warnings.push(`${path}: tier ${name} candidate ${index + 1} has an invalid metered flag`);
+		if (typeof item.metered !== "boolean") {
+			warnings.push(`${path}: tier ${name} candidate ${index + 1} must declare a boolean metered flag`);
 			continue;
 		}
-		candidates.push({ model: item.model, metered: item.metered === true });
+		candidates.push({ model: item.model, metered: item.metered });
 	}
 
 	return {
@@ -100,7 +104,7 @@ function parseConfig(value: unknown, path: string, warnings: string[]): PartialR
 		return undefined;
 	}
 	const input = value as Record<string, unknown>;
-	const parsed: PartialRouterConfig = { tiers: {} };
+	const parsed: PartialRouterConfig = { tiers: emptyTiers() };
 	for (const key of ["enabled", "routeImplicitSkillReads", "restoreAfterRun"] as const) {
 		if (input[key] === undefined) continue;
 		if (typeof input[key] !== "boolean") warnings.push(`${path}: ${key} must be boolean`);
@@ -124,7 +128,7 @@ function mergeConfig(base: RouterConfig, override: PartialRouterConfig): RouterC
 		enabled: override.enabled ?? base.enabled,
 		routeImplicitSkillReads: override.routeImplicitSkillReads ?? base.routeImplicitSkillReads,
 		restoreAfterRun: override.restoreAfterRun ?? base.restoreAfterRun,
-		tiers: { ...base.tiers, ...override.tiers },
+		tiers: Object.assign(emptyTiers(), base.tiers, override.tiers),
 	};
 }
 

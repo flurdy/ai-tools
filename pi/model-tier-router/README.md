@@ -25,7 +25,7 @@ cp ./pi/model-tier-router/model-tier-router.example.json \
 $EDITOR ~/.pi/agent/model-tier-router.json
 ```
 
-Candidate order is fallback order. `metered` is local cost knowledge; the router never guesses from provider or authentication details. A metered candidate needs confirmation when the skill declares `model-metered-policy: ask-above-standard`, `cap-or-ask`, or `ask-before-metered-panel`, or declares `model-cost-policy: deliberate-premium`. Such a route is safely skipped when confirmation is required but no UI is available.
+Candidate order is fallback order. Every candidate must explicitly declare a boolean `metered` value; candidates without one are rejected rather than assumed free. `metered` is local cost knowledge, and the router never guesses from provider or authentication details. A metered candidate needs confirmation when the skill declares `model-metered-policy: ask-above-standard`, `cap-or-ask`, or `ask-before-metered-panel`, or declares `model-cost-policy: deliberate-premium`. Such a route is safely skipped when confirmation is required but no UI is available.
 
 A trusted project can override top-level options and complete tier entries in:
 
@@ -56,7 +56,7 @@ model-metered-policy: ask-above-standard
 
 The confirmation policies documented above require confirmation for a metered candidate and are included in its confirmation message. Other or absent policy values do not add a confirmation gate. The router deliberately ignores Claude-specific `model: haiku` and `model-second-opinion-tier`.
 
-Explicit `/skill:name` commands route during Pi's `input` event, before skill expansion. Model-initiated reads route only when the canonical read path exactly matches a skill file Pi loaded for that turn. This includes `SKILL.md` and registered root skill Markdown files without scanning or reimplementing Pi's discovery rules.
+Explicit `/skill:name` commands are detected during Pi's `input` event and routed from `before_agent_start` only after Pi has accepted and expanded that skill. This prevents a later input handler from leaving behind a premature model switch. Skill commands queued while an agent is already streaming continue on the active model because Pi 0.80.6 has no pre-provider boundary where a queued route can be applied safely; the router warns instead of switching too early. Model-initiated reads route only when the canonical read path exactly matches a skill file Pi loaded for that turn. This includes `SKILL.md` and registered root skill Markdown files without scanning or reimplementing Pi's discovery rules.
 
 ## Install for testing
 
@@ -107,6 +107,6 @@ Pi loads `index.ts` directly; no build output is required.
 - The first routed skill snapshots the current model and thinking level.
 - Higher-ranked nested skills may upgrade the route. Equal- or lower-ranked skills retain the current route.
 - Candidate availability comes from `ctx.modelRegistry.getAvailable()`.
-- A manual model selection during a routed run cancels automatic restoration, so the extension does not fight `/model` or model cycling.
+- A manual model selection during a routed run disables further routing and cancels automatic restoration, so the extension does not fight `/model` or model cycling.
 - A failed restoration remains visible as pending and is retried when the agent next settles; routing pauses until restoration succeeds or the user manually chooses another model.
 - Session shutdown/reload attempts the same safe restoration when appropriate.
