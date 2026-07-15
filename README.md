@@ -16,6 +16,7 @@ This repo is meant to be the shareable, curated version of tools that also live 
 | [Pi Kitty tab title](pi/kitty-tab-title/) | Pi | Pi extension for showing repo/session state in Kitty tab titles, matching the Claude/Codex workflow. |
 | [Claude launcher](claude/launcher/) | Claude Code | Fish `cl` launcher that picks main checkout, worktree, handoff, or new worktree before starting Claude. |
 | [Pi launcher](pi/launcher/) | Pi | Fish `pl` launcher that picks main checkout, worktree, handoff, or new worktree before starting Pi. |
+| [Launcher internals](shared/launcher/) | Shared | Provider-neutral context picker and worktree creator used by `cl` and `pl`. |
 | [Kitty shell reset](shared/kitty/) | Shared | Fish prompt hook that clears the agent tab title when returning to the shell. |
 
 ## Related Repos And Docs
@@ -40,6 +41,7 @@ pi/
   kitty-tab-title/
   launcher/
 shared/
+  launcher/
   kitty/
 docs/
 ```

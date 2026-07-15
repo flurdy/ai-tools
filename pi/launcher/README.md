@@ -11,9 +11,9 @@ It can launch from:
 
 ## Files
 
-- `pl.fish`: Fish function users run as `pl`.
-- `pl-gather`: builds the picker rows and returns the selected launch descriptor.
-- `pl-mkworktree`: creates or reuses a worktree for a branch.
+- `pl.fish`: Pi-specific Fish frontend users run as `pl`.
+- `pl-gather`: symlink to the [shared context picker](../../shared/launcher/).
+- `pl-mkworktree`: symlink to the shared worktree creator.
 
 ## Install
 
@@ -22,6 +22,7 @@ For the live dotfiles layout:
 ```bash
 mkdir -p ~/.dotfiles/.config/fish/functions ~/.dotfiles/.pi/bin ~/.pi/bin
 cp pl.fish ~/.dotfiles/.config/fish/functions/pl.fish
+# cp follows the repository symlinks and installs the shared helper contents.
 cp pl-gather pl-mkworktree ~/.dotfiles/.pi/bin/
 chmod +x ~/.dotfiles/.pi/bin/pl-gather ~/.dotfiles/.pi/bin/pl-mkworktree
 ln -sfn ~/.dotfiles/.pi/bin/pl-gather ~/.pi/bin/pl-gather
@@ -51,8 +52,10 @@ Picker keys:
 ## Runtime Assumptions
 
 - Requires Fish for `pl.fish`.
-- Requires `bash`, `git`, and `fzf`.
+- Requires Bash 4+, `git`, and `fzf`.
 - Uses `gh` when available to show cached PR state.
 - Uses `~/.claude/skills/handoffs/scripts/list.sh` when the handoffs skill is installed.
 - Shows handoffs owned by the current repo as separate rows and starts a fresh Pi session seeded with the selected handoff note.
-- `pl-mkworktree` creates worktrees under an existing `*/worktrees/*` parent when present, otherwise under `../worktrees` relative to the main checkout.
+- Worktrees reuse an existing `*/worktrees/*` layout, then fall back to `../worktrees`; set `AI_WORKTREE_PARENT` to override that fallback.
+- Worktrees receive existing local Claude and Pi project settings so either launcher can use them.
+- Claude and Pi share cached PR metadata under `~/.cache/ai-launcher` (or `$XDG_CACHE_HOME/ai-launcher`).
