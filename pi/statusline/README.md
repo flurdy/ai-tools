@@ -39,4 +39,4 @@ Then restart Pi, or run `/reload` from an existing Pi session.
 - abbreviated cwd
 - worktree repo, branch, dirty/staged/untracked markers
 - cached GitHub PR number when available
-- cost, tokens, and cache stats in table mode
+- Pi-configured estimated cost, tokens, and cache stats in table mode (not provider billing or subscription usage)

@@ -3,10 +3,11 @@ import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { loadRouterConfig } from "./config.ts";
 import modelTierRouter from "./index.ts";
+import type { UsageRecordV1 } from "./usage.ts";
 import {
 	canonicalPath,
 	decideTier,
@@ -20,6 +21,26 @@ import {
 
 function model(provider: string, id: string): Model<Api> {
 	return { provider, id } as Model<Api>;
+}
+
+function assistantMessage(provider: string, modelId: string): AssistantMessage {
+	return {
+		role: "assistant",
+		api: "openai-completions",
+		provider,
+		model: modelId,
+		content: [],
+		usage: {
+			input: 10,
+			output: 4,
+			cacheRead: 2,
+			cacheWrite: 0,
+			totalTokens: 16,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: "stop",
+		timestamp: Date.UTC(2026, 6, 16),
+	};
 }
 
 const standard: TierRoute = {
@@ -142,6 +163,20 @@ describe("configuration", () => {
 		assert.deepEqual(result.loadedPaths, [join(agentDir, "model-tier-router.json")]);
 	});
 
+	it("loads an opt-in usage ledger only from global configuration", () => {
+		const root = mkdtempSync(join(tmpdir(), "model-tier-router-"));
+		const agentDir = join(root, "agent");
+		const cwd = join(root, "project");
+		mkdirSync(join(cwd, ".pi"), { recursive: true });
+		mkdirSync(agentDir, { recursive: true });
+		writeFileSync(join(agentDir, "model-tier-router.json"), JSON.stringify({ usageLedger: { enabled: true, retentionDays: 14, maxBytes: 4096 } }));
+		writeFileSync(join(cwd, ".pi", "model-tier-router.json"), JSON.stringify({ usageLedger: { enabled: false, retentionDays: 7, maxBytes: 2048 } }));
+
+		const result = loadRouterConfig({ agentDir, cwd, projectTrusted: true });
+		assert.deepEqual(result.config.usageLedger, { enabled: true, retentionDays: 14, maxBytes: 4096 });
+		assert.match(result.warnings.join("\n"), /usageLedger is global-only and was ignored/);
+	});
+
 	it("rejects candidates without an explicit metered classification", () => {
 		const root = mkdtempSync(join(tmpdir(), "model-tier-router-"));
 		const agentDir = join(root, "agent");
@@ -191,11 +226,12 @@ interface RouterHarness {
 	modelSelections: string[];
 	thinkingSelections: string[];
 	notifications: string[];
+	usageRecords: UsageRecordV1[];
 }
 
 async function createRouterHarness(
 	skills: Record<string, { tier: string; rank: number; effort?: string; configure?: boolean; available?: boolean }>,
-	options: { clampThinking?: (requested: string, modelId: string) => string } = {},
+	options: { clampThinking?: (requested: string, modelId: string) => string; restoreAfterRun?: boolean } = {},
 ): Promise<RouterHarness> {
 	const root = mkdtempSync(join(tmpdir(), "model-tier-router-events-"));
 	const cwd = join(root, "project");
@@ -226,7 +262,7 @@ async function createRouterHarness(
 	}
 	writeFileSync(
 		join(cwd, ".pi", "model-tier-router.json"),
-		JSON.stringify({ enabled: true, routeImplicitSkillReads: true, restoreAfterRun: true, tiers }),
+		JSON.stringify({ enabled: true, routeImplicitSkillReads: true, restoreAfterRun: options.restoreAfterRun ?? true, tiers }),
 	);
 
 	const original = model("provider", "original");
@@ -243,6 +279,7 @@ async function createRouterHarness(
 	const modelSelections: string[] = [];
 	const thinkingSelections: string[] = [];
 	const notifications: string[] = [];
+	const usageRecords: UsageRecordV1[] = [];
 
 	const ctx = {
 		cwd,
@@ -253,6 +290,7 @@ async function createRouterHarness(
 		},
 		modelRegistry: { getAvailable: () => available },
 		isProjectTrusted: () => true,
+		sessionManager: { getSessionId: () => "test-session" },
 		ui: {
 			confirm: async () => true,
 			notify: (message: string) => notifications.push(message),
@@ -286,7 +324,15 @@ async function createRouterHarness(
 		},
 	} as unknown as ExtensionAPI;
 
-	modelTierRouter(pi);
+	modelTierRouter(pi, {
+		usageLedger: {
+			start() {},
+			health: () => ({ pending: 0, dropped: 0, writeErrors: 0 }),
+			enqueue: (record) => usageRecords.push(record),
+			drainWithin: async () => undefined,
+			readRecords: async () => ({ records: [...usageRecords], skipped: 0 }),
+		},
+	});
 	await emit("session_start", { reason: "startup" });
 
 	async function stageSkill(name: string, options: { streamingBehavior?: "steer" | "followUp" } = {}): Promise<void> {
@@ -323,6 +369,7 @@ async function createRouterHarness(
 		modelSelections,
 		thinkingSelections,
 		notifications,
+		usageRecords,
 	};
 }
 
@@ -428,6 +475,51 @@ describe("extension lifecycle", () => {
 
 		await harness.emit("agent_settled");
 		assert.equal(harness.ctx.model.id, "manual");
+	});
+
+	it("attributes finalized responses across a nested tier upgrade", async () => {
+		const harness = await createRouterHarness({
+			build: { tier: "standard", rank: 20 },
+			audit: { tier: "premium", rank: 40 },
+		});
+		await harness.invokeSkill("build");
+		await harness.emit("message_end", { message: assistantMessage("provider", "standard") });
+		await harness.invokeSkill("audit");
+		await harness.emit("message_end", { message: assistantMessage("provider", "premium") });
+
+		assert.equal(harness.usageRecords.length, 2);
+		assert.equal(harness.usageRecords[0]?.tier, "standard");
+		assert.equal(harness.usageRecords[1]?.tier, "premium");
+		assert.equal(harness.usageRecords[0]?.routeRunId, harness.usageRecords[1]?.routeRunId);
+		assert.deepEqual(harness.usageRecords.map((record) => record.responseIndex), [1, 2]);
+		assert.deepEqual(harness.usageRecords[1]?.routedSkills, ["build", "audit"]);
+	});
+
+	it("starts fresh attribution for each run when restoration is disabled", async () => {
+		const harness = await createRouterHarness({ build: { tier: "standard", rank: 20 } }, { restoreAfterRun: false });
+		await harness.invokeSkill("build");
+		await harness.emit("message_end", { message: assistantMessage("provider", "standard") });
+		await harness.emit("agent_settled");
+		await harness.invokeSkill("build");
+		await harness.emit("message_end", { message: assistantMessage("provider", "standard") });
+
+		assert.equal(harness.usageRecords.length, 2);
+		assert.notEqual(harness.usageRecords[0]?.routeRunId, harness.usageRecords[1]?.routeRunId);
+		assert.deepEqual(harness.usageRecords.map((record) => record.responseIndex), [1, 1]);
+	});
+
+	it("stops attribution after a manual override or settlement", async () => {
+		const harness = await createRouterHarness({ build: { tier: "standard", rank: 20 } });
+		await harness.invokeSkill("build");
+		await harness.selectManually(model("provider", "manual"));
+		await harness.emit("message_end", { message: assistantMessage("provider", "manual") });
+		assert.equal(harness.usageRecords.length, 0);
+
+		const settled = await createRouterHarness({ build: { tier: "standard", rank: 20 } });
+		await settled.invokeSkill("build");
+		await settled.emit("agent_settled");
+		await settled.emit("message_end", { message: assistantMessage("provider", "original") });
+		assert.equal(settled.usageRecords.length, 0);
 	});
 
 	it("treats inherited object keys as unknown tiers", async () => {

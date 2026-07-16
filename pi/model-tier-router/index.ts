@@ -1,8 +1,12 @@
 import { readFileSync } from "node:fs";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import { randomUUID } from "node:crypto";
+import { join } from "node:path";
+import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, Skill } from "@earendil-works/pi-coding-agent";
 import { CONFIG_DIR_NAME, getAgentDir, isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import { loadRouterConfig, type LoadedRouterConfig } from "./config.ts";
+import { UsageLedger } from "./usage-ledger.ts";
+import { addUsageRecord, emptyUsageTotals, normalizeUsage, type UsageRecordV1, type UsageTotals } from "./usage.ts";
 import {
 	canonicalPath,
 	decideTier,
@@ -28,6 +32,10 @@ interface RunState {
 	routedSkills: string[];
 	manualModelOverride: boolean;
 	restorePending: boolean;
+	routeRunId: string;
+	responseIndex: number;
+	tierSourceSkill: string;
+	attributionActive: boolean;
 }
 
 interface PendingExplicitRoute {
@@ -39,13 +47,26 @@ function modelId(model: Model<Api> | undefined): string {
 	return model ? `${model.provider}/${model.id}` : "(none)";
 }
 
-export default function modelTierRouter(pi: ExtensionAPI): void {
+interface UsageLedgerPort {
+	start(): void;
+	health(): { pending: number; dropped: number; writeErrors: number };
+	enqueue(record: UsageRecordV1): void;
+	drainWithin(timeoutMs: number): Promise<void>;
+	readRecords(): Promise<{ records: UsageRecordV1[]; skipped: number }>;
+}
+
+export interface ModelTierRouterOptions {
+	usageLedger?: UsageLedgerPort;
+}
+
+export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRouterOptions = {}): void {
 	let loaded: LoadedRouterConfig | undefined;
 	let enabledOverride: boolean | undefined;
 	let run: RunState | undefined;
 	let pendingExplicitRoute: PendingExplicitRoute | undefined;
 	let switchingModel = false;
 	let loadedSkills = new Map<string, Skill>();
+	let usageLedger: UsageLedgerPort | undefined;
 	const warningKeys = new Set<string>();
 	const unavailableWarnings: string[] = [];
 
@@ -78,7 +99,38 @@ export default function modelTierRouter(pi: ExtensionAPI): void {
 			projectTrusted: ctx.isProjectTrusted(),
 			configDirName: CONFIG_DIR_NAME,
 		});
+		const ledgerConfig = loaded.config.usageLedger;
+		usageLedger = options.usageLedger ?? (ledgerConfig.enabled
+			? new UsageLedger(UsageLedger.defaults(join(getAgentDir(), "model-tier-router", "usage", "v1"), ledgerConfig.retentionDays, ledgerConfig.maxBytes))
+			: undefined);
+		usageLedger?.start();
 		for (const warning of loaded.warnings) notify(ctx, `model-tier: ${warning}`, "warning");
+	}
+
+	function recordUsage(message: AssistantMessage, ctx: ExtensionContext): void {
+		const state = run;
+		if (!state?.attributionActive || !usageLedger) return;
+		const { usage, unknownUsageFields } = normalizeUsage(message);
+		const record: UsageRecordV1 = {
+			schemaVersion: 1,
+			recordId: randomUUID(),
+			timestamp: new Date(message.timestamp).toISOString(),
+			sessionId: ctx.sessionManager.getSessionId(),
+			routeRunId: state.routeRunId,
+			responseIndex: ++state.responseIndex,
+			tier: state.activeTier,
+			tierSourceSkill: state.tierSourceSkill,
+			routedSkills: [...state.routedSkills],
+			provider: message.provider,
+			model: message.model,
+			responseModel: message.responseModel ?? null,
+			thinking: pi.getThinkingLevel(),
+			stopReason: message.stopReason,
+			usage,
+			unknownUsageFields,
+			providerReportedCost: null,
+		};
+		usageLedger.enqueue(record);
 	}
 
 	function readMetadata(path: string, ctx: ExtensionContext): SkillRoutingMetadata | undefined {
@@ -197,12 +249,17 @@ export default function modelTierRouter(pi: ExtensionAPI): void {
 				routedSkills: [skillName],
 				manualModelOverride: false,
 				restorePending: false,
+				routeRunId: randomUUID(),
+				responseIndex: 0,
+				tierSourceSkill: skillName,
+				attributionActive: true,
 			};
 		} else {
 			run.activeTier = metadata.tier;
 			run.activeRank = route.rank;
 			run.requestedThinking = selectedThinking;
 			run.activeThinking = pi.getThinkingLevel();
+			run.tierSourceSkill = skillName;
 			if (!run.routedSkills.includes(skillName)) run.routedSkills.push(skillName);
 		}
 		updateStatus(ctx);
@@ -292,13 +349,19 @@ export default function modelTierRouter(pi: ExtensionAPI): void {
 	pi.on("model_select", (event, ctx) => {
 		if (!run || switchingModel || event.source === "restore") return;
 		run.manualModelOverride = true;
+		run.attributionActive = false;
 		if (run.restorePending) {
 			run = undefined;
 			updateStatus(ctx);
 		}
 	});
 
+	pi.on("message_end", (event, ctx) => {
+		if (event.message.role === "assistant") recordUsage(event.message, ctx);
+	});
+
 	pi.on("agent_settled", async (_event, ctx) => {
+		if (run) run.attributionActive = false;
 		await restore(ctx, true);
 		pendingExplicitRoute = undefined;
 		loadedSkills.clear();
@@ -307,13 +370,15 @@ export default function modelTierRouter(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
+		if (run) run.attributionActive = false;
 		await restore(ctx, false);
+		await usageLedger?.drainWithin(50);
 		pendingExplicitRoute = undefined;
 		loadedSkills.clear();
 	});
 
 	pi.registerCommand("model-tier", {
-		description: "Show, reload, enable, or disable model-tier routing",
+		description: "Show routing state or Pi-normalized local usage; reload, enable, or disable routing",
 		handler: async (args, ctx) => {
 			const action = args.trim() || "status";
 			if (action === "reload") {
@@ -327,8 +392,35 @@ export default function modelTierRouter(pi: ExtensionAPI): void {
 				notify(ctx, `model-tier: ${action}`, "info");
 				return;
 			}
+			if (action === "usage") {
+				if (!usageLedger) {
+					notify(ctx, "model-tier: usage ledger is disabled (set global usageLedger.enabled to true)", "info");
+					return;
+				}
+				await usageLedger.drainWithin(50);
+				const { records, skipped } = await usageLedger.readRecords();
+				const groups = new Map<string, UsageTotals>();
+				for (const record of records) {
+					const key = `${record.tier} | ${record.provider}/${record.model}`;
+					let totals = groups.get(key);
+					if (!totals) {
+						totals = emptyUsageTotals();
+						groups.set(key, totals);
+					}
+					addUsageRecord(totals, record);
+				}
+				const health = usageLedger.health();
+				const lines = ["Pi-normalized observed responses — not subscription quota or provider billing."];
+				for (const [key, totals] of groups) {
+					lines.push(`${key}: ${totals.responses} responses; in ${totals.input}; cache-read ${totals.cacheRead}; cache-write ${totals.cacheWrite}; cache-write-1h ${totals.cacheWrite1h}; out ${totals.output}; reasoning ${totals.reasoning}; unknown input/cache-read/cache-write/cache-write-1h/output/reasoning ${totals.unknown.input}/${totals.unknown.cacheRead}/${totals.unknown.cacheWrite}/${totals.unknown.cacheWrite1h}/${totals.unknown.output}/${totals.unknown.reasoning}`);
+				}
+				lines.push("provider-reported cost: unavailable; Pi exposes configured-price calculations only.");
+				lines.push(`ledger health: pending ${health.pending}; dropped ${health.dropped}; write errors ${health.writeErrors}; skipped records ${skipped}`);
+				notify(ctx, lines.join("\n"), "info");
+				return;
+			}
 			if (action !== "status") {
-				notify(ctx, "Usage: /model-tier status|reload|on|off", "warning");
+				notify(ctx, "Usage: /model-tier status|usage|reload|on|off", "warning");
 				return;
 			}
 			const lines = [
@@ -344,6 +436,7 @@ export default function modelTierRouter(pi: ExtensionAPI): void {
 				`manual model override: ${run?.manualModelOverride ?? false}`,
 				`config: ${loaded?.loadedPaths.join(", ") || "defaults"}`,
 				`warnings: ${unavailableWarnings.join("; ") || "(none)"}`,
+				`usage ledger: ${usageLedger ? JSON.stringify(usageLedger.health()) : "disabled"}`,
 			];
 			notify(ctx, lines.join("\n"), "info");
 		},

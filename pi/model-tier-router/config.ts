@@ -4,10 +4,17 @@ import type { TierRoute, ThinkingLevel } from "./routing.ts";
 
 const THINKING_LEVELS = new Set<ThinkingLevel>(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
+export interface UsageLedgerConfig {
+	enabled: boolean;
+	retentionDays: number;
+	maxBytes: number;
+}
+
 export interface RouterConfig {
 	enabled: boolean;
 	routeImplicitSkillReads: boolean;
 	restoreAfterRun: boolean;
+	usageLedger: UsageLedgerConfig;
 	tiers: Record<string, TierRoute>;
 }
 
@@ -34,6 +41,7 @@ const DEFAULT_CONFIG: RouterConfig = {
 	enabled: true,
 	routeImplicitSkillReads: true,
 	restoreAfterRun: true,
+	usageLedger: { enabled: false, retentionDays: 30, maxBytes: 10 * 1024 * 1024 },
 	tiers: emptyTiers(),
 };
 
@@ -95,6 +103,7 @@ interface PartialRouterConfig {
 	enabled?: boolean;
 	routeImplicitSkillReads?: boolean;
 	restoreAfterRun?: boolean;
+	usageLedger?: UsageLedgerConfig;
 	tiers: Record<string, TierRoute>;
 }
 
@@ -109,6 +118,17 @@ function parseConfig(value: unknown, path: string, warnings: string[]): PartialR
 		if (input[key] === undefined) continue;
 		if (typeof input[key] !== "boolean") warnings.push(`${path}: ${key} must be boolean`);
 		else parsed[key] = input[key];
+	}
+	if (input.usageLedger !== undefined) {
+		if (!input.usageLedger || typeof input.usageLedger !== "object" || Array.isArray(input.usageLedger)) {
+			warnings.push(`${path}: usageLedger must be an object`);
+		} else {
+			const ledger = input.usageLedger as Record<string, unknown>;
+			if (typeof ledger.enabled !== "boolean") warnings.push(`${path}: usageLedger.enabled must be boolean`);
+			else if (!Number.isInteger(ledger.retentionDays) || (ledger.retentionDays as number) < 1) warnings.push(`${path}: usageLedger.retentionDays must be a positive integer`);
+			else if (!Number.isInteger(ledger.maxBytes) || (ledger.maxBytes as number) < 1024) warnings.push(`${path}: usageLedger.maxBytes must be an integer of at least 1024`);
+			else parsed.usageLedger = { enabled: ledger.enabled, retentionDays: ledger.retentionDays as number, maxBytes: ledger.maxBytes as number };
+		}
 	}
 	if (input.tiers !== undefined) {
 		if (!input.tiers || typeof input.tiers !== "object" || Array.isArray(input.tiers)) {
@@ -128,6 +148,7 @@ function mergeConfig(base: RouterConfig, override: PartialRouterConfig): RouterC
 		enabled: override.enabled ?? base.enabled,
 		routeImplicitSkillReads: override.routeImplicitSkillReads ?? base.routeImplicitSkillReads,
 		restoreAfterRun: override.restoreAfterRun ?? base.restoreAfterRun,
+		usageLedger: override.usageLedger ?? base.usageLedger,
 		tiers: Object.assign(emptyTiers(), base.tiers, override.tiers),
 	};
 }
@@ -153,6 +174,10 @@ export function loadRouterConfig(options: LoadConfigOptions): LoadedRouterConfig
 		if (projectValue !== undefined) {
 			const parsed = parseConfig(projectValue, projectPath, warnings);
 			if (parsed) {
+				if (parsed.usageLedger) {
+					warnings.push(`${projectPath}: usageLedger is global-only and was ignored`);
+					parsed.usageLedger = undefined;
+				}
 				config = mergeConfig(config, parsed);
 				loadedPaths.push(projectPath);
 			}
