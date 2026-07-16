@@ -120,6 +120,10 @@ function fmtDuration(ms: number): string {
 	return `${s}s`;
 }
 
+function fmtTime(date: Date): string {
+	return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 function runGit(cwd: string, args: string[]): string | null {
 	try {
 		return execFileSync("git", ["-C", cwd, ...args], {
@@ -262,9 +266,10 @@ export default function piStatusline(pi: ExtensionAPI): void {
 			ctx.ui.setWidget("pi-statusline-last-prompt", undefined);
 			return;
 		}
+		const line = `Last [${fmtTime(new Date())}]: ${text}`;
 		ctx.ui.setWidget("pi-statusline-last-prompt", (_tui, theme) => ({
 			render(width: number): string[] {
-				return [theme.fg("dim", `Last: ${truncateToWidth(text, Math.max(1, width - 6), "…")}`)];
+				return [theme.fg("dim", truncateToWidth(line, width, "…"))];
 			},
 			invalidate() {},
 		}));
@@ -314,7 +319,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					.filter(Boolean)
 					.join(" ");
 				return {
-					clock: theme.fg("dim", new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })),
+					clock: theme.fg("dim", fmtTime(new Date())),
 					host: theme.fg("accent", `▣ ${hostname().split(".")[0]}`),
 					agent: theme.fg("success", theme.bold("π")),
 					model: theme.fg("success", theme.bold(`${provider} ${model}`)),

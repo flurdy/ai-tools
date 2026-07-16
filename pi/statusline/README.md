@@ -29,7 +29,7 @@ Then restart Pi, or run `/reload` from an existing Pi session.
 
 ## What it shows
 
-- latest submitted prompt above the editor (single-line and width-truncated)
+- latest submitted prompt and its local submission time above the editor (single-line and width-truncated)
 - clock
 - current session name (truncated when necessary)
 - `π` agent marker in its own cell; model (including variants such as Sol, Terra, and Luna); and thinking level
