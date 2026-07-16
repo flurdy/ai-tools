@@ -42,6 +42,10 @@ pl --thinking=high
 pl --name='ticket work'
 ```
 
+By default, `pl` pins new launches to `openai-codex/gpt-5.6-sol` with `high`
+thinking. This keeps new sessions stable when extensions temporarily change Pi's
+persisted defaults. Use `--model` and `--thinking` to override either value.
+
 Picker keys:
 
 - `enter`: default launch mode for the row (`main` starts fresh, worktrees continue, handoffs start fresh with the note loaded)

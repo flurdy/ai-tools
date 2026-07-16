@@ -1,8 +1,8 @@
 function pl --description 'Pi launcher: pick a context (main/worktree/handoff/new) and start pi'
     set -l bin "$HOME/.pi/bin"
     set -l dry 0
-    set -l model ''
-    set -l thinking ''
+    set -l model 'openai-codex/gpt-5.6-sol'
+    set -l thinking 'high'
     set -l name ''
 
     for a in $argv
@@ -21,6 +21,7 @@ function pl --description 'Pi launcher: pick a context (main/worktree/handoff/ne
             case --help -h
                 echo 'pl [--model=ID] [--thinking=LEVEL] [--name=NAME] [--dry-run|-n] [--list]'
                 echo '  pick a context via fzf, then launch pi there.'
+                echo '  defaults: openai-codex/gpt-5.6-sol with high thinking'
                 echo '  enter=default session  ctrl-n=new  ctrl-r=resume-pick  ctrl-w=worktree'
                 return 0
         end

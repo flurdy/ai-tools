@@ -6,6 +6,7 @@ CL_GATHER="$ROOT/claude/launcher/cl-gather"
 PL_GATHER="$ROOT/pi/launcher/pl-gather"
 CL_MKWORKTREE="$ROOT/claude/launcher/cl-mkworktree"
 PL_MKWORKTREE="$ROOT/pi/launcher/pl-mkworktree"
+PL_FUNCTION="$ROOT/pi/launcher/pl.fish"
 
 if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
   echo "launcher tests require Bash 4+" >&2
@@ -20,6 +21,18 @@ repo="$tmp/project"
 home="$tmp/home"
 bin="$tmp/bin"
 mkdir -p "$repo" "$home" "$bin"
+
+# The Pi frontend pins a stable baseline so temporary model-tier routes in other
+# sessions cannot leak into a new launch through Pi's persisted defaults.
+fish -n "$PL_FUNCTION"
+nonrepo="$tmp/nonrepo"
+mkdir -p "$nonrepo"
+pl_default=$(fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run' "$PL_FUNCTION" "$nonrepo" 2>/dev/null)
+printf '%s\n' "$pl_default" | grep -qF 'pi --model openai-codex/gpt-5.6-sol --thinking high' \
+  || fail "Pi launcher defaults missing"
+pl_override=$(fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run --model=anthropic/claude-sonnet-5 --thinking=medium' "$PL_FUNCTION" "$nonrepo" 2>/dev/null)
+printf '%s\n' "$pl_override" | grep -qF 'pi --model anthropic/claude-sonnet-5 --thinking medium' \
+  || fail "Pi launcher overrides ignored"
 
 git -C "$repo" init -q -b main
 git -C "$repo" config user.name "Launcher Test"
