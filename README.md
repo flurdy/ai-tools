@@ -55,3 +55,7 @@ These scripts are extracted from my own environment, so they intentionally keep 
 Created and maintained by [Ivar Abrahamsen](https://flurdy.com) / [@flurdy](https://github.com/flurdy).
 
 PRs, issues, forks, and adaptations are welcome. These tools are personal and opinionated, but shared in case they are useful as-is or as a starting point.
+
+## License
+
+[MIT](LICENSE) © [Ivar Abrahamsen](https://flurdy.com)

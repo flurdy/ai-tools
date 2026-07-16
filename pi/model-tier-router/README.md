@@ -111,3 +111,11 @@ Pi loads `index.ts` directly; no build output is required.
 - A manual model selection during a routed run disables further routing and cancels automatic restoration, so the extension does not fight `/model` or model cycling.
 - A failed restoration remains visible as pending and is retried when the agent next settles; routing pauses until restoration succeeds or the user manually chooses another model.
 - Session shutdown/reload attempts the same safe restoration when appropriate.
+
+## Contributing
+
+Issues and pull requests are welcome, especially for new routing-policy use cases and Pi compatibility fixes.
+
+## License
+
+[MIT](../../LICENSE) © [Ivar Abrahamsen](https://flurdy.com)
