@@ -1,6 +1,6 @@
 # Pi Model Tier Router
 
-Small, provider-neutral Pi extension that maps semantic skill metadata such as `model-tier: standard-coding` to exact locally configured models and honors skill `effort` as Pi's thinking level. It restores the previous model and thinking level when the agent run settles.
+Small, provider-neutral Pi extension that maps semantic skill metadata such as `model-tier: focused-coding` to exact locally configured models and honors skill `effort` as Pi's thinking level. It restores the previous model and thinking level when the agent run settles.
 
 Exact provider/model IDs stay in local JSON configuration; the extension contains no provider defaults.
 
@@ -44,6 +44,14 @@ Supported options:
 - `tiers.<name>.thinking`: default Pi thinking level when the skill does not declare `effort`.
 - `tiers.<name>.candidates`: exact, ordered model candidates and their local `metered` flag.
 - `usageLedger`: optional global-only local telemetry. It defaults to disabled; when enabled it writes Pi-normalized assistant-response token counters under `~/.pi/agent/model-tier-router/usage/v1/`. `retentionDays` and `maxBytes` bound retention. Project configuration cannot enable it.
+
+The router accepts arbitrary tier names, but the shared portable taxonomy uses
+`standard-workflow` for coordination, `focused-coding` for bounded implementation on
+an established pattern, and `advanced-coding` for implementation that still needs
+meaningful local design judgment. Configure focused below advanced in rank so nested
+skills can upgrade but never silently downshift. `standard-coding` is a retired shared
+name: existing private/project metadata remains syntactically valid, but should migrate
+to focused or advanced according to work shape.
 
 ## Skill metadata
 

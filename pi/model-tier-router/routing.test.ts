@@ -81,6 +81,13 @@ describe("tier decisions", () => {
 		assert.equal(decideTier({ tier: "premium", rank: 40 }, { tier: "cheap", rank: 10 }), "retain-lower");
 	});
 
+	it("upgrades focused coding to advanced coding without downshifting", () => {
+		const focused = { tier: "focused-coding", rank: 25 };
+		const advanced = { tier: "advanced-coding", rank: 30 };
+		assert.equal(decideTier(focused, advanced), "upgrade");
+		assert.equal(decideTier(advanced, focused), "retain-lower");
+	});
+
 	it("retains the root route for equal-ranked tiers", () => {
 		assert.equal(decideTier({ tier: "premium-review", rank: 40 }, { tier: "premium-reasoning", rank: 40 }), "retain-equal");
 	});
@@ -147,6 +154,24 @@ describe("configuration", () => {
 		assert.equal(result.config.tiers.standard.candidates[0]?.model, "project/standard");
 		assert.equal(result.config.tiers.cheap.rank, 10);
 		assert.equal(result.loadedPaths.length, 2);
+	});
+
+	it("keeps retired tier names syntactically valid for migration", () => {
+		const root = mkdtempSync(join(tmpdir(), "model-tier-router-"));
+		const agentDir = join(root, "agent");
+		const cwd = join(root, "project");
+		mkdirSync(agentDir, { recursive: true });
+		writeFileSync(
+			join(agentDir, "model-tier-router.json"),
+			JSON.stringify({
+				tiers: {
+					"standard-coding": { rank: 30, thinking: "high", candidates: [{ model: "legacy/coding", metered: false }] },
+				},
+			}),
+		);
+
+		const result = loadRouterConfig({ agentDir, cwd, projectTrusted: false });
+		assert.equal(result.config.tiers["standard-coding"]?.candidates[0]?.model, "legacy/coding");
 	});
 
 	it("ignores an untrusted project override", () => {

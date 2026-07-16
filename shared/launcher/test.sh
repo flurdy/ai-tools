@@ -28,7 +28,7 @@ fish -n "$PL_FUNCTION"
 nonrepo="$tmp/nonrepo"
 mkdir -p "$nonrepo"
 pl_default=$(fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run' "$PL_FUNCTION" "$nonrepo" 2>/dev/null)
-printf '%s\n' "$pl_default" | grep -qF 'pi --model openai-codex/gpt-5.6-sol --thinking high' \
+printf '%s\n' "$pl_default" | grep -qF 'pi --model openai-codex/gpt-5.6-terra --thinking high' \
   || fail "Pi launcher defaults missing"
 pl_override=$(fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run --model=anthropic/claude-sonnet-5 --thinking=medium' "$PL_FUNCTION" "$nonrepo" 2>/dev/null)
 printf '%s\n' "$pl_override" | grep -qF 'pi --model anthropic/claude-sonnet-5 --thinking medium' \

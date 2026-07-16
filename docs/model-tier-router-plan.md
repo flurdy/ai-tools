@@ -1,10 +1,15 @@
 # Architect Plan: Pi model-tier router
 
+> **Historical taxonomy note (2026-07-16):** this implementation plan predates the
+> `focused-coding` / `advanced-coding` split. Its `standard-coding` examples describe
+> the class now named `advanced-coding`; current configuration guidance lives in
+> [`../pi/model-tier-router/README.md`](../pi/model-tier-router/README.md).
+
 ## Planning tier
 
 - **Tier:** premium
 - **Why:** Model switching, nested skills, cost confirmation, and restoration have subtle lifecycle risks.
-- **Implementation tier:** standard-coding is sufficient once this plan is approved; use a focused review afterward.
+- **Implementation tier:** advanced-coding is sufficient once this plan is approved; use a focused review afterward.
 
 ## Goal
 

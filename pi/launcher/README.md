@@ -42,10 +42,11 @@ pl --thinking=high
 pl --name='ticket work'
 ```
 
-By default, `pl` pins fresh sessions to `openai-codex/gpt-5.6-sol` with `high`
-thinking. This keeps new sessions stable when extensions temporarily change Pi's
-persisted defaults. Continue/resume launches preserve the session's saved model;
-use `--model` and `--thinking` to override either value explicitly.
+By default, `pl` pins fresh sessions to `openai-codex/gpt-5.6-terra` with `high`
+thinking. This gives free-form implementation a focused-coding baseline without
+spending Sol capacity on every new conversation; routed skills may still upgrade to
+advanced or premium tiers. Continue/resume launches preserve the session's saved
+model; use `--model` and `--thinking` to override either value explicitly.
 
 Picker keys:
 

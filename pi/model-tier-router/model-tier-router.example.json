@@ -18,10 +18,15 @@
       "thinking": "medium",
       "candidates": [{ "model": "provider/workflow-model-id", "metered": false }]
     },
-    "standard-coding": {
+    "focused-coding": {
+      "rank": 25,
+      "thinking": "high",
+      "candidates": [{ "model": "provider/focused-coding-model-id", "metered": false }]
+    },
+    "advanced-coding": {
       "rank": 30,
       "thinking": "high",
-      "candidates": [{ "model": "provider/coding-model-id", "metered": false }]
+      "candidates": [{ "model": "provider/advanced-coding-model-id", "metered": false }]
     },
     "long-context-audit": {
       "rank": 35,
