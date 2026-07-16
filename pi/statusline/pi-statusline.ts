@@ -255,12 +255,32 @@ export default function piStatusline(pi: ExtensionAPI): void {
 	let thinking = process.env.PI_STATUSLINE_THINKING ?? "";
 	let startedAt = Date.now();
 
+	function setLastPromptWidget(ctx: ExtensionContext, prompt?: string): void {
+		if (ctx.mode !== "tui" || process.env.PI_STATUSLINE_LAST_PROMPT === "0") return;
+		const text = prompt?.replace(/\s+/g, " ").trim();
+		if (!text) {
+			ctx.ui.setWidget("pi-statusline-last-prompt", undefined);
+			return;
+		}
+		ctx.ui.setWidget("pi-statusline-last-prompt", (_tui, theme) => ({
+			render(width: number): string[] {
+				return [theme.fg("dim", `Last: ${truncateToWidth(text, Math.max(1, width - 6), "…")}`)];
+			},
+			invalidate() {},
+		}));
+	}
+
+	pi.on("input", (event, ctx) => {
+		if (event.source !== "extension") setLastPromptWidget(ctx, event.text);
+	});
+
 	pi.on("thinking_level_select", (event) => {
 		thinking = event.level;
 	});
 
 	pi.on("session_start", (_event, ctx) => {
 		startedAt = Date.now();
+		setLastPromptWidget(ctx);
 		for (const entry of [...ctx.sessionManager.getBranch()].reverse()) {
 			if (entry.type === "thinking_level_change") {
 				thinking = entry.thinkingLevel;
