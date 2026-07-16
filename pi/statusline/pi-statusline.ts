@@ -296,7 +296,8 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				return {
 					clock: theme.fg("dim", new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })),
 					host: theme.fg("accent", `▣ ${hostname().split(".")[0]}`),
-					model: theme.fg("success", theme.bold(`π ${provider} ${model}`)),
+					agent: theme.fg("success", theme.bold("π")),
+					model: theme.fg("success", theme.bold(`${provider} ${model}`)),
 					effort: effort ? theme.fg("accent", effort) : "",
 					session: sessionName ? theme.fg("accent", `◈ ${truncateToWidth(sessionName, 24, "…")}`) : "",
 					bars: `${bar(usage.ctxPct, 3, 34, 67, colors)} ${theme.fg("dim", `ctx ${contextPct}%`)}`,
@@ -317,13 +318,13 @@ export default function piStatusline(pi: ExtensionAPI): void {
 
 			function compact(width: number): string[] {
 				const s = segments();
-				let cells = [s.clock, joinCells([s.model, s.effort]), s.bars, s.duration, s.path, s.repo, s.branch, s.pr, s.session].filter(Boolean);
+				let cells = [s.clock, joinCells([s.agent, s.model, s.effort]), s.bars, s.duration, s.path, s.repo, s.branch, s.pr, s.session].filter(Boolean);
 				let line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
-				cells = [joinCells([s.model, s.effort]), s.bars, s.duration, s.repo, s.branch, s.pr, s.session].filter(Boolean);
+				cells = [joinCells([s.agent, s.model, s.effort]), s.bars, s.duration, s.repo, s.branch, s.pr, s.session].filter(Boolean);
 				line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
-				cells = [s.model, s.bars, s.branch, s.session].filter(Boolean);
+				cells = [s.agent, s.model, s.bars, s.branch, s.session].filter(Boolean);
 				return [truncateToWidth(joinCells(cells), width)];
 			}
 
@@ -331,7 +332,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const s = segments();
 				const border = (text: string) => theme.fg("border", text);
 				let row1 = [s.host, s.path, s.repo, s.branch, s.pr, s.session].filter(Boolean);
-				const row2 = [s.model, s.effort, s.ctx, s.tokens, s.cost, s.duration, s.clock].filter(Boolean);
+				const row2 = [s.agent, s.model, s.effort, s.ctx, s.tokens, s.cost, s.duration, s.clock].filter(Boolean);
 
 				function widthsFor(cells: string[]): number[] {
 					return cells.map((cell) => visibleWidth(cell) + 2);

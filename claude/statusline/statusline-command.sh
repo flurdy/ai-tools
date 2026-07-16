@@ -267,9 +267,10 @@ fmt_duration() {
 
 # ===== LINE 1: Environment segments =====
 
-# Model tag
+# Agent and model tags
 model_short=$(short_model "$model_id")
-segment_model="${C_MODEL}${BOLD}✦ ${model_short}${RST}"
+segment_agent="${C_MODEL}${BOLD}✦${RST}"
+segment_model="${C_MODEL}${BOLD}${model_short}${RST}"
 
 # Hostname (using nerd font icon - screen/monitor F108)
 segment_host="${C_HOST}${BOLD}$(printf '\xef\x84\x88') ${host}${RST}"
@@ -474,10 +475,11 @@ render_compact() {
   assemble() {
     cells=()
     [ "$show_clock" = 1 ] && cells+=("$segment_clock")
+    cells+=("$segment_agent")
     if [ "$show_effort" = 1 ] && [ -n "$seg_e" ]; then
-      cells+=("${C_MODEL}${BOLD}✦ ${m1}${RST} ${seg_e}")
+      cells+=("${C_MODEL}${BOLD}${m1}${RST} ${seg_e}")
     else
-      cells+=("${C_MODEL}${BOLD}✦ ${m1}${RST}")
+      cells+=("${C_MODEL}${BOLD}${m1}${RST}")
     fi
     cells+=("$seg_bars")
     [ "$show_dur" = 1 ] && cells+=("$segment_time")
@@ -596,7 +598,7 @@ render_table() {
   [ -n "$segment_pr" ] && r1_segs+=("$segment_pr")
 
   # Row 2: Claude session info
-  local r2_segs=("$segment_model")
+  local r2_segs=("$segment_agent" "$segment_model")
   [ -n "$segment_effort" ] && r2_segs+=("$segment_effort")
   r2_segs+=("$segment_ctx" "$segment_5h" "$segment_7d" "$segment_cost" "$segment_time" "$segment_clock")
 
