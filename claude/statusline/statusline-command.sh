@@ -269,7 +269,7 @@ fmt_duration() {
 
 # Model tag
 model_short=$(short_model "$model_id")
-segment_model="${C_MODEL}${BOLD}${model_short}${RST}"
+segment_model="${C_MODEL}${BOLD}✦ ${model_short}${RST}"
 
 # Hostname (using nerd font icon - screen/monitor F108)
 segment_host="${C_HOST}${BOLD}$(printf '\xef\x84\x88') ${host}${RST}"
@@ -475,9 +475,9 @@ render_compact() {
     cells=()
     [ "$show_clock" = 1 ] && cells+=("$segment_clock")
     if [ "$show_effort" = 1 ] && [ -n "$seg_e" ]; then
-      cells+=("${C_MODEL}${BOLD}${m1}${RST} ${seg_e}")
+      cells+=("${C_MODEL}${BOLD}✦ ${m1}${RST} ${seg_e}")
     else
-      cells+=("${C_MODEL}${BOLD}${m1}${RST}")
+      cells+=("${C_MODEL}${BOLD}✦ ${m1}${RST}")
     fi
     cells+=("$seg_bars")
     [ "$show_dur" = 1 ] && cells+=("$segment_time")

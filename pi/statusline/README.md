@@ -30,7 +30,7 @@ Then restart Pi, or run `/reload` from an existing Pi session.
 
 - clock
 - current session name (truncated when necessary)
-- model (including variants such as Sol, Terra, and Luna) and thinking level
+- `π` agent marker, model (including variants such as Sol, Terra, and Luna), and thinking level
 - cautious context-capacity bar (green through 33%, yellow through 66%, then red)
 - cumulative input/output tokens and cache-hit percentage
 - session duration

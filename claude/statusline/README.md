@@ -1,6 +1,6 @@
 # Claude Statusline
 
-Claude Code statusline command inspired by Bobthefish.
+Claude Code statusline command inspired by Bobthefish. It prefixes the model with Claude's `✦` mark so sessions are immediately distinguishable from Pi.
 
 ## Files
 

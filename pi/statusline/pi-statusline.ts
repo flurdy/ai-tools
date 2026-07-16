@@ -296,7 +296,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				return {
 					clock: theme.fg("dim", new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })),
 					host: theme.fg("accent", `▣ ${hostname().split(".")[0]}`),
-					model: theme.fg("success", theme.bold(`${provider} ${model}`)),
+					model: theme.fg("success", theme.bold(`π ${provider} ${model}`)),
 					effort: effort ? theme.fg("accent", effort) : "",
 					session: sessionName ? theme.fg("accent", `◈ ${truncateToWidth(sessionName, 24, "…")}`) : "",
 					bars: `${bar(usage.ctxPct, 3, 34, 67, colors)} ${theme.fg("dim", `ctx ${contextPct}%`)}`,
