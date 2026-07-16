@@ -65,6 +65,29 @@ pl_rows=$(cd "$repo" && HOME="$home" XDG_CACHE_HOME="$tmp/cache" \
 printf '%s\n' "$cl_rows" | grep -q $'\tmain\t' || fail "main row missing"
 printf '%s\n' "$cl_rows" | grep -q $'+ new worktree\tnew\t' || fail "new row missing"
 
+# Handoff records include the time in field 15. The launcher displays it and
+# sorts by the full timestamp, rather than the source script's filename order.
+cat > "$tmp/handoff-list" <<EOF
+#!/usr/bin/env bash
+echo '---CURRENT-REPO---'
+echo '$repo/.git'
+echo '---HANDOFFS-DIR---'
+echo '$home/.claude/handoffs'
+echo '---HANDOFFS---'
+echo '2026-07-15-early.md|2026-07-15|early|$repo|main|$repo/.git|Y||||||||00:30'
+echo '2026-07-15-latest.md|2026-07-15|latest|$repo|main|$repo/.git|Y||||||||17:12'
+echo '2026-07-15-middle.md|2026-07-15|middle|$repo|main|$repo/.git|Y||||||||04:31'
+EOF
+chmod +x "$tmp/handoff-list"
+handoff_rows=$(cd "$repo" && HOME="$home" XDG_CACHE_HOME="$tmp/cache" \
+  GH_COUNT="$tmp/gh-count" PATH="$TEST_PATH" AI_HANDOFF_LIST="$tmp/handoff-list" \
+  "$PL_GATHER" --list | awk -F '\t' '$2 == "handoff" { print $1 }')
+expected_handoffs=$(printf '%s\n' \
+  "handoff: latest   (2026-07-15 17:12 · $repo)" \
+  "handoff: middle   (2026-07-15 04:31 · $repo)" \
+  "handoff: early   (2026-07-15 00:30 · $repo)")
+[ "$handoff_rows" = "$expected_handoffs" ] || fail "handoffs were not timestamped and newest-first"
+
 # Claude retains its fork capability; Pi does not advertise it.
 claude_desc=$(cd "$repo" && HOME="$home" XDG_CACHE_HOME="$tmp/cache" \
   GH_COUNT="$tmp/gh-count" PATH="$TEST_PATH" FZF_LOG="$tmp/cl.args" \

@@ -107,7 +107,7 @@ fi
 # its own row, so sibling-repo handoffs do not leak into this picker.
 CURRENT_REPO=""
 HANDOFFS_DIR_LS="$HOME/.claude/handoffs"
-declare -a HO_FILE HO_SLUG HO_PATH HO_BRANCH HO_DATE
+declare -a HO_FILE HO_SLUG HO_PATH HO_BRANCH HO_DATE HO_TIME HO_SORT_KEY
 if [ -x "$HANDOFF_LIST" ]; then
   section=""
   while IFS= read -r line; do
@@ -116,11 +116,19 @@ if [ -x "$HANDOFF_LIST" ]; then
       ---CURRENT-REPO---) [ -z "$CURRENT_REPO" ] && CURRENT_REPO="$line" ;;
       ---HANDOFFS-DIR---) [ -n "$line" ] && HANDOFFS_DIR_LS="$line" ;;
       ---HANDOFFS---)
-        IFS='|' read -r hfile hdate hslug hpath hbranch hrepo _rest <<<"$line"
+        # Field 15 is the HH:MM handoff time. Keep the trailing fields opaque:
+        # list.sh has a wider, evolving record format, while the launcher only
+        # needs the identity, pickup location, and timestamp.
+        IFS='|' read -r hfile hdate hslug hpath hbranch hrepo _exists _supby \
+          _supreason _state _prstate _prnum _prurl _archclass htime _rest <<<"$line"
         [ -z "$hfile" ] && continue
         [ -n "$CURRENT_REPO" ] && [ "$hrepo" != "$CURRENT_REPO" ] && continue
+        [ "$htime" = "?" ] || [[ "$htime" =~ ^[0-2][0-9]:[0-5][0-9]$ ]] || htime="?"
         HO_FILE+=("$hfile"); HO_SLUG+=("$hslug"); HO_PATH+=("$hpath")
-        HO_BRANCH+=("$hbranch"); HO_DATE+=("$hdate")
+        HO_BRANCH+=("$hbranch"); HO_DATE+=("$hdate"); HO_TIME+=("$htime")
+        # Unknown times fall back to midnight, so known same-day entries sort
+        # first while the date still orders legacy handoffs correctly.
+        HO_SORT_KEY+=("$hdate ${htime/\?/00:00}")
         ;;
     esac
   done < <("$HANDOFF_LIST" 2>/dev/null)
@@ -165,9 +173,23 @@ flush_wt
 
 # A handoff is a markdown note rather than a recorded agent conversation. The
 # caller starts a fresh session in the pick-up directory and loads the note.
-for i in "${!HO_FILE[@]}"; do
+# list.sh's filename ordering cannot distinguish same-day handoffs, so sort by
+# its header/mtime-derived timestamp here rather than trusting input order.
+HO_ORDER=("${!HO_FILE[@]}")
+for ((i = 1; i < ${#HO_ORDER[@]}; i++)); do
+  candidate=${HO_ORDER[$i]}
+  j=$((i - 1))
+  while ((j >= 0)) && [[ "${HO_SORT_KEY[${HO_ORDER[$j]}]}" < "${HO_SORT_KEY[$candidate]}" ]]; do
+    HO_ORDER[$((j + 1))]=${HO_ORDER[$j]}
+    j=$((j - 1))
+  done
+  HO_ORDER[$((j + 1))]=$candidate
+done
+for i in "${HO_ORDER[@]}"; do
   hp="${HO_PATH[$i]/#$HOME/\~}"
-  add_row "handoff: ${HO_SLUG[$i]}   (${HO_DATE[$i]} · $hp)" \
+  timestamp="${HO_DATE[$i]}"
+  [ "${HO_TIME[$i]}" = "?" ] || timestamp+=" ${HO_TIME[$i]}"
+  add_row "handoff: ${HO_SLUG[$i]}   ($timestamp · $hp)" \
           handoff "${HO_PATH[$i]}" "${HO_BRANCH[$i]}" handoff \
           "$HANDOFFS_DIR_LS/${HO_FILE[$i]}"
 done
