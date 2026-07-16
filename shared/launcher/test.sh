@@ -41,6 +41,20 @@ printf 'base\n' > "$repo/file.txt"
 git -C "$repo" add file.txt
 git -C "$repo" commit -qm init
 
+# Continue/resume keeps the model recorded in that session unless the caller
+# explicitly asks to override it.
+mkdir -p "$home/.pi/bin"
+cat > "$home/.pi/bin/pl-gather" <<EOF
+#!/usr/bin/env bash
+printf 'worktree\t%s\tmain\tcontinue\t\n' '$repo'
+EOF
+chmod +x "$home/.pi/bin/pl-gather"
+pl_continue=$(HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run' "$PL_FUNCTION" "$repo")
+printf '%s\n' "$pl_continue" | grep -qxF 'pi --continue' || fail "Pi continue model was overridden"
+pl_continue_override=$(HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run --model=anthropic/claude-sonnet-5 --thinking=medium' "$PL_FUNCTION" "$repo")
+printf '%s\n' "$pl_continue_override" | grep -qxF 'pi --model anthropic/claude-sonnet-5 --thinking medium --continue' \
+  || fail "Pi continue override was ignored"
+
 mkdir -p \
   "$repo/.claude" \
   "$repo/.pi" \

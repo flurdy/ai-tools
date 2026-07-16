@@ -1,8 +1,10 @@
 function pl --description 'Pi launcher: pick a context (main/worktree/handoff/new) and start pi'
     set -l bin "$HOME/.pi/bin"
     set -l dry 0
-    set -l model 'openai-codex/gpt-5.6-sol'
-    set -l thinking 'high'
+    set -l default_model 'openai-codex/gpt-5.6-sol'
+    set -l default_thinking 'high'
+    set -l model ''
+    set -l thinking ''
     set -l name ''
 
     for a in $argv
@@ -21,7 +23,7 @@ function pl --description 'Pi launcher: pick a context (main/worktree/handoff/ne
             case --help -h
                 echo 'pl [--model=ID] [--thinking=LEVEL] [--name=NAME] [--dry-run|-n] [--list]'
                 echo '  pick a context via fzf, then launch pi there.'
-                echo '  defaults: openai-codex/gpt-5.6-sol with high thinking'
+                echo '  fresh-session defaults: openai-codex/gpt-5.6-sol with high thinking'
                 echo '  enter=default session  ctrl-n=new  ctrl-r=resume-pick  ctrl-w=worktree'
                 return 0
         end
@@ -31,9 +33,11 @@ function pl --description 'Pi launcher: pick a context (main/worktree/handoff/ne
     # build the worktree/handoff menu from — just launch pi here instead.
     if not command git rev-parse --git-dir >/dev/null 2>&1
         echo "pl: not a git repo — launching pi here" >&2
+        test -n "$model"; or set model $default_model
+        test -n "$thinking"; or set thinking $default_thinking
         set -l pargs
-        test -n "$model"; and set pargs $pargs --model $model
-        test -n "$thinking"; and set pargs $pargs --thinking $thinking
+        set pargs $pargs --model $model
+        set pargs $pargs --thinking $thinking
         test -n "$name"; and set pargs $pargs --name $name
         if test $dry -eq 1
             echo "pi $pargs   # from "(pwd)
@@ -99,6 +103,11 @@ function pl --description 'Pi launcher: pick a context (main/worktree/handoff/ne
             echo "pl: ⚠ handoff worktree gone: $path" >&2
             return 1
         end
+    end
+
+    if test "$session" = new
+        test -n "$model"; or set model $default_model
+        test -n "$thinking"; or set thinking $default_thinking
     end
 
     set -l pargs
