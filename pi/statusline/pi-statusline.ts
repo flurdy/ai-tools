@@ -4,6 +4,7 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { execFileSync } from "node:child_process";
 import { hostname } from "node:os";
 import { dirname } from "node:path";
+import { fetchCodexWeeklyQuota, isCodexQuotaStale, type CodexWeeklyQuota } from "./codex-quota.ts";
 
 type GitInfo = {
 	branch: string | null;
@@ -124,6 +125,15 @@ function fmtTime(date: Date): string {
 	return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+function fmtQuotaReset(timestampMs: number): string {
+	return new Date(timestampMs).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+function envMilliseconds(name: string, fallback: number, minimum: number): number {
+	const value = Number(process.env[name]);
+	return Number.isFinite(value) && value >= minimum ? value : fallback;
+}
+
 function runGit(cwd: string, args: string[]): string | null {
 	try {
 		return execFileSync("git", ["-C", cwd, ...args], {
@@ -197,6 +207,13 @@ function bar(pct: number, width: number, warn = 60, crit = 80, colors: { ok: (s:
 	const empty = "▯".repeat(width - filled);
 	const color = p >= crit ? colors.crit : p >= warn ? colors.warn : colors.ok;
 	return color(fill) + colors.empty(empty);
+}
+
+function remainingBar(pct: number, width: number, colors: { ok: (s: string) => string; warn: (s: string) => string; crit: (s: string) => string; empty: (s: string) => string }): string {
+	const p = Math.max(0, Math.min(100, Math.round(pct)));
+	const filled = Math.max(0, Math.min(width, Math.ceil((p / 100) * width)));
+	const color = p <= 10 ? colors.crit : p <= 30 ? colors.warn : colors.ok;
+	return color("▮".repeat(filled)) + colors.empty("▯".repeat(width - filled));
 }
 
 function padAnsi(text: string, width: number): string {
@@ -295,6 +312,33 @@ export default function piStatusline(pi: ExtensionAPI): void {
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			const interval = setInterval(() => tui.requestRender(), 1000);
 			const unsubBranch = footerData.onBranchChange(() => tui.requestRender());
+			const quotaEnabled = process.env.PI_STATUSLINE_CODEX_QUOTA !== "0";
+			const quotaRefreshMs = envMilliseconds("PI_STATUSLINE_CODEX_QUOTA_TTL", 5 * 60_000, 60_000);
+			const quotaStaleMs = envMilliseconds("PI_STATUSLINE_CODEX_QUOTA_STALE", 15 * 60_000, 60_000);
+			const quotaTimeoutMs = envMilliseconds("PI_STATUSLINE_CODEX_QUOTA_TIMEOUT", 10_000, 1000);
+			const quotaAbort = new AbortController();
+			let codexQuota: CodexWeeklyQuota | undefined;
+			let quotaRefreshing = false;
+
+			async function refreshCodexQuota(): Promise<void> {
+				if (!quotaEnabled || quotaRefreshing || quotaAbort.signal.aborted) return;
+				quotaRefreshing = true;
+				try {
+					codexQuota = await fetchCodexWeeklyQuota({
+						command: process.env.PI_STATUSLINE_CODEX_BIN?.trim() || "codex",
+						timeoutMs: quotaTimeoutMs,
+						signal: quotaAbort.signal,
+					});
+				} catch {
+					// Keep the last successful snapshot; missing Codex/auth simply hides the segment.
+				} finally {
+					quotaRefreshing = false;
+					if (!quotaAbort.signal.aborted) tui.requestRender();
+				}
+			}
+
+			void refreshCodexQuota();
+			const quotaInterval = quotaEnabled ? setInterval(() => void refreshCodexQuota(), quotaRefreshMs) : undefined;
 
 			const colors = {
 				ok: (s: string) => theme.fg("success", s),
@@ -318,6 +362,19 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const cache = [cachePct === null ? "" : `cache ${cachePct}%`, usage.cacheWrite > 0 ? `W${fmtNumber(usage.cacheWrite)}` : ""]
 					.filter(Boolean)
 					.join(" ");
+				let quota = "";
+				let quotaTable = "";
+				if (codexQuota) {
+					const now = Date.now();
+					const remaining = Math.round(codexQuota.remainingPercent);
+					const stale = isCodexQuotaStale(codexQuota, now, quotaStaleMs);
+					const tone = remaining <= 10 ? "error" : remaining <= 30 ? "warning" : "success";
+					quota = theme.fg(tone, `GPT wk ${remaining}% left${stale ? " (stale)" : ""}`);
+					const detail = [codexQuota.resetsAtMs === null ? "" : `reset ${fmtQuotaReset(codexQuota.resetsAtMs)}`, stale ? "stale" : ""]
+						.filter(Boolean)
+						.join(" · ");
+					quotaTable = `${remainingBar(remaining, 4, colors)} ${theme.fg(tone, `GPT wk ${remaining}% left`)}${detail ? theme.fg("dim", ` · ${detail}`) : ""}`;
+				}
 				return {
 					clock: theme.fg("dim", fmtTime(new Date())),
 					host: theme.fg("accent", `▣ ${hostname().split(".")[0]}`),
@@ -327,6 +384,8 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					session: sessionName ? theme.fg("accent", `◈ ${truncateToWidth(sessionName, 24, "…")}`) : "",
 					bars: `${bar(usage.ctxPct, 3, 34, 67, colors)} ${theme.fg("dim", `ctx ${contextPct}%`)}`,
 					ctx: `${bar(usage.ctxPct, 6, 34, 67, colors)} ${theme.fg("dim", `ctx ${contextPct}%`)}`,
+					quota,
+					quotaTable,
 					tokens: theme.fg("dim", `↑${fmtNumber(usage.input)} ↓${fmtNumber(usage.output)}${cache ? ` · ${cache}` : ""}`),
 					cost: theme.fg("success", `est $${usage.cost.toFixed(2)}`),
 					duration: theme.fg("dim", fmtDuration(Date.now() - startedAt)),
@@ -343,10 +402,10 @@ export default function piStatusline(pi: ExtensionAPI): void {
 
 			function compact(width: number): string[] {
 				const s = segments();
-				let cells = [s.clock, joinCells([s.agent, s.model, s.effort]), s.bars, s.duration, s.path, s.repo, s.branch, s.pr, s.session].filter(Boolean);
+				let cells = [s.clock, joinCells([s.agent, s.model, s.effort]), s.bars, s.quota, s.duration, s.path, s.repo, s.branch, s.pr, s.session].filter(Boolean);
 				let line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
-				cells = [joinCells([s.agent, s.model, s.effort]), s.bars, s.duration, s.repo, s.branch, s.pr, s.session].filter(Boolean);
+				cells = [joinCells([s.agent, s.model, s.effort]), s.bars, s.quota, s.duration, s.repo, s.branch, s.pr, s.session].filter(Boolean);
 				line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
 				cells = [s.agent, s.model, s.bars, s.branch, s.session].filter(Boolean);
@@ -357,7 +416,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const s = segments();
 				const border = (text: string) => theme.fg("border", text);
 				let row1 = [s.host, s.path, s.repo, s.branch, s.pr, s.session].filter(Boolean);
-				const row2 = [s.agent, s.model, s.effort, s.ctx, s.tokens, s.cost, s.duration, s.clock].filter(Boolean);
+				const row2 = [s.agent, s.model, s.effort, s.ctx, s.quotaTable, s.tokens, s.cost, s.duration, s.clock].filter(Boolean);
 
 				function widthsFor(cells: string[]): number[] {
 					return cells.map((cell) => visibleWidth(cell) + 2);
@@ -398,6 +457,8 @@ export default function piStatusline(pi: ExtensionAPI): void {
 			return {
 				dispose() {
 					clearInterval(interval);
+					if (quotaInterval) clearInterval(quotaInterval);
+					quotaAbort.abort();
 					unsubBranch();
 				},
 				invalidate() {},
