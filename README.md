@@ -12,6 +12,7 @@ This repo is meant to be the shareable, curated version of tools that also live 
 | [Claude Kitty tab title](claude/kitty-tab-title/) | Claude Code | Hook script and settings fragment for showing repo/session state in Kitty tab titles. |
 | [Codex Kitty tab title](codex/kitty-tab-title/) | Codex | Codex hook script and `hooks.json` for the same Kitty tab title workflow. |
 | [Pi statusline](pi/statusline/) | Pi | Pi extension for a responsive Bobthefish/Claude-Code-inspired footer with model, context, git, PR, cost, token, and cache signals. |
+| [Pi Flurdy dark theme](pi/theme/) | Pi | High-contrast dark theme with clearly separated success green and warning amber. |
 | [Pi model tier router](pi/model-tier-router/) | Pi | Routes skill metadata to locally configured models, prevents nested downgrades, and restores the previous model after each run. |
 | [Pi Kitty tab title](pi/kitty-tab-title/) | Pi | Pi extension for showing repo/session state in Kitty tab titles, matching the Claude/Codex workflow. |
 | [Claude launcher](claude/launcher/) | Claude Code | Fish `cl` launcher that picks main checkout, worktree, handoff, or new worktree before starting Claude. |
@@ -37,6 +38,7 @@ codex/
   kitty-tab-title/
 pi/
   statusline/
+  theme/
   model-tier-router/
   kitty-tab-title/
   launcher/
