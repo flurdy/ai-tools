@@ -106,16 +106,17 @@ The ledger records neither prompts nor responses, repository/session-file paths,
 
 ## Development
 
-Install development dependencies, then run focused tests and typechecking:
+Install the Node version pinned in `.nvmrc`, then run the focused tests and typechecking through that runtime. These commands remain reliable when the shell's default `node` is older:
 
 ```bash
 cd pi/model-tier-router
-npm install
-npm test
-npm run typecheck
+fnm install
+fnm exec --using=.nvmrc npm install
+fnm exec --using=.nvmrc npm test
+fnm exec --using=.nvmrc npm run typecheck
 ```
 
-Pi loads `index.ts` directly; no build output is required.
+With `nvm`, run `nvm install && nvm use` before the same `npm` commands. Pi loads `index.ts` directly; no build output is required.
 
 ## Lifecycle notes
 
