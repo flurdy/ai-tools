@@ -56,3 +56,5 @@ sync:
 # - linear.api-key
 # - github.org
 # - github.repo
+
+no-push: true
