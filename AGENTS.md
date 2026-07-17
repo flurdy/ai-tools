@@ -82,3 +82,7 @@ bd close <id>         # Complete work
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
 <!-- END BEADS INTEGRATION -->
+
+## Pi Execution Checklists
+
+`rpiv-todo` is a narrow exception to the prohibition on todo lists: it may be used only as an ephemeral execution checklist for the currently claimed bead, Jira issue, or Trello card. Beads remains the source of truth for durable work, dependencies, blockers, and follow-ups; never use `rpiv-todo` as a backlog or a substitute for `bd`.
