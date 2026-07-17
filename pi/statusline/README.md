@@ -39,8 +39,8 @@ Then restart Pi, or run `/reload` from an existing Pi session.
 - clock
 - current session name (truncated when necessary)
 - `π` agent marker in its own cell; model (including variants such as Sol, Terra, and Luna); and thinking level
-- cautious context-capacity bar (green through 33%, yellow through 66%, then red)
-- cached Codex weekly subscription quota, percentage remaining, and reset time when available
+- cautious context-capacity bar labelled `ctx` (green through 33%, yellow through 66%, then red)
+- cached Codex weekly used-capacity bar labelled `GPT`, plus its reset time in table mode
 - cumulative input/output tokens and cache-hit percentage
 - session duration
 - abbreviated cwd
@@ -50,7 +50,7 @@ Then restart Pi, or run `/reload` from an existing Pi session.
 
 ## Codex quota source
 
-The quota segment queries the authenticated Codex CLI's machine-readable `codex app-server` API (`account/rateLimits/read`). It does not scrape the interactive `/status` screen, read Codex credential files, or run a model turn. Lookup runs asynchronously outside footer rendering, refreshes at a bounded interval, and retains the last successful snapshot when a later refresh fails. Data older than the configured stale interval—or whose reset time has passed—is labelled stale.
+The quota segment queries the authenticated Codex CLI's machine-readable `codex app-server` API (`account/rateLimits/read`). It does not scrape the interactive `/status` screen, read Codex credential files, or run a model turn. Lookup runs asynchronously outside footer rendering, refreshes at a bounded interval, and retains the last successful snapshot when a later refresh fails. Data older than the configured stale interval—or whose reset time has passed—is rendered dim.
 
 The weekly bucket is identified by its approximately seven-day duration rather than by assuming it is always the API's primary or secondary window. The segment stays hidden when Codex is missing, unauthenticated, too old to support the endpoint, or returns no weekly bucket.
 

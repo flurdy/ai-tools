@@ -209,13 +209,6 @@ function bar(pct: number, width: number, warn = 60, crit = 80, colors: { ok: (s:
 	return color(fill) + colors.empty(empty);
 }
 
-function remainingBar(pct: number, width: number, colors: { ok: (s: string) => string; warn: (s: string) => string; crit: (s: string) => string; empty: (s: string) => string }): string {
-	const p = Math.max(0, Math.min(100, Math.round(pct)));
-	const filled = Math.max(0, Math.min(width, Math.ceil((p / 100) * width)));
-	const color = p <= 10 ? colors.crit : p <= 30 ? colors.warn : colors.ok;
-	return color("▮".repeat(filled)) + colors.empty("▯".repeat(width - filled));
-}
-
 function padAnsi(text: string, width: number): string {
 	const truncated = truncateToWidth(text, width, "");
 	return truncated + " ".repeat(Math.max(0, width - visibleWidth(truncated)));
@@ -356,7 +349,6 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const sessionName = pi.getSessionName();
 				const effort = thinking ? `⚡${thinking === "high" ? "Hi" : thinking === "medium" ? "Md" : thinking.slice(0, 2)}` : "";
 				const status = `${git.dirty ? "●" : ""}${git.untracked ? "…" : ""}${git.staged ? "✚" : ""}`;
-				const contextPct = Math.max(0, Math.min(100, Math.round(usage.ctxPct)));
 				const cacheBase = usage.input + usage.cacheRead;
 				const cachePct = usage.cacheRead > 0 && cacheBase > 0 ? Math.round((usage.cacheRead / cacheBase) * 100) : null;
 				const cache = [cachePct === null ? "" : `cache ${cachePct}%`, usage.cacheWrite > 0 ? `W${fmtNumber(usage.cacheWrite)}` : ""]
@@ -365,15 +357,16 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				let quota = "";
 				let quotaTable = "";
 				if (codexQuota) {
-					const now = Date.now();
-					const remaining = Math.round(codexQuota.remainingPercent);
-					const stale = isCodexQuotaStale(codexQuota, now, quotaStaleMs);
-					const tone = remaining <= 10 ? "error" : remaining <= 30 ? "warning" : "success";
-					quota = theme.fg(tone, `GPT wk ${remaining}% left${stale ? " (stale)" : ""}`);
-					const detail = [codexQuota.resetsAtMs === null ? "" : `reset ${fmtQuotaReset(codexQuota.resetsAtMs)}`, stale ? "stale" : ""]
-						.filter(Boolean)
-						.join(" · ");
-					quotaTable = `${remainingBar(remaining, 4, colors)} ${theme.fg(tone, `GPT wk ${remaining}% left`)}${detail ? theme.fg("dim", ` · ${detail}`) : ""}`;
+					const used = Math.round(codexQuota.usedPercent);
+					const stale = isCodexQuotaStale(codexQuota, Date.now(), quotaStaleMs);
+					const tone = used >= 90 ? "error" : used >= 70 ? "warning" : "success";
+					const quotaColors = stale
+						? { ok: colors.empty, warn: colors.empty, crit: colors.empty, empty: colors.empty }
+						: colors;
+					const label = theme.fg(stale ? "dim" : tone, "GPT");
+					quota = `${bar(used, 3, 70, 90, quotaColors)} ${label}`;
+					const reset = codexQuota.resetsAtMs === null ? "" : fmtQuotaReset(codexQuota.resetsAtMs);
+					quotaTable = `${bar(used, 6, 70, 90, quotaColors)} ${label}${reset ? theme.fg("dim", ` · ${reset}`) : ""}`;
 				}
 				return {
 					clock: theme.fg("dim", fmtTime(new Date())),
@@ -382,8 +375,8 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					model: theme.fg("success", theme.bold(`${provider} ${model}`)),
 					effort: effort ? theme.fg("accent", effort) : "",
 					session: sessionName ? theme.fg("accent", `◈ ${truncateToWidth(sessionName, 24, "…")}`) : "",
-					bars: `${bar(usage.ctxPct, 3, 34, 67, colors)} ${theme.fg("dim", `ctx ${contextPct}%`)}`,
-					ctx: `${bar(usage.ctxPct, 6, 34, 67, colors)} ${theme.fg("dim", `ctx ${contextPct}%`)}`,
+					bars: `${bar(usage.ctxPct, 3, 34, 67, colors)} ${theme.fg("dim", "ctx")}`,
+					ctx: `${bar(usage.ctxPct, 6, 34, 67, colors)} ${theme.fg("dim", "ctx")}`,
 					quota,
 					quotaTable,
 					tokens: theme.fg("dim", `↑${fmtNumber(usage.input)} ↓${fmtNumber(usage.output)}${cache ? ` · ${cache}` : ""}`),
