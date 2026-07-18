@@ -85,15 +85,15 @@ describe("tier decisions", () => {
 		assert.equal(decideTier(premium, economy), "retain-lower");
 	});
 
-	it("keeps legacy focused and advanced tiers valid during migration", () => {
-		const focused = { tier: "focused-coding", rank: 25 };
-		const advanced = { tier: "advanced-coding", rank: 30 };
-		assert.equal(decideTier(focused, advanced), "upgrade");
-		assert.equal(decideTier(advanced, focused), "retain-lower");
+	it("uses ranks rather than names for private routes", () => {
+		const privateLow = { tier: "private-low", rank: 25 };
+		const privateHigh = { tier: "private-high", rank: 30 };
+		assert.equal(decideTier(privateLow, privateHigh), "upgrade");
+		assert.equal(decideTier(privateHigh, privateLow), "retain-lower");
 	});
 
 	it("retains the root route for equal-ranked tiers", () => {
-		assert.equal(decideTier({ tier: "premium-review", rank: 40 }, { tier: "premium-reasoning", rank: 40 }), "retain-equal");
+		assert.equal(decideTier({ tier: "premium", rank: 40 }, { tier: "private-equivalent", rank: 40 }), "retain-equal");
 	});
 
 	it("permits thinking upgrades but not downgrades", () => {
@@ -121,25 +121,15 @@ describe("candidate selection", () => {
 });
 
 describe("configuration", () => {
-	it("ships three portable routes alongside the seven legacy routes", () => {
+	it("ships only the portable three-tier taxonomy", () => {
 		const example = JSON.parse(
 			readFileSync(new URL("./model-tier-router.example.json", import.meta.url), "utf8"),
 		) as { tiers: Record<string, TierRoute> };
 		const { tiers } = example;
-		for (const legacy of [
-			"cheap-bulk",
-			"standard-workflow",
-			"focused-coding",
-			"advanced-coding",
-			"long-context-audit",
-			"premium-reasoning",
-			"premium-review",
-		]) {
-			assert.ok(Object.hasOwn(tiers, legacy), `missing legacy tier ${legacy}`);
-		}
-		assert.deepEqual(tiers.economy.candidates, tiers["cheap-bulk"].candidates);
-		assert.deepEqual(tiers.standard.candidates, tiers["standard-workflow"].candidates);
-		assert.deepEqual(tiers.premium.candidates, tiers["premium-reasoning"].candidates);
+		assert.deepEqual(Object.keys(tiers), ["economy", "standard", "premium"]);
+		assert.deepEqual(tiers.economy.candidates, [{ model: "provider/cheap-model-id", metered: false }]);
+		assert.deepEqual(tiers.standard.candidates, [{ model: "provider/workflow-model-id", metered: false }]);
+		assert.deepEqual(tiers.premium.candidates, [{ model: "provider/premium-model-id", metered: true }]);
 		assert.ok(tiers.economy.rank < tiers.standard.rank);
 		assert.ok(tiers.standard.rank < tiers.premium.rank);
 	});
@@ -178,7 +168,7 @@ describe("configuration", () => {
 		assert.equal(result.loadedPaths.length, 2);
 	});
 
-	it("keeps retired tier names syntactically valid for migration", () => {
+	it("keeps arbitrary private tier names syntactically valid", () => {
 		const root = mkdtempSync(join(tmpdir(), "model-tier-router-"));
 		const agentDir = join(root, "agent");
 		const cwd = join(root, "project");
@@ -187,13 +177,13 @@ describe("configuration", () => {
 			join(agentDir, "model-tier-router.json"),
 			JSON.stringify({
 				tiers: {
-					"standard-coding": { rank: 30, thinking: "high", candidates: [{ model: "legacy/coding", metered: false }] },
+					"private-review": { rank: 30, thinking: "high", candidates: [{ model: "private/review", metered: false }] },
 				},
 			}),
 		);
 
 		const result = loadRouterConfig({ agentDir, cwd, projectTrusted: false });
-		assert.equal(result.config.tiers["standard-coding"]?.candidates[0]?.model, "legacy/coding");
+		assert.equal(result.config.tiers["private-review"]?.candidates[0]?.model, "private/review");
 	});
 
 	it("ignores an untrusted project override", () => {

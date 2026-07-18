@@ -8,50 +8,15 @@
     "maxBytes": 10485760
   },
   "tiers": {
-    "cheap-bulk": {
-      "rank": 10,
-      "thinking": "medium",
-      "candidates": [{ "model": "provider/cheap-model-id", "metered": false }]
-    },
     "economy": {
       "rank": 10,
       "thinking": "medium",
       "candidates": [{ "model": "provider/cheap-model-id", "metered": false }]
     },
-    "standard-workflow": {
-      "rank": 20,
-      "thinking": "medium",
-      "candidates": [{ "model": "provider/workflow-model-id", "metered": false }]
-    },
-    "focused-coding": {
-      "rank": 25,
-      "thinking": "high",
-      "candidates": [{ "model": "provider/focused-coding-model-id", "metered": false }]
-    },
     "standard": {
       "rank": 20,
       "thinking": "medium",
       "candidates": [{ "model": "provider/workflow-model-id", "metered": false }]
-    },
-    "advanced-coding": {
-      "rank": 30,
-      "thinking": "high",
-      "candidates": [{ "model": "provider/advanced-coding-model-id", "metered": false }]
-    },
-    "long-context-audit": {
-      "rank": 35,
-      "thinking": "high",
-      "candidates": [{ "model": "provider/long-context-model-id", "metered": false }]
-    },
-    "premium-reasoning": {
-      "rank": 40,
-      "thinking": "xhigh",
-      "candidates": [{ "model": "provider/premium-model-id", "metered": true }]
-    },
-    "premium-review": {
-      "rank": 40,
-      "thinking": "xhigh",
-      "candidates": [{ "model": "provider/premium-review-model-id", "metered": true }]
     },
     "premium": {
       "rank": 40,

@@ -55,10 +55,8 @@ serve both routine coordination and high-effort coding. Configure these three ro
 with strictly increasing ranks so nested skills can upgrade but never silently
 downshift.
 
-The example temporarily retains the legacy seven-tier entries alongside the three
-portable tiers. Keep both taxonomies during migration; remove the legacy entries only
-after economy, standard, and premium routes have been dogfooded and rollback is no
-longer needed. The router continues to accept arbitrary private/project tier names.
+The router continues to accept arbitrary private/project tier names, but shared skills
+should use only economy, standard, or premium.
 
 ## Skill metadata
 
