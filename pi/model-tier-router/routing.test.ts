@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, Skill } from "@earendil-works/pi-coding-agent";
-import { loadRouterConfig } from "./config.ts";
-import modelTierRouter from "./index.ts";
+import { loadRouterConfig, type UsageLedgerConfig } from "./config.ts";
+import modelTierRouter, { reconcileUsageLedger, type UsageLedgerPort } from "./index.ts";
 import type { UsageRecordV1 } from "./usage.ts";
 import {
 	canonicalPath,
@@ -50,6 +50,48 @@ const standard: TierRoute = {
 		{ model: "provider/model/id", metered: false },
 	],
 };
+
+class FakeUsageLedger implements UsageLedgerPort {
+	starts = 0;
+	drains = 0;
+	private readonly healthState: { pending: number; dropped: number; writeErrors: number };
+	private readonly events: string[];
+	private readonly name: string;
+
+	constructor(
+		healthState = { pending: 0, dropped: 0, writeErrors: 0 },
+		events: string[] = [],
+		name = "ledger",
+	) {
+		this.healthState = healthState;
+		this.events = events;
+		this.name = name;
+	}
+
+	start(): void {
+		this.starts++;
+		this.events.push(`${this.name}:start`);
+	}
+
+	health(): { pending: number; dropped: number; writeErrors: number } {
+		return this.healthState;
+	}
+
+	enqueue(_record: UsageRecordV1): void {}
+
+	async drain(): Promise<void> {
+		this.drains++;
+		this.events.push(`${this.name}:drain`);
+	}
+
+	async drainWithin(_timeoutMs: number): Promise<void> {
+		await this.drain();
+	}
+
+	async readRecords(): Promise<{ records: UsageRecordV1[]; skipped: number }> {
+		return { records: [], skipped: 0 };
+	}
+}
 
 describe("skill routing metadata", () => {
 	it("extracts router fields and ignores Claude and second-opinion model fields", () => {
@@ -230,6 +272,43 @@ describe("configuration", () => {
 		const result = loadRouterConfig({ agentDir, cwd, projectTrusted: false });
 		assert.deepEqual(result.config.tiers.premium.candidates, []);
 		assert.match(result.warnings.join("\n"), /must declare a boolean metered flag/);
+	});
+});
+
+describe("usage ledger reload", () => {
+	const config: UsageLedgerConfig = { enabled: true, retentionDays: 30, maxBytes: 4096 };
+
+	it("reuses an unchanged ledger with pending records and health state", async () => {
+		const ledger = new FakeUsageLedger({ pending: 2, dropped: 3, writeErrors: 1 });
+		const managed = await reconcileUsageLedger(
+			{ ledger, config },
+			{ ...config },
+			() => assert.fail("unchanged configuration must not create a ledger"),
+		);
+
+		assert.equal(managed.ledger, ledger);
+		assert.deepEqual(managed.ledger?.health(), { pending: 2, dropped: 3, writeErrors: 1 });
+		assert.equal(ledger.starts, 0);
+		assert.equal(ledger.drains, 0);
+	});
+
+	it("drains before replacing or disabling a ledger", async () => {
+		const events: string[] = [];
+		const current = new FakeUsageLedger(undefined, events, "current");
+		const replacement = new FakeUsageLedger(undefined, events, "replacement");
+		const nextConfig = { ...config, maxBytes: 8192 };
+
+		const replaced = await reconcileUsageLedger(
+			{ ledger: current, config },
+			nextConfig,
+			() => replacement,
+		);
+		const disabled = await reconcileUsageLedger(replaced, undefined, () => assert.fail("disabled configuration must not create a ledger"));
+
+		assert.deepEqual(events, ["current:drain", "replacement:start", "replacement:drain"]);
+		assert.equal(replaced.ledger, replacement);
+		assert.equal(replaced.config, nextConfig);
+		assert.deepEqual(disabled, { ledger: undefined, config: undefined });
 	});
 });
 
@@ -426,6 +505,7 @@ async function createRouterHarness(
 			start() {},
 			health: () => ({ pending: 0, dropped: 0, writeErrors: 0 }),
 			enqueue: (record) => usageRecords.push(record),
+			drain: async () => undefined,
 			drainWithin: async () => undefined,
 			readRecords: async () => ({ records: [...usageRecords], skipped: 0 }),
 		},

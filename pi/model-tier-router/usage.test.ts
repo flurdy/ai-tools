@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
-import { access, rm, utimes, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -78,14 +78,14 @@ describe("usage normalization", () => {
 		});
 
 		const summary = formatUsageSummary(
-			[{ route: "cheap-bulk | openai-codex/gpt-5.6-luna", totals }],
+			[{ route: "economy | openai-codex/gpt-5.6-luna", totals }],
 			{ pending: 0, dropped: 0, writeErrors: 0 },
 			0,
 		);
 
 		assert.match(summary, /Route\s+Resp\s+Input\s+Cache read\s+Cache write\/1h\s+Output\s+Reasoning/);
-		assert.match(summary, /cheap-bulk \| openai-codex\/gpt-5\.6-luna\s+30\s+1\.75M\s+1\.75M\s+0\/0\s+4\.4K\s+649/);
-		assert.match(summary, /Unknown token fields \(response count\):\ncheap-bulk \| openai-codex\/gpt-5\.6-luna: cache-read 15, cache-write 30/);
+		assert.match(summary, /economy \| openai-codex\/gpt-5\.6-luna\s+30\s+1\.75M\s+1\.75M\s+0\/0\s+4\.4K\s+649/);
+		assert.match(summary, /Unknown token fields \(response count\):\neconomy \| openai-codex\/gpt-5\.6-luna: cache-read 15, cache-write 30/);
 		assert.match(summary, /Ledger health: pending 0; dropped 0; write errors 0; skipped records 0/);
 	});
 });
@@ -98,11 +98,29 @@ describe("usage ledger", () => {
 			ledger.enqueue(record());
 			await ledger.drain();
 			const unexpectedUsageField = { ...record(), usage: { ...record().usage, unexpected: 1 } };
-			await writeFile(join(dir, "bad.jsonl"), `not json\n{\"schemaVersion\":1}\n${JSON.stringify(unexpectedUsageField)}\n`, "utf8");
+			await appendFile(join(dir, "2026-07-16.jsonl"), `not json\n{\"schemaVersion\":1}\n${JSON.stringify(unexpectedUsageField)}\n`, "utf8");
 			const loaded = await ledger.readRecords();
 			assert.equal(loaded.records.length, 1);
 			assert.equal(loaded.records[0]?.tier, "standard");
 			assert.equal(loaded.skipped, 3);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("reads only canonical dated regular files", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "model-tier-ledger-files-"));
+		try {
+			await writeFile(join(dir, "2026-07-16.jsonl"), `${JSON.stringify(record())}\n`, "utf8");
+			await writeFile(join(dir, "notes.jsonl"), `${JSON.stringify(record())}\n`, "utf8");
+			await mkdir(join(dir, "2026-07-17.jsonl"));
+			const ledger = new UsageLedger(UsageLedger.defaults(dir, 30, 1024 * 1024));
+
+			const loaded = await ledger.readRecords();
+
+			assert.equal(loaded.records.length, 1);
+			assert.equal(loaded.records[0]?.tier, "standard");
+			assert.equal(loaded.skipped, 0);
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}

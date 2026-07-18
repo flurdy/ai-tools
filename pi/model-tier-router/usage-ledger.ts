@@ -20,6 +20,7 @@ export interface UsageLedgerHealth {
 const DEFAULT_MAX_QUEUE = 1000;
 const DEFAULT_MAX_BATCH_RECORDS = 64;
 const DEFAULT_MAX_BATCH_BYTES = 32 * 1024;
+const CANONICAL_LEDGER_FILE = /^\d{4}-\d{2}-\d{2}\.jsonl$/;
 
 function dayFor(timestamp: string): string {
 	return timestamp.slice(0, 10);
@@ -159,13 +160,19 @@ export class UsageLedger {
 		]);
 	}
 
-	private async prune(): Promise<void> {
-		let entries: string[];
+	private async canonicalFileNames(): Promise<string[]> {
 		try {
-			entries = (await readdir(this.options.baseDir)).filter((entry) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(entry)).sort();
+			return (await readdir(this.options.baseDir, { withFileTypes: true }))
+				.filter((entry) => entry.isFile() && CANONICAL_LEDGER_FILE.test(entry.name))
+				.map((entry) => entry.name)
+				.sort();
 		} catch {
-			return;
+			return [];
 		}
+	}
+
+	private async prune(): Promise<void> {
+		const entries = await this.canonicalFileNames();
 		const cutoff = Date.now() - this.options.retentionDays * 24 * 60 * 60 * 1000;
 		const retained: Array<{ name: string; size: number }> = [];
 		for (const name of entries) {
@@ -198,12 +205,7 @@ export class UsageLedger {
 	async readRecords(): Promise<{ records: UsageRecordV1[]; skipped: number }> {
 		await this.initialize().catch(() => undefined);
 		await this.prune();
-		let entries: string[];
-		try {
-			entries = (await readdir(this.options.baseDir)).filter((entry) => entry.endsWith(".jsonl")).sort();
-		} catch {
-			return { records: [], skipped: 0 };
-		}
+		const entries = await this.canonicalFileNames();
 		const records: UsageRecordV1[] = [];
 		let skipped = 0;
 		for (const entry of entries) {

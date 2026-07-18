@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, Skill } from "@earendil-works/pi-coding-agent";
 import { CONFIG_DIR_NAME, getAgentDir, isToolCallEventType } from "@earendil-works/pi-coding-agent";
-import { loadRouterConfig, type LoadedRouterConfig } from "./config.ts";
+import { loadRouterConfig, type LoadedRouterConfig, type UsageLedgerConfig } from "./config.ts";
 import { UsageLedger } from "./usage-ledger.ts";
 import { addUsageRecord, emptyUsageTotals, formatUsageSummary, normalizeUsage, type UsageRecordV1, type UsageTotals } from "./usage.ts";
 import {
@@ -48,12 +48,38 @@ function modelId(model: Model<Api> | undefined): string {
 	return model ? `${model.provider}/${model.id}` : "(none)";
 }
 
-interface UsageLedgerPort {
+export interface UsageLedgerPort {
 	start(): void;
 	health(): { pending: number; dropped: number; writeErrors: number };
 	enqueue(record: UsageRecordV1): void;
+	drain(): Promise<void>;
 	drainWithin(timeoutMs: number): Promise<void>;
 	readRecords(): Promise<{ records: UsageRecordV1[]; skipped: number }>;
+}
+
+export interface ManagedUsageLedger {
+	ledger: UsageLedgerPort | undefined;
+	config: UsageLedgerConfig | undefined;
+}
+
+function sameUsageLedgerConfig(left: UsageLedgerConfig | undefined, right: UsageLedgerConfig | undefined): boolean {
+	return left?.enabled === right?.enabled
+		&& left?.retentionDays === right?.retentionDays
+		&& left?.maxBytes === right?.maxBytes;
+}
+
+export async function reconcileUsageLedger(
+	current: ManagedUsageLedger,
+	nextConfig: UsageLedgerConfig | undefined,
+	create: (config: UsageLedgerConfig) => UsageLedgerPort,
+): Promise<ManagedUsageLedger> {
+	if (current.ledger && sameUsageLedgerConfig(current.config, nextConfig)) return current;
+	if (!current.ledger && !nextConfig) return { ledger: undefined, config: undefined };
+
+	await current.ledger?.drain();
+	const ledger = nextConfig ? create(nextConfig) : undefined;
+	ledger?.start();
+	return { ledger, config: nextConfig };
 }
 
 export interface ModelTierRouterOptions {
@@ -68,6 +94,8 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 	let switchingModel = false;
 	let loadedSkills = new Map<string, Skill>();
 	let usageLedger: UsageLedgerPort | undefined;
+	let usageLedgerConfig: UsageLedgerConfig | undefined;
+	let injectedUsageLedgerStarted = false;
 	const warningKeys = new Set<string>();
 	const unavailableWarnings: string[] = [];
 
@@ -93,18 +121,30 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 		);
 	}
 
-	function reloadConfig(ctx: ExtensionContext): void {
+	async function reloadConfig(ctx: ExtensionContext): Promise<void> {
+		const agentDir = getAgentDir();
 		loaded = loadRouterConfig({
-			agentDir: getAgentDir(),
+			agentDir,
 			cwd: ctx.cwd,
 			projectTrusted: ctx.isProjectTrusted(),
 			configDirName: CONFIG_DIR_NAME,
 		});
-		const ledgerConfig = loaded.config.usageLedger;
-		usageLedger = options.usageLedger ?? (ledgerConfig.enabled
-			? new UsageLedger(UsageLedger.defaults(join(getAgentDir(), "model-tier-router", "usage", "v1"), ledgerConfig.retentionDays, ledgerConfig.maxBytes))
-			: undefined);
-		usageLedger?.start();
+		if (options.usageLedger) {
+			usageLedger = options.usageLedger;
+			if (!injectedUsageLedgerStarted) {
+				usageLedger.start();
+				injectedUsageLedgerStarted = true;
+			}
+		} else {
+			const ledgerConfig = loaded.config.usageLedger;
+			const managed = await reconcileUsageLedger(
+				{ ledger: usageLedger, config: usageLedgerConfig },
+				ledgerConfig.enabled ? ledgerConfig : undefined,
+				(config) => new UsageLedger(UsageLedger.defaults(join(agentDir, "model-tier-router", "usage", "v1"), config.retentionDays, config.maxBytes)),
+			);
+			usageLedger = managed.ledger;
+			usageLedgerConfig = managed.config;
+		}
 		for (const warning of loaded.warnings) notify(ctx, `model-tier: ${warning}`, "warning");
 	}
 
@@ -305,9 +345,9 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 		updateStatus(ctx);
 	}
 
-	pi.on("session_start", (_event, ctx) => {
+	pi.on("session_start", async (_event, ctx) => {
 		pendingExplicitRoute = undefined;
-		reloadConfig(ctx);
+		await reloadConfig(ctx);
 		updateStatus(ctx);
 	});
 
@@ -400,7 +440,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 			const action = args.trim() || "status";
 			if (action === "reload") {
 				enabledOverride = undefined;
-				reloadConfig(ctx);
+				await reloadConfig(ctx);
 				notify(ctx, `model-tier: reloaded ${loaded?.loadedPaths.join(", ") || "defaults"}`, "info");
 				return;
 			}
