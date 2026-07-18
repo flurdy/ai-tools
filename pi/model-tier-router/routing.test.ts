@@ -538,17 +538,85 @@ describe("extension lifecycle", () => {
 		assert.equal(harness.ctx.model.id, "original");
 	});
 
-	it("simulates idle and non-idle settlement plus registered command invocation", async () => {
-		const harness = await createRouterHarness({}, { idle: false });
-		assert.equal(harness.ctx.isIdle(), false);
+	it("defers non-idle settlement and restores before the next run", async () => {
+		const harness = await createRouterHarness(
+			{ build: { tier: "standard", rank: 20 } },
+			{ idle: false },
+		);
+		await harness.invokeSkill("build");
 		await harness.emit("agent_settled");
 
-		harness.setIdle(true);
-		assert.equal(harness.ctx.isIdle(), true);
-		await harness.emit("agent_settled");
-
+		assert.deepEqual(harness.modelSelectionAttempts, ["provider/standard"]);
+		assert.equal(harness.ctx.model.id, "standard");
+		assert.match(harness.notifications.join("\n"), /deferred restoration of provider\/original while another run is active/);
 		await harness.invokeCommand("model-tier", "status");
-		assert.match(harness.notifications.join("\n"), /active tier: \(none\)/);
+		assert.match(harness.notifications.join("\n"), /restoration owed: true/);
+
+		await harness.emit("before_agent_start", { prompt: "Continue unrelated work.", systemPromptOptions: { skills: [] } });
+
+		assert.deepEqual(harness.modelSelectionAttempts, ["provider/standard", "provider/original"]);
+		assert.equal(harness.ctx.model.id, "original");
+	});
+
+	it("retries a failed restoration before the next run", async () => {
+		const harness = await createRouterHarness(
+			{ build: { tier: "standard", rank: 20 } },
+			{ setModelResults: { "provider/original": [false, true] } },
+		);
+		await harness.invokeSkill("build");
+		await harness.emit("agent_settled");
+
+		assert.deepEqual(harness.modelSelectionAttempts, ["provider/standard", "provider/original"]);
+		assert.equal(harness.ctx.model.id, "standard");
+		assert.match(harness.notifications.join("\n"), /could not restore provider\/original; will retry before the next run/);
+
+		await harness.emit("before_agent_start", { prompt: "Continue unrelated work.", systemPromptOptions: { skills: [] } });
+
+		assert.deepEqual(harness.modelSelectionAttempts, ["provider/standard", "provider/original", "provider/original"]);
+		assert.equal(harness.ctx.model.id, "original");
+		assert.match(harness.notifications.join("\n"), /restored provider\/original/);
+	});
+
+	it("preserves owed attribution and blocks new routes until manual escape", async () => {
+		const harness = await createRouterHarness(
+			{
+				build: { tier: "standard", rank: 20 },
+				audit: { tier: "premium", rank: 40 },
+			},
+			{ setModelResults: { "provider/original": [false, false] } },
+		);
+		await harness.invokeSkill("build");
+		await harness.emit("message_end", { message: assistantMessage("provider", "standard") });
+		await harness.emit("agent_settled");
+		await harness.invokeSkill("audit");
+		await harness.emit("message_end", { message: assistantMessage("provider", "standard") });
+
+		assert.deepEqual(harness.modelSelectionAttempts, ["provider/standard", "provider/original", "provider/original"]);
+		assert.equal(harness.ctx.model.id, "standard");
+		assert.match(harness.notifications.join("\n"), /skipped audit while restoration of provider\/original is owed/);
+		assert.equal(harness.usageRecords.length, 2);
+		assert.equal(harness.usageRecords[0]?.routeRunId, harness.usageRecords[1]?.routeRunId);
+		assert.deepEqual(harness.usageRecords.map((record) => record.responseIndex), [1, 2]);
+
+		await harness.selectManually(model("provider", "manual"));
+		await harness.invokeSkill("audit");
+
+		assert.equal(harness.ctx.model.id, "premium");
+		assert.deepEqual(harness.modelSelections, ["provider/standard", "provider/premium"]);
+	});
+
+	it("retries owed restoration eagerly during shutdown even when the agent is not idle", async () => {
+		const harness = await createRouterHarness(
+			{ build: { tier: "standard", rank: 20 } },
+			{ setModelResults: { "provider/original": [false, true] } },
+		);
+		await harness.invokeSkill("build");
+		await harness.emit("agent_settled");
+		harness.setIdle(false);
+		await harness.emit("session_shutdown", { reason: "quit" });
+
+		assert.deepEqual(harness.modelSelectionAttempts, ["provider/standard", "provider/original", "provider/original"]);
+		assert.equal(harness.ctx.model.id, "original");
 	});
 
 	it("simulates configured setModel failures without changing the active model", async () => {

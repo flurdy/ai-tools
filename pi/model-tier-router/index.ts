@@ -30,7 +30,7 @@ interface RunState {
 	activeThinking: ThinkingLevel;
 	routedSkills: string[];
 	manualModelOverride: boolean;
-	restorePending: boolean;
+	restoreOwed: boolean;
 	routeRunId: string;
 	responseIndex: number;
 	tierSourceSkill: string;
@@ -89,7 +89,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 	function updateStatus(ctx: ExtensionContext): void {
 		ctx.ui.setStatus(
 			STATUS_KEY,
-			run ? `tier:${run.activeTier}:thinking:${run.activeThinking}${run.restorePending ? ":restore-pending" : ""}` : undefined,
+			run ? `tier:${run.activeTier}:thinking:${run.activeThinking}${run.restoreOwed ? ":restore-owed" : ""}` : undefined,
 		);
 	}
 
@@ -164,8 +164,8 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 		ctx: ExtensionContext,
 	): Promise<void> {
 		if (!isEnabled() || !loaded) return;
-		if (run?.restorePending) {
-			warnOnce(ctx, "restore-pending", `skipped ${skillName} while restoration of ${modelId(run.originalModel)} is pending`);
+		if (run?.restoreOwed) {
+			warnOnce(ctx, "restore-owed", `skipped ${skillName} while restoration of ${modelId(run.originalModel)} is owed`);
 			return;
 		}
 		if (run?.manualModelOverride) {
@@ -259,7 +259,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 				activeThinking: pi.getThinkingLevel(),
 				routedSkills: [skillName],
 				manualModelOverride: false,
-				restorePending: false,
+				restoreOwed: false,
 				routeRunId: randomUUID(),
 				responseIndex: 0,
 				tierSourceSkill: skillName,
@@ -279,13 +279,15 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 
 	async function restore(ctx: ExtensionContext, announce: boolean): Promise<void> {
 		const state = run;
-		if (!state || !loaded) return;
+		if (!state) return;
 		if (state.manualModelOverride) {
 			run = undefined;
 			updateStatus(ctx);
 			return;
 		}
 
+		state.restoreOwed = true;
+		updateStatus(ctx);
 		switchingModel = true;
 		let restored = false;
 		try {
@@ -298,8 +300,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 			run = undefined;
 			if (announce) notify(ctx, `model-tier: restored ${modelId(state.originalModel)} (thinking:${state.originalThinking})`, "info");
 		} else {
-			state.restorePending = true;
-			notify(ctx, `model-tier: could not restore ${modelId(state.originalModel)}; will retry when the agent next settles`, "warning");
+			notify(ctx, `model-tier: could not restore ${modelId(state.originalModel)}; will retry before the next run or when the agent settles (choose a model manually to clear)`, "warning");
 		}
 		updateStatus(ctx);
 	}
@@ -333,6 +334,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
+		if (run?.restoreOwed) await restore(ctx, true);
 		const pending = pendingExplicitRoute;
 		pendingExplicitRoute = undefined;
 		if (pending && event.prompt.startsWith(`<skill name="${pending.skillName}" location="${pending.path}">\n`)) {
@@ -360,7 +362,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 		if (!run || switchingModel || event.source === "restore") return;
 		run.manualModelOverride = true;
 		run.attributionActive = false;
-		if (run.restorePending) {
+		if (run.restoreOwed) {
 			run = undefined;
 			updateStatus(ctx);
 		}
@@ -371,8 +373,13 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 	});
 
 	pi.on("agent_settled", async (_event, ctx) => {
-		if (run) run.attributionActive = false;
-		await restore(ctx, true);
+		if (run && !ctx.isIdle()) {
+			run.restoreOwed = true;
+			notify(ctx, `model-tier: deferred restoration of ${modelId(run.originalModel)} while another run is active`, "warning");
+			updateStatus(ctx);
+		} else {
+			await restore(ctx, true);
+		}
 		pendingExplicitRoute = undefined;
 		loadedSkills.clear();
 		warningKeys.clear();
@@ -436,7 +443,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 				`selected model: ${modelId(ctx.model)}`,
 				`original model: ${modelId(run?.originalModel)}`,
 				`restoration pending: ${Boolean(run && !run.manualModelOverride)}`,
-				`restoration retry pending: ${run?.restorePending ?? false}`,
+				`restoration owed: ${run?.restoreOwed ?? false}`,
 				`manual model override: ${run?.manualModelOverride ?? false}`,
 				`config: ${loaded?.loadedPaths.join(", ") || "defaults"}`,
 				`warnings: ${unavailableWarnings.join("; ") || "(none)"}`,

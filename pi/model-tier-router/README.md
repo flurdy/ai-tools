@@ -126,8 +126,9 @@ With `nvm`, run `nvm install && nvm use` before the same `npm` commands. Pi load
 - Higher-ranked nested skills may upgrade the route. Equal- or lower-ranked skills retain the current route, while any nested skill may raise but not lower thinking effort.
 - Candidate availability comes from `ctx.modelRegistry.getAvailable()`.
 - A manual model selection during a routed run disables further routing and cancels automatic restoration, so the extension does not fight `/model` or model cycling.
-- A failed restoration remains visible as pending and is retried when the agent next settles; routing pauses until restoration succeeds or the user manually chooses another model.
-- Session shutdown/reload attempts the same safe restoration when appropriate.
+- Restoration is deferred when another run is already active, then retried at the next `before_agent_start` boundary before any new route is applied.
+- A failed restoration remains visible as owed and is retried before the next run or when the agent next settles; routing pauses while usage attribution stays attached to the still-active route. A manual model selection clears the owed state.
+- Session shutdown/reload attempts restoration eagerly even when the agent is not idle.
 
 ## Contributing
 
