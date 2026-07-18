@@ -68,6 +68,9 @@ printf '{"local":true}\n' > "$repo/.pi/settings.local.json"
 # observable.
 cat > "$bin/gh" <<'EOF'
 #!/usr/bin/env bash
+if [ "${GH_FAIL:-}" = 1 ]; then
+  exit 1
+fi
 count=0
 [ ! -f "$GH_COUNT" ] || count=$(cat "$GH_COUNT")
 printf '%s\n' "$((count + 1))" > "$GH_COUNT"
@@ -91,6 +94,14 @@ pl_rows=$(cd "$repo" && HOME="$home" XDG_CACHE_HOME="$tmp/cache" \
 [ "$(cat "$tmp/gh-count")" = 1 ] || fail "providers did not share the PR cache"
 printf '%s\n' "$cl_rows" | grep -q $'\tmain\t' || fail "main row missing"
 printf '%s\n' "$cl_rows" | grep -q $'+ new worktree\tnew\t' || fail "new row missing"
+
+# A failed cold-cache refresh must not try to redirect stdin from a missing file.
+failed_pr_output=$(cd "$repo" && HOME="$home" XDG_CACHE_HOME="$tmp/failed-cache" \
+  GH_FAIL=1 PATH="$TEST_PATH" "$PL_GATHER" --list 2>&1)
+printf '%s\n' "$failed_pr_output" | grep -q $'\tmain\t' || fail "failed PR refresh hid main row"
+if printf '%s\n' "$failed_pr_output" | grep -q 'No such file or directory'; then
+  fail "failed PR refresh read a missing cache file"
+fi
 
 # Handoff records include the time in field 15. The launcher displays it and
 # sorts by the full timestamp, rather than the source script's filename order.

@@ -95,10 +95,14 @@ if command -v gh >/dev/null 2>&1; then
   else
     refresh_pr_cache || true # cold start: pay it once
   fi
-  while IFS=$'\t' read -r br num rev; do
-    [ -z "$br" ] && continue
-    PR_NUM[$br]=$num; PR_REV[$br]=$rev
-  done < "$cache" 2>/dev/null
+  # A failed cold-cache refresh leaves no file to read. Test before redirecting:
+  # redirect failures occur before `2>/dev/null` takes effect for the loop.
+  if [ -r "$cache" ]; then
+    while IFS=$'\t' read -r br num rev; do
+      [ -z "$br" ] && continue
+      PR_NUM[$br]=$num; PR_REV[$br]=$rev
+    done < "$cache"
+  fi
 fi
 
 # --- handoffs owned by THIS repo --------------------------------------------
