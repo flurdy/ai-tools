@@ -4,8 +4,29 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fetchCodexWeeklyQuota, isCodexQuotaStale, selectCodexWeeklyQuota } from "./codex-quota.ts";
+import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT, codexQuotaTone } from "./quota-display.ts";
 
 const WEEK = 7 * 24 * 60;
+const colors = {
+	ok: (text: string) => `[ok:${text}]`,
+	warn: (text: string) => `[warn:${text}]`,
+	crit: (text: string) => `[crit:${text}]`,
+	empty: (text: string) => `[empty:${text}]`,
+};
+
+test("renders quota bars without rounding usage upward", () => {
+	assert.equal(bar(67, 6, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, colors), "[warn:▮▮▮▮][empty:▯▯]");
+	assert.equal(bar(100, 6, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, colors), "[crit:▮▮▮▮▮▮][empty:]");
+});
+
+test("uses warning and error quota thresholds at 60% and 75%", () => {
+	assert.equal(CODEX_QUOTA_WARN_PERCENT, 60);
+	assert.equal(CODEX_QUOTA_CRIT_PERCENT, 75);
+	assert.equal(codexQuotaTone(59), "success");
+	assert.equal(codexQuotaTone(60), "warning");
+	assert.equal(codexQuotaTone(74), "warning");
+	assert.equal(codexQuotaTone(75), "error");
+});
 
 test("selects a weekly primary window", () => {
 	const quota = selectCodexWeeklyQuota(

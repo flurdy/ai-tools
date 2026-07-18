@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { hostname } from "node:os";
 import { dirname } from "node:path";
 import { fetchCodexWeeklyQuota, isCodexQuotaStale, type CodexWeeklyQuota } from "./codex-quota.ts";
+import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT, codexQuotaTone } from "./quota-display.ts";
 
 type GitInfo = {
 	branch: string | null;
@@ -200,15 +201,6 @@ function getPr(cwd: string, branch: string | null): string | null {
 	return cached?.value ?? null;
 }
 
-function bar(pct: number, width: number, warn = 60, crit = 80, colors: { ok: (s: string) => string; warn: (s: string) => string; crit: (s: string) => string; empty: (s: string) => string }): string {
-	const p = Math.max(0, Math.min(100, Math.round(pct)));
-	const filled = Math.max(0, Math.min(width, Math.ceil((p / 100) * width)));
-	const fill = "▮".repeat(filled);
-	const empty = "▯".repeat(width - filled);
-	const color = p >= crit ? colors.crit : p >= warn ? colors.warn : colors.ok;
-	return color(fill) + colors.empty(empty);
-}
-
 function padAnsi(text: string, width: number): string {
 	const truncated = truncateToWidth(text, width, "");
 	return truncated + " ".repeat(Math.max(0, width - visibleWidth(truncated)));
@@ -359,14 +351,14 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				if (codexQuota) {
 					const used = Math.round(codexQuota.usedPercent);
 					const stale = isCodexQuotaStale(codexQuota, Date.now(), quotaStaleMs);
-					const tone = used >= 90 ? "error" : used >= 70 ? "warning" : "success";
+					const tone = codexQuotaTone(used);
 					const quotaColors = stale
 						? { ok: colors.empty, warn: colors.empty, crit: colors.empty, empty: colors.empty }
 						: colors;
 					const label = theme.fg(stale ? "dim" : tone, "GPT");
-					quota = `${bar(used, 3, 70, 90, quotaColors)} ${label}`;
+					quota = `${bar(used, 3, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, quotaColors)} ${label}`;
 					const reset = codexQuota.resetsAtMs === null ? "" : fmtQuotaReset(codexQuota.resetsAtMs);
-					quotaTable = `${bar(used, 6, 70, 90, quotaColors)} ${label}${reset ? theme.fg("dim", ` · ${reset}`) : ""}`;
+					quotaTable = `${bar(used, 6, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, quotaColors)} ${label}${reset ? theme.fg("dim", ` · ${reset}`) : ""}`;
 				}
 				return {
 					clock: theme.fg("dim", fmtTime(new Date())),
