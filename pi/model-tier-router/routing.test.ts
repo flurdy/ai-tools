@@ -151,12 +151,12 @@ describe("candidate selection", () => {
 		assert.equal(requiresMeteredConfirmation({ ...metered, metered: false }), false);
 	});
 
-	it("uses exact provider/model ids and configured fallback order", () => {
+	it("uses only exact configured candidates for pre-launch selection", () => {
 		const selected = selectCandidate(standard, [model("provider", "model/id"), model("other", "first")]);
 		assert.deepEqual(selected, { model: "provider/model/id", metered: false });
 	});
 
-	it("returns undefined when no configured candidate is available", () => {
+	it("does not broaden to arbitrary available models when configured candidates are exhausted", () => {
 		assert.equal(selectCandidate(standard, [model("provider", "different")]), undefined);
 	});
 });

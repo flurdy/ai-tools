@@ -75,6 +75,13 @@ export function decideTier(active: ActiveTier | undefined, requested: ActiveTier
 	return "retain-equal";
 }
 
+/**
+ * Selects one exact configured candidate before the provider request starts.
+ *
+ * This is deliberately not a post-launch retry mechanism. Runtime fallback, if
+ * introduced, must remain bounded to configured candidates and reapply the
+ * identity, metering, and consent checks documented in README.md.
+ */
 export function selectCandidate(route: TierRoute, available: Model<Api>[]): ModelCandidate | undefined {
 	const availableIds = new Set(available.map((model) => `${model.provider}/${model.id}`));
 	return route.candidates.find((candidate) => availableIds.has(candidate.model));

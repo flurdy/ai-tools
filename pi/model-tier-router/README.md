@@ -25,9 +25,23 @@ cp ./pi/model-tier-router/model-tier-router.example.json \
 $EDITOR ~/.pi/agent/model-tier-router.json
 ```
 
-Candidate order is fallback order. Every candidate must explicitly declare a boolean `metered` value; candidates without one are rejected rather than assumed free. `metered` is the local spend authority, and the router never guesses from provider, authentication details, or portable skill metadata. Every `metered: true` candidate requested through an explicit `/skill:name` command requires interactive confirmation. Declining, or running without a confirmation UI, skips the switch and retains the prior model. `metered: false` is the user's explicit local classification that the candidate may route without a spend prompt.
+Candidate order is a bounded **pre-launch selection** preference: the router selects the first configured candidate that is currently available before it sends a provider request. It is not a post-launch retry list. Every candidate must explicitly declare a boolean `metered` value; candidates without one are rejected rather than assumed free. `metered` is the local spend authority, and the router never guesses from provider, authentication details, or portable skill metadata. Every `metered: true` candidate requested through an explicit `/skill:name` command requires interactive confirmation. Declining, or running without a confirmation UI, skips the switch and retains the prior model. `metered: false` is the user's explicit local classification that the candidate may route without a spend prompt.
 
 Model-initiated skill reads never open a blocking spend prompt. An implicit read may route to `metered: false`, but it skips `metered: true` and retains the current route/model. In the copied example configuration, the premium placeholders are therefore confirmation-only for explicit skill commands even though `routeImplicitSkillReads` is enabled.
+
+## Runtime fallback safety
+
+The router does **not** implement post-launch provider/model fallback. Pi may retry a failed request on the same route, but this router never responds to provider failure by switching candidates or broadening to arbitrary models from Pi's registry.
+
+Any future runtime adapter fallback must be designed and tested as a separate feature. It must:
+
+1. consider only a finite, explicitly configured candidate list;
+2. before the first provider request, preflight every candidate's exact `provider/model` identity and `metered` classification;
+3. treat a classification as *inherited* when it comes from a default or outer route rather than the candidate entry, and as *unknown* when it is absent or cannot be resolved;
+4. require one pre-launch consent covering the complete bounded candidate list if any candidate is metered, inherited, or unknown; disclose each resolved identity and classification, and abort the entire fallback plan if any remain unresolved; and
+5. stop on exhaustion rather than select an arbitrary available model.
+
+Fallback execution belongs in the runtime adapter, not this parent skill router. These rules preserve the initial route's spend-consent boundary across every post-launch route change.
 
 A trusted project can override top-level options and complete tier entries in:
 
