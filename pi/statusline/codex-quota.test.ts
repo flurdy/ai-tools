@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fetchCodexWeeklyQuota, isCodexQuotaStale, selectCodexWeeklyQuota } from "./codex-quota.ts";
+import { modelLabel, shortModel } from "./model-label.ts";
 import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT, codexQuotaTone } from "./quota-display.ts";
 
 const WEEK = 7 * 24 * 60;
@@ -208,4 +209,13 @@ process.on("SIGTERM", () => {});
 			assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
 		},
 	);
+});
+
+test("shortens GPT variants and only prefixes OpenRouter", () => {
+	assert.equal(shortModel("gpt-5.6-terra"), "GPT-5.6 Terra");
+	assert.equal(shortModel("openai/gpt-5.6-sol"), "GPT-5.6 Sol");
+	assert.equal(shortModel("gpt-5.6-luna"), "GPT-5.6 Luna");
+	assert.equal(modelLabel("openai-codex", "gpt-5.6-terra"), "GPT-5.6 Terra");
+	assert.equal(modelLabel("openrouter", "openai/gpt-5.6-terra"), "OR GPT-5.6 Terra");
+	assert.equal(modelLabel("anthropic", "claude-sonnet-4-6"), "Claude Sonnet 4.6");
 });

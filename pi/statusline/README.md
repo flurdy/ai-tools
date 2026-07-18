@@ -27,6 +27,7 @@ Then restart Pi, or run `/reload` from an existing Pi session.
 - `PI_STATUSLINE_PR=0` — disable GitHub PR lookup.
 - `PI_STATUSLINE_PR_TTL=120000` — PR cache TTL in milliseconds.
 - `PI_STATUSLINE_LAST_PROMPT=0` — hide the latest-prompt widget above the editor.
+- `PI_STATUSLINE_K8S_CONTEXT=0` — hide the current `kubectl` context (shown by default when available).
 - `PI_STATUSLINE_CODEX_QUOTA=0` — disable the Codex weekly-quota lookup.
 - `PI_STATUSLINE_CODEX_QUOTA_TTL=300000` — Codex quota refresh interval in milliseconds (minimum one minute).
 - `PI_STATUSLINE_CODEX_QUOTA_STALE=900000` — age after which the last successful quota snapshot is marked stale (minimum one minute).
@@ -36,11 +37,14 @@ Then restart Pi, or run `/reload` from an existing Pi session.
 ## What it shows
 
 - latest submitted prompt and its local submission time above the editor (single-line and width-truncated)
+- active parent-run model and thinking level above that prompt; it updates when the model-tier router changes model or thinking mid-run
 - clock
+- hostname with a Nerd Font monitor icon
+- current `kubectl` context when available
 - current session name (truncated when necessary)
-- `π` agent marker in its own cell; model (including variants such as Sol, Terra, and Luna); and thinking level
+- `π` agent marker in its own cell; a compact model name (including variants such as Sol, Terra, and Luna), prefixed with `OR` only for OpenRouter; and thinking level
 - cautious context-capacity bar labelled `ctx` (green through 33%, yellow through 66%, then red)
-- cached Codex weekly used-capacity bar labelled `GPT`, plus its reset time in table mode
+- cached Codex weekly used-capacity bar labelled `GPT`, plus its reset date in table mode
 - cumulative input/output tokens and cache-hit percentage
 - session duration
 - abbreviated cwd

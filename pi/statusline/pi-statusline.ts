@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { hostname } from "node:os";
 import { dirname } from "node:path";
 import { fetchCodexWeeklyQuota, isCodexQuotaStale, type CodexWeeklyQuota } from "./codex-quota.ts";
+import { activeModelLabel, modelLabel } from "./model-label.ts";
 import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT, codexQuotaTone } from "./quota-display.ts";
 
 type GitInfo = {
@@ -29,6 +30,7 @@ type Usage = {
 
 const gitCache = new Map<string, { at: number; value: GitInfo }>();
 const prCache = new Map<string, { at: number; value: string | null; refreshing: boolean }>();
+let k8sContextCache: { at: number; value: string | null } | undefined;
 
 function stripHome(path: string): string {
 	const home = process.env.HOME;
@@ -45,64 +47,6 @@ function abbrevPath(path: string): string {
 			return part.slice(0, 3);
 		})
 		.join("/");
-}
-
-function shortProvider(provider: string | undefined): string {
-	switch (provider) {
-		case "openai-codex":
-			return "Codex";
-		case "openai":
-			return "OpenAI";
-		case "openrouter":
-			return "OR";
-		case "github-copilot":
-			return "Copilot";
-		case "anthropic":
-			return "Claude";
-		case "google":
-			return "Google";
-		default:
-			return provider ?? "no-provider";
-	}
-}
-
-function titleModelWords(value: string): string {
-	return value
-		.split(/[-_ ]+/)
-		.filter(Boolean)
-		.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-		.join(" ");
-}
-
-function shortModel(id: string): string {
-	const raw = id.split("/").pop() ?? id;
-	const s = raw.toLowerCase();
-	const gpt = s.match(/^gpt[-_ ]?(\d+(?:\.\d+)?[a-z]?)(?:[-_ ]+(.+))?$/);
-	if (gpt) {
-		const variantWords = gpt[2]?.split(/[-_ ]+/).filter(Boolean) ?? [];
-		const isPro = variantWords.at(-1) === "pro";
-		if (isPro) variantWords.pop();
-		const variant = titleModelWords(variantWords.join(" "));
-		return `GPT-${gpt[1]}${variant ? ` ${variant}` : ""}${isPro ? "+" : ""}`;
-	}
-	const gemini = s.match(/^gemini[-_ ]?(\d+(?:\.\d+)?)(?:[-_ ]+(.+))?$/);
-	if (gemini) {
-		const variant = titleModelWords(
-			(gemini[2]?.split(/[-_ ]+/).filter((word) => word !== "preview") ?? []).join(" "),
-		);
-		return `Gemini ${gemini[1]}${variant ? ` ${variant}` : ""}`;
-	}
-	const anthropicPrefix = id.toLowerCase().startsWith("anthropic/") ? "Claude " : "";
-	const opus = s.match(/opus[-_ ]?(\d+(?:[.-]\d+)?)/);
-	if (opus) return `${anthropicPrefix}Opus ${opus[1].replace("-", ".")}`;
-	const sonnet = s.match(/sonnet[-_ ]?(\d+(?:[.-]\d+)?)/);
-	if (sonnet) return `${anthropicPrefix}Sonnet ${sonnet[1].replace("-", ".")}`;
-	const haiku = s.match(/haiku[-_ ]?(\d+(?:[.-]\d+)?)/);
-	if (haiku) return `${anthropicPrefix}Haiku ${haiku[1].replace("-", ".")}`;
-	const fable = s.match(/fable[-_ ]?(\d+(?:[.-]\d+)?)/);
-	if (fable) return `${anthropicPrefix}Fable ${fable[1].replace("-", ".")}`;
-	if (s.includes("codex")) return "Codex";
-	return titleModelWords(raw.replace(/^claude-/, "").replace(/^gpt-/, "GPT-"));
 }
 
 function fmtNumber(n: number): string {
@@ -127,7 +71,7 @@ function fmtTime(date: Date): string {
 }
 
 function fmtQuotaReset(timestampMs: number): string {
-	return new Date(timestampMs).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+	return new Date(timestampMs).toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
 function envMilliseconds(name: string, fallback: number, minimum: number): number {
@@ -145,6 +89,22 @@ function runGit(cwd: string, args: string[]): string | null {
 	} catch {
 		return null;
 	}
+}
+
+function getK8sContext(): string | null {
+	if (process.env.PI_STATUSLINE_K8S_CONTEXT === "0") return null;
+	if (k8sContextCache && Date.now() - k8sContextCache.at < 5000) return k8sContextCache.value;
+	try {
+		const value = execFileSync("kubectl", ["config", "current-context"], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+			timeout: 500,
+		}).trim();
+		k8sContextCache = { at: Date.now(), value: value || null };
+	} catch {
+		k8sContextCache = { at: Date.now(), value: null };
+	}
+	return k8sContextCache.value;
 }
 
 function getGitInfo(cwd: string, footerBranch: string | null): GitInfo {
@@ -260,18 +220,30 @@ function getUsage(ctx: ExtensionContext): Usage {
 export default function piStatusline(pi: ExtensionAPI): void {
 	let thinking = process.env.PI_STATUSLINE_THINKING ?? "";
 	let startedAt = Date.now();
+	let lastPrompt: { text: string; submittedAt: Date } | undefined;
+	let activeRun = false;
+	let activeModel: { provider?: string; id?: string } | undefined;
+
+	function syncActiveModel(ctx: ExtensionContext): void {
+		activeModel = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined;
+	}
 
 	function setLastPromptWidget(ctx: ExtensionContext, prompt?: string): void {
 		if (ctx.mode !== "tui" || process.env.PI_STATUSLINE_LAST_PROMPT === "0") return;
 		const text = prompt?.replace(/\s+/g, " ").trim();
-		if (!text) {
+		if (text) lastPrompt = { text, submittedAt: new Date() };
+		if (!lastPrompt) {
 			ctx.ui.setWidget("pi-statusline-last-prompt", undefined);
 			return;
 		}
-		const line = `Last [${fmtTime(new Date())}]: ${text}`;
+		const lastLine = `Last [${fmtTime(lastPrompt.submittedAt)}]: ${lastPrompt.text}`;
+		const activeLine = activeRun ? activeModelLabel(activeModel?.provider, activeModel?.id, thinking) : undefined;
 		ctx.ui.setWidget("pi-statusline-last-prompt", (_tui, theme) => ({
 			render(width: number): string[] {
-				return [theme.fg("dim", truncateToWidth(line, width, "…"))];
+				return [
+					...(activeLine ? [theme.fg("accent", truncateToWidth(activeLine, width, "…"))] : []),
+					theme.fg("dim", truncateToWidth(lastLine, width, "…")),
+				];
 			},
 			invalidate() {},
 		}));
@@ -281,8 +253,27 @@ export default function piStatusline(pi: ExtensionAPI): void {
 		if (event.source !== "extension") setLastPromptWidget(ctx, event.text);
 	});
 
-	pi.on("thinking_level_select", (event) => {
+	pi.on("thinking_level_select", (event, ctx) => {
 		thinking = event.level;
+		if (activeRun) setLastPromptWidget(ctx);
+	});
+
+	pi.on("model_select", (event, ctx) => {
+		if (!activeRun) return;
+		activeModel = { provider: event.model.provider, id: event.model.id };
+		setLastPromptWidget(ctx);
+	});
+
+	pi.on("agent_start", (_event, ctx) => {
+		activeRun = true;
+		syncActiveModel(ctx);
+		setLastPromptWidget(ctx);
+	});
+
+	pi.on("agent_settled", (_event, ctx) => {
+		activeRun = false;
+		activeModel = undefined;
+		setLastPromptWidget(ctx);
 	});
 
 	pi.on("session_start", (_event, ctx) => {
@@ -336,8 +327,8 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const git = getGitInfo(ctx.cwd, footerData.getGitBranch());
 				const pr = getPr(ctx.cwd, git.branch);
 				const usage = getUsage(ctx);
-				const provider = shortProvider(ctx.model?.provider);
-				const model = shortModel(ctx.model?.id ?? "no-model");
+				const k8sContext = getK8sContext();
+				const model = modelLabel(ctx.model?.provider, ctx.model?.id ?? "no-model");
 				const sessionName = pi.getSessionName();
 				const effort = thinking ? `⚡${thinking === "high" ? "Hi" : thinking === "medium" ? "Md" : thinking.slice(0, 2)}` : "";
 				const status = `${git.dirty ? "●" : ""}${git.untracked ? "…" : ""}${git.staged ? "✚" : ""}`;
@@ -362,9 +353,10 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				}
 				return {
 					clock: theme.fg("dim", fmtTime(new Date())),
-					host: theme.fg("accent", `▣ ${hostname().split(".")[0]}`),
+					host: theme.fg("accent", ` ${hostname().split(".")[0]}`),
+					k8s: k8sContext ? theme.fg("accent", `☸ ${k8sContext}`) : "",
 					agent: theme.fg("success", theme.bold("π")),
-					model: theme.fg("success", theme.bold(`${provider} ${model}`)),
+					model: theme.fg("success", theme.bold(model)),
 					effort: effort ? theme.fg("accent", effort) : "",
 					session: sessionName ? theme.fg("accent", `◈ ${truncateToWidth(sessionName, 24, "…")}`) : "",
 					bars: `${bar(usage.ctxPct, 3, 34, 67, colors)} ${theme.fg("dim", "ctx")}`,
@@ -387,20 +379,20 @@ export default function piStatusline(pi: ExtensionAPI): void {
 
 			function compact(width: number): string[] {
 				const s = segments();
-				let cells = [s.clock, joinCells([s.agent, s.model, s.effort]), s.bars, s.quota, s.duration, s.path, s.repo, s.branch, s.pr, s.session].filter(Boolean);
+				let cells = [s.clock, joinCells([s.agent, s.model, s.effort]), s.bars, s.quota, s.k8s, s.duration, s.path, s.repo, s.branch, s.pr, s.session].filter(Boolean);
 				let line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
-				cells = [joinCells([s.agent, s.model, s.effort]), s.bars, s.quota, s.duration, s.repo, s.branch, s.pr, s.session].filter(Boolean);
+				cells = [joinCells([s.agent, s.model, s.effort]), s.bars, s.quota, s.k8s, s.duration, s.repo, s.branch, s.pr, s.session].filter(Boolean);
 				line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
-				cells = [s.agent, s.model, s.bars, s.branch, s.session].filter(Boolean);
+				cells = [s.agent, s.model, s.bars, s.k8s, s.branch, s.session].filter(Boolean);
 				return [truncateToWidth(joinCells(cells), width)];
 			}
 
 			function table(width: number): string[] {
 				const s = segments();
 				const border = (text: string) => theme.fg("border", text);
-				let row1 = [s.host, s.path, s.repo, s.branch, s.pr, s.session].filter(Boolean);
+				let row1 = [s.host, s.k8s, s.path, s.repo, s.branch, s.pr, s.session].filter(Boolean);
 				const row2 = [s.agent, s.model, s.effort, s.ctx, s.quotaTable, s.tokens, s.cost, s.duration, s.clock].filter(Boolean);
 
 				function widthsFor(cells: string[]): number[] {
@@ -422,7 +414,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				// If the on-disk path makes the table too wide, drop only that cell first;
 				// the worktree repo + branch usually carry the more useful context.
 				if (target > width && s.path) {
-					row1 = [s.host, s.repo, s.branch, s.pr, s.session].filter(Boolean);
+					row1 = [s.host, s.k8s, s.repo, s.branch, s.pr, s.session].filter(Boolean);
 					row1Widths = widthsFor(row1);
 					target = Math.max(totalWidth(row1Widths), totalWidth(row2Widths));
 				}

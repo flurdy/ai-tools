@@ -111,14 +111,14 @@ export function fetchCodexWeeklyQuota(options: FetchCodexQuotaOptions = {}): Pro
 			pendingQuota = quota;
 			clearTimeout(timeout);
 			options.signal?.removeEventListener("abort", onAbort);
-			try {
-				child.stdin.end();
-			} catch {}
 			if (child.pid === undefined || child.exitCode !== null) {
 				settle(pendingError, pendingQuota);
 				return;
 			}
 			child.kill("SIGTERM");
+			try {
+				child.stdin.end();
+			} catch {}
 			forceKillTimeout = setTimeout(() => {
 				if (!settled && child.exitCode === null) child.kill("SIGKILL");
 			}, 1000);
