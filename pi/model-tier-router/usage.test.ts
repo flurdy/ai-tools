@@ -52,10 +52,10 @@ function record(timestamp = "2026-07-16T12:00:00.000Z"): UsageRecordV1 {
 }
 
 describe("usage normalization", () => {
-	it("preserves positive Pi-normalized counters and marks zero or missing fields unknown", () => {
+	it("preserves finite zero counters and marks only omitted fields unknown", () => {
 		const normalized = normalizeUsage(message({ input: 0, cacheRead: 4, cacheWrite: 0, output: 2, cacheWrite1h: 1 }));
-		assert.deepEqual(normalized.usage, { input: null, cacheRead: 4, cacheWrite: null, cacheWrite1h: 1, output: 2, reasoning: null });
-		assert.deepEqual(normalized.unknownUsageFields, ["input", "cacheWrite", "reasoning"]);
+		assert.deepEqual(normalized.usage, { input: 0, cacheRead: 4, cacheWrite: 0, cacheWrite1h: 1, output: 2, reasoning: null });
+		assert.deepEqual(normalized.unknownUsageFields, ["reasoning"]);
 	});
 
 	it("keeps cache-write-1h and reasoning separate from output totals", () => {

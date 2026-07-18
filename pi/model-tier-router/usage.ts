@@ -56,8 +56,9 @@ export interface UsageLedgerHealth {
 	writeErrors: number;
 }
 
+/** Pi's core usage counters are numeric; zero means a known zero, while omitted fields remain unavailable. */
 function observed(value: number | undefined): number | null {
-	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 export function normalizeUsage(message: AssistantMessage): { usage: ObservedUsage; unknownUsageFields: UsageField[] } {
@@ -105,7 +106,7 @@ export function isUsageRecordV1(value: unknown): value is UsageRecordV1 {
 	if (unknownFields.size !== record.unknownUsageFields.length || !record.unknownUsageFields.every((field) => USAGE_FIELDS.includes(field))) return false;
 	return USAGE_FIELDS.every((field) => {
 		const usageValue = (record.usage as ObservedUsage)[field];
-		const validValue = usageValue === null || (typeof usageValue === "number" && Number.isFinite(usageValue) && usageValue > 0);
+		const validValue = usageValue === null || (typeof usageValue === "number" && Number.isFinite(usageValue) && usageValue >= 0);
 		return validValue && unknownFields.has(field) === (usageValue === null);
 	});
 }
