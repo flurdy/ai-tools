@@ -142,9 +142,10 @@ During `before_agent_start`, cache the canonical paths of `event.systemPromptOpt
 2. Require it to match a skill Pi loaded for this turn.
 3. Require the file to be `SKILL.md` or a registered root skill file.
 4. Read `model-tier`.
-5. Switch before the tool result causes the next model call.
+5. For an unmetered candidate, switch before the tool result causes the next model call.
+6. For a metered candidate, skip the switch without opening a model-initiated blocking prompt.
 
-This reduces false positives when an agent merely inspects an unrelated `SKILL.md`.
+This reduces false positives when an agent merely inspects an unrelated `SKILL.md` and ensures implicit reads fail closed on spend.
 
 Provide `routeImplicitSkillReads: false` as an escape hatch.
 
@@ -179,15 +180,16 @@ For a requested tier:
 2. Query `ctx.modelRegistry.getAvailable()`.
 3. Select the first configured candidate that is available.
 4. If no candidate is available, retain the current model and notify.
-5. If the candidate is marked `metered` and the skill policy requires confirmation:
-   - Interactive/RPC: ask for confirmation.
-   - Print/JSON: decline the switch safely and continue on the current model.
+5. If the candidate is marked `metered`:
+   - Explicit `/skill:name` in interactive/RPC mode: always ask for confirmation, regardless of skill policy metadata.
+   - Explicit `/skill:name` in print/JSON mode: skip the switch safely and continue on the current model.
+   - Model-initiated skill read: never open a blocking spend prompt; skip the switch and retain the current route/model.
 6. Snapshot the original model and thinking level before the first switch.
 7. Call `pi.setModel()`.
 8. Set the configured thinking level.
 9. Display the active tier in Pi’s status area.
 
-Do not infer whether a model uses OAuth or an API key. That is local configuration knowledge, represented by `metered`.
+Do not infer whether a model uses OAuth or an API key. Local configuration's `metered` flag is the spend authority; portable skill cost/policy metadata may provide confirmation context but cannot waive the gate.
 
 ## Nested skills
 
@@ -345,15 +347,16 @@ Create temporary skills for:
 Verify:
 
 1. Explicit `/skill:name` switches before the first response.
-2. Automatic skill reading switches before the next model call.
-3. Nested cheap skill does not downgrade a premium workflow.
-4. Unavailable primary uses fallback.
-5. Metered candidate asks before switching.
-6. Metered candidate is skipped in `pi -p`.
-7. Original model and thinking are restored after settlement.
-8. Manual `/model` selection is preserved.
-9. `/reload` leaves no stale active state.
-10. Claude-style `model: haiku` has no effect.
+2. Automatic unmetered skill reading switches before the next model call.
+3. Automatic metered skill reading skips without prompting or changing the route.
+4. Nested cheap skill does not downgrade a premium workflow.
+5. Unavailable primary uses fallback.
+6. Every explicit metered candidate asks before switching, regardless of skill metadata.
+7. Metered candidate is skipped in `pi -p`.
+8. Original model and thinking are restored after settlement.
+9. Manual `/model` selection is preserved.
+10. `/reload` leaves no stale active state.
+11. Claude-style `model: haiku` has no effect.
 
 ## Risks and mitigations
 
@@ -367,7 +370,7 @@ Verify:
   Enforce rank-based upgrades only.
 
 - **Unexpected premium spending**  
-  Mark candidates as `metered` in local configuration and apply frontmatter confirmation policies.
+  Treat local candidates marked `metered` as confirmation-required for explicit commands, independent of frontmatter; skip them for implicit reads or when no UI is available.
 
 - **User fights the router with `/model`**  
   Detect manual selection and relinquish control for that run.
@@ -409,8 +412,9 @@ Requirements:
   skill Pi loaded for the turn.
 - Ignore model: haiku and model-second-opinion-tier.
 - Nested skills may upgrade by configured rank but never downgrade.
-- Metered candidates require confirmation according to skill metadata; skip
-  safely without UI.
+- Every explicitly requested metered candidate requires confirmation regardless
+  of skill metadata; skip safely without UI, and skip implicit metered reads
+  without prompting.
 - Restore original model/thinking at agent_settled unless the user manually
   selected another model.
 - Add /model-tier status|reload|on|off.

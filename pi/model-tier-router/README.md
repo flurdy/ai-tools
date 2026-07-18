@@ -25,7 +25,9 @@ cp ./pi/model-tier-router/model-tier-router.example.json \
 $EDITOR ~/.pi/agent/model-tier-router.json
 ```
 
-Candidate order is fallback order. Every candidate must explicitly declare a boolean `metered` value; candidates without one are rejected rather than assumed free. `metered` is local cost knowledge, and the router never guesses from provider or authentication details. A metered candidate needs confirmation when the skill declares `model-metered-policy: ask-above-standard`, `cap-or-ask`, or `ask-before-metered-panel`, or declares `model-cost-policy: deliberate-premium`. Such a route is safely skipped when confirmation is required but no UI is available.
+Candidate order is fallback order. Every candidate must explicitly declare a boolean `metered` value; candidates without one are rejected rather than assumed free. `metered` is the local spend authority, and the router never guesses from provider, authentication details, or portable skill metadata. Every `metered: true` candidate requested through an explicit `/skill:name` command requires interactive confirmation. Declining, or running without a confirmation UI, skips the switch and retains the prior model. `metered: false` is the user's explicit local classification that the candidate may route without a spend prompt.
+
+Model-initiated skill reads never open a blocking spend prompt. An implicit read may route to `metered: false`, but it skips `metered: true` and retains the current route/model. In the copied example configuration, the premium placeholders are therefore confirmation-only for explicit skill commands even though `routeImplicitSkillReads` is enabled.
 
 A trusted project can override top-level options and complete tier entries in:
 
@@ -64,9 +66,9 @@ model-metered-policy: ask-above-standard
 effort: high
 ```
 
-The confirmation policies documented above require confirmation for a metered candidate and are included in its confirmation message. Other or absent policy values do not add a confirmation gate. A valid `effort` value (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`) overrides the tier's default thinking level. Nested skills may raise thinking but never lower it. The router deliberately ignores Claude-specific `model: haiku` and `model-second-opinion-tier`.
+The local candidate's `metered` flag alone controls the confirmation gate. `model-cost-policy` and `model-metered-policy` may be shown as context in an explicit confirmation, but absent or unrecognised values cannot waive that gate. A valid `effort` value (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`) overrides the tier's default thinking level. Nested skills may raise thinking but never lower it. The router deliberately ignores Claude-specific `model: haiku` and `model-second-opinion-tier`.
 
-Explicit `/skill:name` commands are detected during Pi's `input` event and routed from `before_agent_start` only after Pi has accepted and expanded that skill. This prevents a later input handler from leaving behind a premature model switch. Skill commands queued while an agent is already streaming continue on the active model because Pi 0.80.6 has no pre-provider boundary where a queued route can be applied safely; the router warns instead of switching too early. Model-initiated reads route only when the canonical read path exactly matches a skill file Pi loaded for that turn. This includes `SKILL.md` and registered root skill Markdown files without scanning or reimplementing Pi's discovery rules.
+Explicit `/skill:name` commands are detected during Pi's `input` event and routed from `before_agent_start` only after Pi has accepted and expanded that skill. This prevents a later input handler from leaving behind a premature model switch. Skill commands queued while an agent is already streaming continue on the active model because Pi 0.80.6 has no pre-provider boundary where a queued route can be applied safely; the router warns instead of switching too early. Model-initiated reads route only when the canonical read path exactly matches a skill file Pi loaded for that turn. This includes `SKILL.md` and registered root skill Markdown files without scanning or reimplementing Pi's discovery rules; metered matches fail closed without prompting, while unmetered matches may route normally.
 
 ## Install for testing
 

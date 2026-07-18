@@ -84,21 +84,8 @@ export function findExactModel(candidate: ModelCandidate, available: Model<Api>[
 	return available.find((model) => `${model.provider}/${model.id}` === candidate.model);
 }
 
-const METERED_CONFIRMATION_POLICIES = new Set([
-	"ask-above-standard",
-	"cap-or-ask",
-	"ask-before-metered-panel",
-]);
-
-export function requiresMeteredConfirmation(
-	candidate: ModelCandidate,
-	metadata: SkillRoutingMetadata,
-): boolean {
-	if (!candidate.metered) return false;
-	return (
-		(metadata.meteredPolicy !== undefined && METERED_CONFIRMATION_POLICIES.has(metadata.meteredPolicy)) ||
-		metadata.costPolicy === "deliberate-premium"
-	);
+export function requiresMeteredConfirmation(candidate: ModelCandidate): boolean {
+	return candidate.metered;
 }
 
 export function shouldRestoreAfterRun(restoreAfterRun: boolean, manualModelOverride: boolean): boolean {

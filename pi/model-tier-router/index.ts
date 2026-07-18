@@ -43,6 +43,8 @@ interface PendingExplicitRoute {
 	path: string;
 }
 
+type SkillRouteSource = "explicit-command" | "implicit-read";
+
 function modelId(model: Model<Api> | undefined): string {
 	return model ? `${model.provider}/${model.id}` : "(none)";
 }
@@ -156,7 +158,12 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 		updateStatus(ctx);
 	}
 
-	async function routeSkill(skillName: string, path: string, ctx: ExtensionContext): Promise<void> {
+	async function routeSkill(
+		skillName: string,
+		path: string,
+		source: SkillRouteSource,
+		ctx: ExtensionContext,
+	): Promise<void> {
 		if (!isEnabled() || !loaded) return;
 		if (run?.restorePending) {
 			warnOnce(ctx, "restore-pending", `skipped ${skillName} while restoration of ${modelId(run.originalModel)} is pending`);
@@ -201,10 +208,15 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 			return;
 		}
 
-		if (requiresMeteredConfirmation(candidate, metadata)) {
+		if (requiresMeteredConfirmation(candidate)) {
+			if (source === "implicit-read") {
+				if (run) raiseRunThinking(run, requestedThinking, skillName, ctx);
+				warnOnce(ctx, `metered:implicit:${metadata.tier}`, `skipped metered ${candidate.model} for ${metadata.tier} because implicit skill reads do not prompt`);
+				return;
+			}
 			if (!ctx.hasUI) {
 				if (run) raiseRunThinking(run, requestedThinking, skillName, ctx);
-				warnOnce(ctx, `metered:${metadata.tier}`, `skipped metered ${candidate.model} for ${metadata.tier} because no confirmation UI is available`);
+				warnOnce(ctx, `metered:no-ui:${metadata.tier}`, `skipped metered ${candidate.model} for ${metadata.tier} because no confirmation UI is available`);
 				return;
 			}
 			const policies = [metadata.costPolicy, metadata.meteredPolicy].filter(Boolean).join(", ");
@@ -214,7 +226,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 			);
 			if (!confirmed) {
 				if (run) raiseRunThinking(run, requestedThinking, skillName, ctx);
-				warnOnce(ctx, `metered:${metadata.tier}`, `declined metered ${candidate.model} for ${metadata.tier}`);
+				warnOnce(ctx, `metered:declined:${metadata.tier}`, `declined metered ${candidate.model} for ${metadata.tier}`);
 				return;
 			}
 		}
@@ -326,7 +338,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 		const pending = pendingExplicitRoute;
 		pendingExplicitRoute = undefined;
 		if (pending && event.prompt.startsWith(`<skill name="${pending.skillName}" location="${pending.path}">\n`)) {
-			await routeSkill(pending.skillName, pending.path, ctx);
+			await routeSkill(pending.skillName, pending.path, "explicit-command", ctx);
 		}
 
 		const entries = await Promise.all(
@@ -343,7 +355,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 		const path = await canonicalPath(event.input.path, ctx.cwd);
 		if (!path) return;
 		const skill = loadedSkills.get(path);
-		if (skill) await routeSkill(skill.name, skill.filePath, ctx);
+		if (skill) await routeSkill(skill.name, skill.filePath, "implicit-read", ctx);
 	});
 
 	pi.on("model_select", (event, ctx) => {

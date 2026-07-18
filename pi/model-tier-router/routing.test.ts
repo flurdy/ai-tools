@@ -100,15 +100,10 @@ describe("tier decisions", () => {
 });
 
 describe("candidate selection", () => {
-	it("requires metered confirmation only when skill policy asks for it", () => {
+	it("requires confirmation for every metered candidate regardless of skill metadata", () => {
 		const metered = { model: "provider/premium", metered: true };
-		assert.equal(requiresMeteredConfirmation(metered, {}), false);
-		assert.equal(requiresMeteredConfirmation(metered, { meteredPolicy: "ask-above-standard" }), true);
-		assert.equal(requiresMeteredConfirmation(metered, { meteredPolicy: "cap-or-ask" }), true);
-		assert.equal(requiresMeteredConfirmation(metered, { meteredPolicy: "ask-before-metered-panel" }), true);
-		assert.equal(requiresMeteredConfirmation(metered, { costPolicy: "deliberate-premium" }), true);
-		assert.equal(requiresMeteredConfirmation(metered, { meteredPolicy: "never" }), false);
-		assert.equal(requiresMeteredConfirmation({ ...metered, metered: false }, { costPolicy: "deliberate-premium" }), false);
+		assert.equal(requiresMeteredConfirmation(metered), true);
+		assert.equal(requiresMeteredConfirmation({ ...metered, metered: false }), false);
 	});
 
 	it("uses exact provider/model ids and configured fallback order", () => {
@@ -490,6 +485,7 @@ describe("extension lifecycle", () => {
 		assert.deepEqual(harness.modelSelections, []);
 
 		await harness.startSkill("review");
+		assert.deepEqual(harness.confirmations, []);
 		assert.deepEqual(harness.modelSelections, ["provider/standard"]);
 		assert.equal(harness.ctx.model.id, "standard");
 		assert.match(harness.notifications.join("\n"), /review → standard → provider\/standard \(thinking:medium\)/);
@@ -526,9 +522,9 @@ describe("extension lifecycle", () => {
 		assert.match(harness.notifications.join("\n"), /could not select provider\/standard/);
 	});
 
-	it("captures accepted metered confirmation", async () => {
+	it("requires and captures explicit metered confirmation without skill policy metadata", async () => {
 		const harness = await createRouterHarness({
-			review: { tier: "premium", rank: 40, metered: true, costPolicy: "deliberate-premium" },
+			review: { tier: "premium", rank: 40, metered: true },
 		});
 		await harness.invokeSkill("review");
 
@@ -538,11 +534,12 @@ describe("extension lifecycle", () => {
 	});
 
 	it("simulates declined and unavailable metered confirmation", async () => {
-		const skill = { review: { tier: "premium", rank: 40, metered: true, meteredPolicy: "ask-above-standard" } };
+		const skill = { review: { tier: "premium", rank: 40, metered: true, meteredPolicy: "unrecognised-policy" } };
 		const declined = await createRouterHarness(skill, { confirm: false });
 		await declined.invokeSkill("review");
 		assert.equal(declined.confirmations.length, 1);
 		assert.deepEqual(declined.modelSelectionAttempts, []);
+		assert.equal(declined.ctx.model.id, "original");
 		assert.match(declined.notifications.join("\n"), /declined metered provider\/premium/);
 
 		const headless = await createRouterHarness(skill, { hasUI: false });
@@ -552,13 +549,44 @@ describe("extension lifecycle", () => {
 		assert.equal(headless.ctx.model.id, "original");
 	});
 
-	it("routes an implicit skill only after its loaded file is read", async () => {
+	it("routes an unmetered implicit skill only after its loaded file is read", async () => {
 		const harness = await createRouterHarness({ review: { tier: "standard", rank: 20 } });
 		await harness.loadSkillsForTurn("review");
 		assert.deepEqual(harness.modelSelections, []);
 
 		await harness.readSkill("review");
+		assert.deepEqual(harness.confirmations, []);
 		assert.deepEqual(harness.modelSelections, ["provider/standard"]);
+	});
+
+	it("skips an initial metered implicit skill read without prompting or changing the model", async () => {
+		const harness = await createRouterHarness({
+			review: { tier: "premium", rank: 40, metered: true },
+		});
+		await harness.loadSkillsForTurn("review");
+
+		await harness.readSkill("review");
+
+		assert.deepEqual(harness.confirmations, []);
+		assert.deepEqual(harness.modelSelectionAttempts, []);
+		assert.equal(harness.ctx.model.id, "original");
+		assert.match(harness.notifications.join("\n"), /implicit skill reads do not prompt/);
+	});
+
+	it("skips a nested metered implicit skill read without prompting or changing the active route", async () => {
+		const harness = await createRouterHarness({
+			build: { tier: "standard", rank: 20 },
+			audit: { tier: "premium", rank: 40, metered: true, meteredPolicy: "ask-above-standard" },
+		});
+		await harness.invokeSkill("build");
+		await harness.loadSkillsForTurn("audit");
+
+		await harness.readSkill("audit");
+
+		assert.deepEqual(harness.confirmations, []);
+		assert.deepEqual(harness.modelSelectionAttempts, ["provider/standard"]);
+		assert.equal(harness.ctx.model.id, "standard");
+		assert.match(harness.notifications.join("\n"), /implicit skill reads do not prompt/);
 	});
 
 	it("discards stale routes when a later input handler changes the request", async () => {
