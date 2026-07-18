@@ -10,6 +10,8 @@ Pi-crew contains useful patterns primarily for the shared `/orchestrate` workflo
 
 Borrow its **advisory vocabulary and control-plane patterns**, not its durable scheduler or subprocess runtime. Pi-crew's runtime lifecycle overlaps with capabilities already owned by `pi-subagents`, while `/orchestrate` is intentionally a conservative, parent-owned coordination workflow rather than a persistent scheduler.
 
+> **Reconciliation (2026-07-18):** The `/orchestrate` changes in [Recommended change](#recommended-change) — advisory topology-preflight, structured recommendation/confidence/limits, and `needs-attention` normalization — are **superseded by `skills-mcn`**, which paused adaptive expansion of `/orchestrate` and closed the matching capability beads (`skills-rd6.2`, `skills-rd6.3`). Those items add advisory *prose* to a skill prompt — ceremony that re-describes coordination judgment a premium model already supplies — which the pause specifically ruled against. Only the two **router-side** ideas survive, tracked under epic `ai-tools-gc2`: `ai-tools-gc2.1` (bounded, consent-safe fallback) and `ai-tools-gc2.2` (normalized route-decision record). Keep this doc as the pi-crew analysis of record; do not implement the orchestrate items without new evidence that a real coordination outcome improves.
+
 ## Patterns worth adopting
 
 ### 1. Explicit topology preflight in `/orchestrate`
@@ -142,6 +144,11 @@ Fallback execution would still belong to the runtime adapter, not the parent ski
 Dynamic workflows are particularly unsuitable: pi-crew explicitly says they run as trusted Node code with access to `require`, imports, and `process`, and are **not sandboxed** ([source](https://github.com/baphuongna/pi-crew/blob/7aa077d42839603744153347b974a036b5bb0dce/src/runtime/dynamic-workflow-runner.ts#L1-L17)).
 
 ## Recommended change
+
+> **Superseded — see [Reconciliation](#decision).** Items 1–3 (orchestrate prose) are not
+> being implemented per `skills-mcn`. Item 4 already describes current behaviour. Item 5
+> (router route-decision evidence) survives as `ai-tools-gc2.2`; the bounded-fallback
+> guardrail from [Router implications](#router-implications) is `ai-tools-gc2.1`.
 
 Implement one small `/orchestrate` enhancement:
 
