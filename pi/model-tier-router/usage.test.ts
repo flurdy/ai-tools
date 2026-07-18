@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { UsageLedger } from "./usage-ledger.ts";
-import { addUsageRecord, emptyUsageTotals, normalizeUsage, type UsageRecordV1 } from "./usage.ts";
+import { addUsageRecord, emptyUsageTotals, formatUsageSummary, normalizeUsage, type UsageRecordV1 } from "./usage.ts";
 
 function message(usage: Partial<AssistantMessage["usage"]> = {}): AssistantMessage {
 	return {
@@ -64,6 +64,29 @@ describe("usage normalization", () => {
 		assert.equal(totals.output, 10);
 		assert.equal(totals.reasoning, 7);
 		assert.equal(totals.unknown.reasoning, 0);
+	});
+
+	it("formats grouped counters as a compact table with readable unknown fields", () => {
+		const totals = emptyUsageTotals();
+		Object.assign(totals, {
+			responses: 30,
+			input: 1_752_492,
+			cacheRead: 1_754_408,
+			output: 4_379,
+			reasoning: 649,
+			unknown: { input: 0, cacheRead: 15, cacheWrite: 30, cacheWrite1h: 0, output: 0, reasoning: 0 },
+		});
+
+		const summary = formatUsageSummary(
+			[{ route: "cheap-bulk | openai-codex/gpt-5.6-luna", totals }],
+			{ pending: 0, dropped: 0, writeErrors: 0 },
+			0,
+		);
+
+		assert.match(summary, /Route\s+Resp\s+Input\s+Cache read\s+Cache write\/1h\s+Output\s+Reasoning/);
+		assert.match(summary, /cheap-bulk \| openai-codex\/gpt-5\.6-luna\s+30\s+1\.75M\s+1\.75M\s+0\/0\s+4\.4K\s+649/);
+		assert.match(summary, /Unknown token fields \(response count\):\ncheap-bulk \| openai-codex\/gpt-5\.6-luna: cache-read 15, cache-write 30/);
+		assert.match(summary, /Ledger health: pending 0; dropped 0; write errors 0; skipped records 0/);
 	});
 });
 

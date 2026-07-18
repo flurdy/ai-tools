@@ -100,7 +100,7 @@ Restart Pi or run `/reload`.
 
 Status reports the active tier and skills, selected/original models, pending restoration, loaded configuration paths, route warnings, and ledger health.
 
-`/model-tier usage` summarizes local records by tier and exact provider/model. It labels them **Pi-normalized observed responses**: they are not subscription quota, provider billing, or cross-provider cost. Pi's `usage.cost` is calculated from configured local model prices, so it is intentionally not persisted as provider-reported cost. Cache reads, cache writes (including optional one-hour writes), output, and optional reasoning counters remain separate; unavailable or ambiguous zero counters are reported as unknown.
+`/model-tier usage` summarizes local records by tier and exact provider/model in a compact table. It labels them **Pi-normalized observed responses**: they are not subscription quota, provider billing, or cross-provider cost. Pi's `usage.cost` is calculated from configured local model prices, so it is intentionally not persisted as provider-reported cost. Cache reads, cache writes (including optional one-hour writes), output, and optional reasoning counters remain separate; unavailable or ambiguous zero counters are reported as unknown.
 
 The ledger records neither prompts nor responses, repository/session-file paths, response IDs, account identifiers, or credentials. It is best-effort: records may be dropped on a full queue, disk error, or abrupt shutdown, and persistence never delays routing or restoration. Separate Pi subprocesses (including `pi-subagents` workers) are not rolled into a parent routed run.
 

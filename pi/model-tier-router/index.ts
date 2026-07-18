@@ -6,7 +6,7 @@ import type { ExtensionAPI, ExtensionContext, Skill } from "@earendil-works/pi-c
 import { CONFIG_DIR_NAME, getAgentDir, isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import { loadRouterConfig, type LoadedRouterConfig } from "./config.ts";
 import { UsageLedger } from "./usage-ledger.ts";
-import { addUsageRecord, emptyUsageTotals, normalizeUsage, type UsageRecordV1, type UsageTotals } from "./usage.ts";
+import { addUsageRecord, emptyUsageTotals, formatUsageSummary, normalizeUsage, type UsageRecordV1, type UsageTotals } from "./usage.ts";
 import {
 	canonicalPath,
 	decideTier,
@@ -410,13 +410,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 					addUsageRecord(totals, record);
 				}
 				const health = usageLedger.health();
-				const lines = ["Pi-normalized observed responses — not subscription quota or provider billing."];
-				for (const [key, totals] of groups) {
-					lines.push(`${key}: ${totals.responses} responses; in ${totals.input}; cache-read ${totals.cacheRead}; cache-write ${totals.cacheWrite}; cache-write-1h ${totals.cacheWrite1h}; out ${totals.output}; reasoning ${totals.reasoning}; unknown input/cache-read/cache-write/cache-write-1h/output/reasoning ${totals.unknown.input}/${totals.unknown.cacheRead}/${totals.unknown.cacheWrite}/${totals.unknown.cacheWrite1h}/${totals.unknown.output}/${totals.unknown.reasoning}`);
-				}
-				lines.push("provider-reported cost: unavailable; Pi exposes configured-price calculations only.");
-				lines.push(`ledger health: pending ${health.pending}; dropped ${health.dropped}; write errors ${health.writeErrors}; skipped records ${skipped}`);
-				notify(ctx, lines.join("\n"), "info");
+				notify(ctx, formatUsageSummary([...groups].map(([route, totals]) => ({ route, totals })), health, skipped), "info");
 				return;
 			}
 			if (action !== "status") {
