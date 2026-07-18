@@ -1,6 +1,6 @@
 # Pi Model Tier Router
 
-Small, provider-neutral Pi extension that maps semantic skill metadata such as `model-tier: focused-coding` to exact locally configured models and honors skill `effort` as Pi's thinking level. It restores the previous model and thinking level when the agent run settles.
+Small, provider-neutral Pi extension that maps semantic skill metadata such as `model-tier: standard` to exact locally configured models and honors skill `effort` as Pi's thinking level. It restores the previous model and thinking level when the agent run settles.
 
 Exact provider/model IDs stay in local JSON configuration; the extension contains no provider defaults.
 
@@ -47,26 +47,29 @@ Supported options:
 - `tiers.<name>.candidates`: exact, ordered model candidates and their local `metered` flag.
 - `usageLedger`: optional global-only local telemetry. It defaults to disabled; when enabled it writes Pi-normalized assistant-response token counters under `~/.pi/agent/model-tier-router/usage/v1/`. `retentionDays` and `maxBytes` bound retention. Project configuration cannot enable it.
 
-The router accepts arbitrary tier names, but the shared portable taxonomy uses
-`standard-workflow` for coordination, `focused-coding` for bounded implementation on
-an established pattern, and `advanced-coding` for implementation that still needs
-meaningful local design judgment. Configure focused below advanced in rank so nested
-skills can upgrade but never silently downshift. `standard-coding` is a retired shared
-name: existing private/project metadata remains syntactically valid, but should migrate
-to focused or advanced according to work shape.
+The shared portable taxonomy uses `economy` for low-risk deterministic work,
+`standard` for normal workflows and bounded implementation, and `premium` for work
+where substantial judgment or the cost of a mistake justifies the strongest configured
+capability. Skill `effort` expresses reasoning depth independently, so `standard` can
+serve both routine coordination and high-effort coding. Configure these three routes
+with strictly increasing ranks so nested skills can upgrade but never silently
+downshift.
+
+The example temporarily retains the legacy seven-tier entries alongside the three
+portable tiers. Keep both taxonomies during migration; remove the legacy entries only
+after economy, standard, and premium routes have been dogfooded and rollback is no
+longer needed. The router continues to accept arbitrary private/project tier names.
 
 ## Skill metadata
 
 The router reads these optional frontmatter fields with Pi's frontmatter parser:
 
 ```yaml
-model-tier: premium-review
-model-cost-policy: deliberate-premium
-model-metered-policy: ask-above-standard
-effort: high
+model-tier: premium
+effort: xhigh
 ```
 
-The local candidate's `metered` flag alone controls the confirmation gate. `model-cost-policy` and `model-metered-policy` may be shown as context in an explicit confirmation, but absent or unrecognised values cannot waive that gate. A valid `effort` value (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`) overrides the tier's default thinking level. Nested skills may raise thinking but never lower it. The router deliberately ignores Claude-specific `model: haiku` and `model-second-opinion-tier`.
+The local candidate's `metered` flag alone controls the confirmation gate. Skill metadata cannot waive that gate. A valid `effort` value (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`) overrides the tier's default thinking level. Nested skills may raise thinking but never lower it. The router deliberately ignores Claude-specific `model: haiku` metadata.
 
 Explicit `/skill:name` commands are detected during Pi's `input` event and routed from `before_agent_start` only after Pi has accepted and expanded that skill. This prevents a later input handler from leaving behind a premature model switch. Skill commands queued while an agent is already streaming continue on the active model because Pi 0.80.6 has no pre-provider boundary where a queued route can be applied safely; the router warns instead of switching too early. Model-initiated reads route only when the canonical read path exactly matches a skill file Pi loaded for that turn. This includes `SKILL.md` and registered root skill Markdown files without scanning or reimplementing Pi's discovery rules; metered matches fail closed without prompting, while unmetered matches may route normally.
 

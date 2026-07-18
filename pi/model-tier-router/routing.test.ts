@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -57,7 +57,7 @@ describe("skill routing metadata", () => {
 		const metadata = parseSkillRouting(`---
 name: review
 model: haiku
-model-tier: premium-review
+model-tier: premium
 model-cost-policy: deliberate-premium
 model-metered-policy: ask-above-standard
 model-second-opinion-tier: independent-reasoning
@@ -66,7 +66,7 @@ effort: xhigh
 Body
 `);
 		assert.deepEqual(metadata, {
-			tier: "premium-review",
+			tier: "premium",
 			costPolicy: "deliberate-premium",
 			meteredPolicy: "ask-above-standard",
 			effort: "xhigh",
@@ -76,12 +76,16 @@ Body
 
 describe("tier decisions", () => {
 	it("establishes a first tier and permits only higher-ranked upgrades", () => {
-		assert.equal(decideTier(undefined, { tier: "standard", rank: 20 }), "initial");
-		assert.equal(decideTier({ tier: "standard", rank: 20 }, { tier: "premium", rank: 40 }), "upgrade");
-		assert.equal(decideTier({ tier: "premium", rank: 40 }, { tier: "cheap", rank: 10 }), "retain-lower");
+		const economy = { tier: "economy", rank: 10 };
+		const standard = { tier: "standard", rank: 20 };
+		const premium = { tier: "premium", rank: 40 };
+		assert.equal(decideTier(undefined, economy), "initial");
+		assert.equal(decideTier(economy, standard), "upgrade");
+		assert.equal(decideTier(standard, premium), "upgrade");
+		assert.equal(decideTier(premium, economy), "retain-lower");
 	});
 
-	it("upgrades focused coding to advanced coding without downshifting", () => {
+	it("keeps legacy focused and advanced tiers valid during migration", () => {
 		const focused = { tier: "focused-coding", rank: 25 };
 		const advanced = { tier: "advanced-coding", rank: 30 };
 		assert.equal(decideTier(focused, advanced), "upgrade");
@@ -117,6 +121,29 @@ describe("candidate selection", () => {
 });
 
 describe("configuration", () => {
+	it("ships three portable routes alongside the seven legacy routes", () => {
+		const example = JSON.parse(
+			readFileSync(new URL("./model-tier-router.example.json", import.meta.url), "utf8"),
+		) as { tiers: Record<string, TierRoute> };
+		const { tiers } = example;
+		for (const legacy of [
+			"cheap-bulk",
+			"standard-workflow",
+			"focused-coding",
+			"advanced-coding",
+			"long-context-audit",
+			"premium-reasoning",
+			"premium-review",
+		]) {
+			assert.ok(Object.hasOwn(tiers, legacy), `missing legacy tier ${legacy}`);
+		}
+		assert.deepEqual(tiers.economy.candidates, tiers["cheap-bulk"].candidates);
+		assert.deepEqual(tiers.standard.candidates, tiers["standard-workflow"].candidates);
+		assert.deepEqual(tiers.premium.candidates, tiers["premium-reasoning"].candidates);
+		assert.ok(tiers.economy.rank < tiers.standard.rank);
+		assert.ok(tiers.standard.rank < tiers.premium.rank);
+	});
+
 	it("loads global configuration and merges trusted project tiers", () => {
 		const root = mkdtempSync(join(tmpdir(), "model-tier-router-"));
 		const agentDir = join(root, "agent");
@@ -479,6 +506,21 @@ async function createRouterHarness(
 }
 
 describe("extension lifecycle", () => {
+	it("routes economy, standard, and premium while honoring declared effort", async () => {
+		const harness = await createRouterHarness({
+			scan: { tier: "economy", rank: 10, effort: "low" },
+			build: { tier: "standard", rank: 20, effort: "high" },
+			review: { tier: "premium", rank: 40, effort: "xhigh" },
+		});
+
+		await harness.invokeSkill("scan");
+		await harness.invokeSkill("build");
+		await harness.invokeSkill("review");
+
+		assert.deepEqual(harness.modelSelections, ["provider/economy", "provider/standard", "provider/premium"]);
+		assert.deepEqual(harness.thinkingSelections, ["low", "high", "xhigh"]);
+	});
+
 	it("stages explicit routing until the expanded skill starts, then restores after settlement", async () => {
 		const harness = await createRouterHarness({ review: { tier: "standard", rank: 20, effort: "medium" } });
 		await harness.stageSkill("review");
@@ -615,9 +657,9 @@ describe("extension lifecycle", () => {
 
 	it("raises nested effort without downgrading the active model or thinking", async () => {
 		const harness = await createRouterHarness({
-			build: { tier: "standard", rank: 30, effort: "medium" },
-			"deep-check": { tier: "cheap", rank: 10, effort: "xhigh" },
-			"quick-check": { tier: "cheap", rank: 10, effort: "low" },
+			build: { tier: "standard", rank: 20, effort: "medium" },
+			"deep-check": { tier: "economy", rank: 10, effort: "xhigh" },
+			"quick-check": { tier: "economy", rank: 10, effort: "low" },
 		});
 		await harness.invokeSkill("build");
 		await harness.invokeSkill("deep-check");

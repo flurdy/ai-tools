@@ -13,6 +13,11 @@
       "thinking": "medium",
       "candidates": [{ "model": "provider/cheap-model-id", "metered": false }]
     },
+    "economy": {
+      "rank": 10,
+      "thinking": "medium",
+      "candidates": [{ "model": "provider/cheap-model-id", "metered": false }]
+    },
     "standard-workflow": {
       "rank": 20,
       "thinking": "medium",
@@ -22,6 +27,11 @@
       "rank": 25,
       "thinking": "high",
       "candidates": [{ "model": "provider/focused-coding-model-id", "metered": false }]
+    },
+    "standard": {
+      "rank": 20,
+      "thinking": "medium",
+      "candidates": [{ "model": "provider/workflow-model-id", "metered": false }]
     },
     "advanced-coding": {
       "rank": 30,
@@ -42,6 +52,11 @@
       "rank": 40,
       "thinking": "xhigh",
       "candidates": [{ "model": "provider/premium-review-model-id", "metered": true }]
+    },
+    "premium": {
+      "rank": 40,
+      "thinking": "xhigh",
+      "candidates": [{ "model": "provider/premium-model-id", "metered": true }]
     }
   }
 }
