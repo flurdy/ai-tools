@@ -41,7 +41,6 @@ Supported options:
 
 - `enabled`: enable routing on load.
 - `routeImplicitSkillReads`: route model-initiated `read` calls for skills loaded into that turn's Pi system prompt.
-- `restoreAfterRun`: restore the pre-route model and thinking level at `agent_settled`.
 - `tiers.<name>.rank`: nested skills may move to a higher rank, but never to an equal or lower rank.
 - `tiers.<name>.thinking`: default Pi thinking level when the skill does not declare `effort`.
 - `tiers.<name>.candidates`: exact, ordered model candidates and their local `metered` flag.

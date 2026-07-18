@@ -15,7 +15,6 @@ import {
 	parseSkillRouting,
 	requiresMeteredConfirmation,
 	selectCandidate,
-	shouldRestoreAfterRun,
 	type TierRoute,
 } from "./routing.ts";
 
@@ -144,6 +143,7 @@ describe("configuration", () => {
 			join(agentDir, "model-tier-router.json"),
 			JSON.stringify({
 				enabled: true,
+				restoreAfterRun: false,
 				tiers: {
 					standard: { rank: 20, thinking: "high", candidates: [{ model: "global/standard", metered: false }] },
 					cheap: { rank: 10, thinking: "low", candidates: [] },
@@ -153,7 +153,6 @@ describe("configuration", () => {
 		writeFileSync(
 			join(cwd, ".pi", "model-tier-router.json"),
 			JSON.stringify({
-				restoreAfterRun: false,
 				tiers: {
 					standard: { rank: 25, thinking: "medium", candidates: [{ model: "project/standard", metered: true }] },
 				},
@@ -161,7 +160,7 @@ describe("configuration", () => {
 		);
 
 		const result = loadRouterConfig({ agentDir, cwd, projectTrusted: true });
-		assert.equal(result.config.restoreAfterRun, false);
+		assert.equal("restoreAfterRun" in result.config, false);
 		assert.equal(result.config.tiers.standard.rank, 25);
 		assert.equal(result.config.tiers.standard.candidates[0]?.model, "project/standard");
 		assert.equal(result.config.tiers.cheap.rank, 10);
@@ -234,7 +233,7 @@ describe("configuration", () => {
 	});
 });
 
-describe("path and restoration safety", () => {
+describe("path safety", () => {
 	it("canonicalises symlinked skill paths", async () => {
 		const root = mkdtempSync(join(tmpdir(), "model-tier-router-"));
 		const skillDir = join(root, "real-skill");
@@ -242,12 +241,6 @@ describe("path and restoration safety", () => {
 		writeFileSync(join(skillDir, "SKILL.md"), "---\nname: test\ndescription: test\n---\n");
 		symlinkSync(skillDir, join(root, "linked-skill"));
 		assert.equal(await canonicalPath("linked-skill/SKILL.md", root), join(skillDir, "SKILL.md"));
-	});
-
-	it("suppresses restoration after a manual model override", () => {
-		assert.equal(shouldRestoreAfterRun(true, false), true);
-		assert.equal(shouldRestoreAfterRun(true, true), false);
-		assert.equal(shouldRestoreAfterRun(false, false), false);
 	});
 });
 
@@ -269,7 +262,7 @@ interface RouterHarnessOptions {
 	confirm?: boolean;
 	hasUI?: boolean;
 	idle?: boolean;
-	restoreAfterRun?: boolean;
+	legacyRestoreAfterRun?: boolean;
 	setModelResults?: Record<string, boolean[]>;
 }
 
@@ -344,7 +337,12 @@ async function createRouterHarness(
 	}
 	writeFileSync(
 		join(cwd, ".pi", "model-tier-router.json"),
-		JSON.stringify({ enabled: true, routeImplicitSkillReads: true, restoreAfterRun: options.restoreAfterRun ?? true, tiers }),
+		JSON.stringify({
+			enabled: true,
+			routeImplicitSkillReads: true,
+			...(options.legacyRestoreAfterRun === undefined ? {} : { restoreAfterRun: options.legacyRestoreAfterRun }),
+			tiers,
+		}),
 	);
 
 	const original = model("provider", "original");
@@ -526,6 +524,18 @@ describe("extension lifecycle", () => {
 		assert.deepEqual(harness.modelSelections, ["provider/standard", "provider/original"]);
 		assert.deepEqual(harness.thinkingSelections, ["medium", "low"]);
 		assert.match(harness.notifications.join("\n"), /restored provider\/original \(thinking:low\)/);
+	});
+
+	it("restores even when a legacy configuration opt-out is present", async () => {
+		const harness = await createRouterHarness(
+			{ review: { tier: "standard", rank: 20 } },
+			{ legacyRestoreAfterRun: false },
+		);
+		await harness.invokeSkill("review");
+		await harness.emit("agent_settled");
+
+		assert.deepEqual(harness.modelSelections, ["provider/standard", "provider/original"]);
+		assert.equal(harness.ctx.model.id, "original");
 	});
 
 	it("simulates idle and non-idle settlement plus registered command invocation", async () => {
@@ -726,8 +736,8 @@ describe("extension lifecycle", () => {
 		assert.deepEqual(harness.usageRecords[1]?.routedSkills, ["build", "audit"]);
 	});
 
-	it("starts fresh attribution for each run when restoration is disabled", async () => {
-		const harness = await createRouterHarness({ build: { tier: "standard", rank: 20 } }, { restoreAfterRun: false });
+	it("starts fresh attribution for each routed run after settlement", async () => {
+		const harness = await createRouterHarness({ build: { tier: "standard", rank: 20 } });
 		await harness.invokeSkill("build");
 		await harness.emit("message_end", { message: assistantMessage("provider", "standard") });
 		await harness.emit("agent_settled");

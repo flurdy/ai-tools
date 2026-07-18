@@ -1,7 +1,6 @@
 {
   "enabled": true,
   "routeImplicitSkillReads": true,
-  "restoreAfterRun": true,
   "usageLedger": {
     "enabled": false,
     "retentionDays": 30,

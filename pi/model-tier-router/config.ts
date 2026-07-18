@@ -13,7 +13,6 @@ export interface UsageLedgerConfig {
 export interface RouterConfig {
 	enabled: boolean;
 	routeImplicitSkillReads: boolean;
-	restoreAfterRun: boolean;
 	usageLedger: UsageLedgerConfig;
 	tiers: Record<string, TierRoute>;
 }
@@ -40,7 +39,6 @@ function emptyTiers(): Record<string, TierRoute> {
 const DEFAULT_CONFIG: RouterConfig = {
 	enabled: true,
 	routeImplicitSkillReads: true,
-	restoreAfterRun: true,
 	usageLedger: { enabled: false, retentionDays: 30, maxBytes: 10 * 1024 * 1024 },
 	tiers: emptyTiers(),
 };
@@ -102,7 +100,6 @@ function parseTier(name: string, value: unknown, path: string, warnings: string[
 interface PartialRouterConfig {
 	enabled?: boolean;
 	routeImplicitSkillReads?: boolean;
-	restoreAfterRun?: boolean;
 	usageLedger?: UsageLedgerConfig;
 	tiers: Record<string, TierRoute>;
 }
@@ -114,7 +111,7 @@ function parseConfig(value: unknown, path: string, warnings: string[]): PartialR
 	}
 	const input = value as Record<string, unknown>;
 	const parsed: PartialRouterConfig = { tiers: emptyTiers() };
-	for (const key of ["enabled", "routeImplicitSkillReads", "restoreAfterRun"] as const) {
+	for (const key of ["enabled", "routeImplicitSkillReads"] as const) {
 		if (input[key] === undefined) continue;
 		if (typeof input[key] !== "boolean") warnings.push(`${path}: ${key} must be boolean`);
 		else parsed[key] = input[key];
@@ -147,7 +144,6 @@ function mergeConfig(base: RouterConfig, override: PartialRouterConfig): RouterC
 	return {
 		enabled: override.enabled ?? base.enabled,
 		routeImplicitSkillReads: override.routeImplicitSkillReads ?? base.routeImplicitSkillReads,
-		restoreAfterRun: override.restoreAfterRun ?? base.restoreAfterRun,
 		usageLedger: override.usageLedger ?? base.usageLedger,
 		tiers: Object.assign(emptyTiers(), base.tiers, override.tiers),
 	};

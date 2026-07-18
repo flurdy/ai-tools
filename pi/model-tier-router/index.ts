@@ -15,7 +15,6 @@ import {
 	parseSkillRouting,
 	requiresMeteredConfirmation,
 	selectCandidate,
-	shouldRestoreAfterRun,
 	type SkillRoutingMetadata,
 	type ThinkingLevel,
 } from "./routing.ts";
@@ -281,8 +280,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 	async function restore(ctx: ExtensionContext, announce: boolean): Promise<void> {
 		const state = run;
 		if (!state || !loaded) return;
-		const shouldRestore = shouldRestoreAfterRun(loaded.config.restoreAfterRun, state.manualModelOverride);
-		if (!shouldRestore) {
+		if (state.manualModelOverride) {
 			run = undefined;
 			updateStatus(ctx);
 			return;
@@ -437,7 +435,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 				`skills: ${run?.routedSkills.join(", ") || "(none)"}`,
 				`selected model: ${modelId(ctx.model)}`,
 				`original model: ${modelId(run?.originalModel)}`,
-				`restoration pending: ${Boolean(run && loaded?.config.restoreAfterRun && !run.manualModelOverride)}`,
+				`restoration pending: ${Boolean(run && !run.manualModelOverride)}`,
 				`restoration retry pending: ${run?.restorePending ?? false}`,
 				`manual model override: ${run?.manualModelOverride ?? false}`,
 				`config: ${loaded?.loadedPaths.join(", ") || "defaults"}`,

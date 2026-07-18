@@ -88,10 +88,6 @@ export function requiresMeteredConfirmation(candidate: ModelCandidate): boolean 
 	return candidate.metered;
 }
 
-export function shouldRestoreAfterRun(restoreAfterRun: boolean, manualModelOverride: boolean): boolean {
-	return restoreAfterRun && !manualModelOverride;
-}
-
 export async function canonicalPath(path: string, cwd: string): Promise<string | undefined> {
 	const normalized = path.startsWith("@") ? path.slice(1) : path;
 	try {
