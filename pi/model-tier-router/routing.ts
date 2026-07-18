@@ -29,6 +29,57 @@ export interface ActiveTier {
 	rank: number;
 }
 
+export interface ModelIdentity {
+	provider: string;
+	model: string;
+}
+
+export type MeteredClassification = boolean | "unknown";
+export type ConsentBasis = "not-needed" | "confirmed" | "declined" | "unavailable-ui" | "not-requested-implicit" | "not-applicable";
+export type RestorationResult = "not-applicable" | "pending" | "deferred" | "restored" | "failed" | "cancelled-by-manual-override";
+
+/** One consistent account of a model-routing decision, including outcomes that retain the current route. */
+export interface RouteDecisionRecord {
+	requestedTier: string;
+	effectiveTier: string;
+	candidate: ModelCandidate | null;
+	effectiveModel: ModelIdentity | null;
+	thinkingLevel: ThinkingLevel;
+	meteredClassification: MeteredClassification;
+	consentBasis: ConsentBasis;
+	reason: string;
+	warnings: string[];
+	restoration: RestorationResult;
+}
+
+export interface RouteDecisionInput {
+	requestedTier: string;
+	effectiveTier?: string;
+	candidate?: ModelCandidate;
+	effectiveModel?: ModelIdentity;
+	thinkingLevel: ThinkingLevel;
+	meteredClassification?: MeteredClassification;
+	consentBasis: ConsentBasis;
+	reason: string;
+	warnings?: string[];
+	restoration?: RestorationResult;
+}
+
+export function createRouteDecision(input: RouteDecisionInput): RouteDecisionRecord {
+	return {
+		requestedTier: input.requestedTier,
+		effectiveTier: input.effectiveTier ?? input.requestedTier,
+		candidate: input.candidate ? { ...input.candidate } : null,
+		effectiveModel: input.effectiveModel ? { ...input.effectiveModel } : null,
+		thinkingLevel: input.thinkingLevel,
+		meteredClassification: input.meteredClassification ?? input.candidate?.metered ?? "unknown",
+		consentBasis: input.consentBasis,
+		reason: input.reason,
+		warnings: [...(input.warnings ?? [])],
+		restoration: input.restoration ?? "not-applicable",
+	};
+}
+
 export type TierDecision = "initial" | "upgrade" | "retain-lower" | "retain-equal";
 
 interface RoutingFrontmatter extends Record<string, unknown> {

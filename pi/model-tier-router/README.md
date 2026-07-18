@@ -114,7 +114,7 @@ Restart Pi or run `/reload`.
 
 `reload` rereads router JSON configuration. `on` and `off` are in-memory overrides for the current extension instance; they do not edit local files.
 
-Status reports the active tier and skills, selected/original models, pending restoration, loaded configuration paths, route warnings, and ledger health.
+Status reports the active tier and skills, selected/original models, pending restoration, loaded configuration paths, route warnings, ledger health, and the last normalized route-decision record. The record consistently carries the requested and effective tiers, selected configured candidate, effective provider/model, thinking level, metered classification, consent basis, route reason/warnings, and restoration result. Usage ledger attribution derives its effective tier and thinking level from the active decision while preserving the assistant message's observed provider/model; a retained nested request therefore remains attributable to the configured route that actually served it.
 
 `/model-tier usage` summarizes local records by tier and exact provider/model in a compact table. It labels them **Pi-normalized observed responses**: they are not subscription quota, provider billing, or cross-provider cost. Pi's `usage.cost` is calculated from configured local model prices, so it is intentionally not persisted as provider-reported cost. Cache reads, cache writes (including optional one-hour writes), output, and optional reasoning counters remain separate; unavailable or ambiguous zero counters are reported as unknown. Summaries read only canonical `YYYY-MM-DD.jsonl` regular files managed by the ledger.
 

@@ -9,12 +9,17 @@ import { UsageLedger } from "./usage-ledger.ts";
 import { addUsageRecord, emptyUsageTotals, formatUsageSummary, normalizeUsage, type UsageRecordV1, type UsageTotals } from "./usage.ts";
 import {
 	canonicalPath,
+	createRouteDecision,
 	decideTier,
 	findExactModel,
 	maxThinkingLevel,
 	parseSkillRouting,
 	requiresMeteredConfirmation,
 	selectCandidate,
+	type ConsentBasis,
+	type ModelCandidate,
+	type ModelIdentity,
+	type RouteDecisionRecord,
 	type SkillRoutingMetadata,
 	type ThinkingLevel,
 } from "./routing.ts";
@@ -34,6 +39,7 @@ interface RunState {
 	routeRunId: string;
 	responseIndex: number;
 	tierSourceSkill: string;
+	activeDecision: RouteDecisionRecord;
 	attributionActive: boolean;
 }
 
@@ -44,8 +50,13 @@ interface PendingExplicitRoute {
 
 type SkillRouteSource = "explicit-command" | "implicit-read";
 
+function modelIdentity(model: Model<Api> | undefined): ModelIdentity | undefined {
+	return model && { provider: model.provider, model: model.id };
+}
+
 function modelId(model: Model<Api> | undefined): string {
-	return model ? `${model.provider}/${model.id}` : "(none)";
+	const identity = modelIdentity(model);
+	return identity ? `${identity.provider}/${identity.model}` : "(none)";
 }
 
 export interface UsageLedgerPort {
@@ -96,6 +107,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 	let usageLedger: UsageLedgerPort | undefined;
 	let usageLedgerConfig: UsageLedgerConfig | undefined;
 	let injectedUsageLedgerStarted = false;
+	let latestRouteDecision: RouteDecisionRecord | undefined;
 	const warningKeys = new Set<string>();
 	const unavailableWarnings: string[] = [];
 
@@ -119,6 +131,44 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 			STATUS_KEY,
 			run ? `tier:${run.activeTier}:thinking:${run.activeThinking}${run.restoreOwed ? ":restore-owed" : ""}` : undefined,
 		);
+	}
+
+	function recordRouteDecision(
+		ctx: ExtensionContext,
+		requestedTier: string,
+		candidate: ModelCandidate | undefined,
+		consentBasis: ConsentBasis,
+		reason: string,
+		warnings: string[] = [],
+		restoration: RouteDecisionRecord["restoration"] = "not-applicable",
+		effectiveTier = requestedTier,
+	): RouteDecisionRecord {
+		const record = createRouteDecision({
+			requestedTier,
+			effectiveTier,
+			candidate,
+			effectiveModel: modelIdentity(ctx.model),
+			thinkingLevel: pi.getThinkingLevel(),
+			consentBasis,
+			reason,
+			warnings,
+			restoration,
+		});
+		latestRouteDecision = record;
+		return record;
+	}
+
+	function activateDecision(state: RunState, decision: RouteDecisionRecord, skillName: string): void {
+		state.activeDecision = decision;
+		state.tierSourceSkill = skillName;
+		if (!state.routedSkills.includes(skillName)) state.routedSkills.push(skillName);
+	}
+
+	function updateRestoration(state: RunState, restoration: RouteDecisionRecord["restoration"]): void {
+		const previous = state.activeDecision;
+		state.activeDecision = { ...previous, restoration };
+		if (latestRouteDecision === previous) latestRouteDecision = state.activeDecision;
+		else if (latestRouteDecision?.restoration === "pending") latestRouteDecision = { ...latestRouteDecision, restoration };
 	}
 
 	async function reloadConfig(ctx: ExtensionContext): Promise<void> {
@@ -159,13 +209,13 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 			sessionId: ctx.sessionManager.getSessionId(),
 			routeRunId: state.routeRunId,
 			responseIndex: ++state.responseIndex,
-			tier: state.activeTier,
+			tier: state.activeDecision.effectiveTier,
 			tierSourceSkill: state.tierSourceSkill,
 			routedSkills: [...state.routedSkills],
 			provider: message.provider,
 			model: message.model,
 			responseModel: message.responseModel ?? null,
-			thinking: pi.getThinkingLevel(),
+			thinking: state.activeDecision.thinkingLevel,
 			stopReason: message.stopReason,
 			usage,
 			unknownUsageFields,
@@ -191,6 +241,9 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 		);
 		if (state.requestedThinking !== previousThinking) pi.setThinkingLevel(state.requestedThinking);
 		state.activeThinking = pi.getThinkingLevel();
+		const previousDecision = state.activeDecision;
+		state.activeDecision = { ...previousDecision, thinkingLevel: state.activeThinking };
+		if (latestRouteDecision === previousDecision) latestRouteDecision = state.activeDecision;
 		if (state.activeThinking !== previousThinking) {
 			notify(ctx, `model-tier: raised thinking to ${state.activeThinking} for nested ${skillName}`, "info");
 		}
@@ -215,11 +268,16 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 		const metadata = readMetadata(path, ctx);
 		if (!metadata?.tier) return;
 
+		const currentEffectiveTier = run?.activeDecision.effectiveTier ?? metadata.tier;
+		const activeRestoration: RouteDecisionRecord["restoration"] = run ? "pending" : "not-applicable";
 		const route = Object.hasOwn(loaded.config.tiers, metadata.tier)
 			? loaded.config.tiers[metadata.tier]
 			: undefined;
 		if (!route) {
-			warnOnce(ctx, `tier:${metadata.tier}`, `unknown or unconfigured tier ${metadata.tier}; retained ${modelId(ctx.model)}`);
+			const warning = `unknown or unconfigured tier ${metadata.tier}; retained ${modelId(ctx.model)}`;
+			warnOnce(ctx, `tier:${metadata.tier}`, warning);
+			const routeDecision = recordRouteDecision(ctx, metadata.tier, undefined, "not-applicable", "unknown-tier", [warning], activeRestoration, currentEffectiveTier);
+			if (run) activateDecision(run, routeDecision, skillName);
 			return;
 		}
 
@@ -232,6 +290,17 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 			if (!run) return;
 			if (!run.routedSkills.includes(skillName)) run.routedSkills.push(skillName);
 			raiseRunThinking(run, requestedThinking, skillName, ctx);
+			const routeDecision = recordRouteDecision(
+				ctx,
+				metadata.tier,
+				run.activeDecision.candidate ?? undefined,
+				"not-applicable",
+				decision,
+				[],
+				"pending",
+				currentEffectiveTier,
+			);
+			activateDecision(run, routeDecision, skillName);
 			if (decision === "retain-lower") {
 				notify(ctx, `model-tier: retained ${run.activeTier}; ignored nested ${metadata.tier}`, "info");
 			}
@@ -243,19 +312,28 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 		const target = candidate ? findExactModel(candidate, available) : undefined;
 		if (!candidate || !target) {
 			if (run) raiseRunThinking(run, requestedThinking, skillName, ctx);
-			warnOnce(ctx, `unavailable:${metadata.tier}`, `no available candidate for ${metadata.tier}; retained ${modelId(ctx.model)}`);
+			const warning = `no available candidate for ${metadata.tier}; retained ${modelId(ctx.model)}`;
+			warnOnce(ctx, `unavailable:${metadata.tier}`, warning);
+			const routeDecision = recordRouteDecision(ctx, metadata.tier, undefined, "not-applicable", "no-available-candidate", [warning], activeRestoration, currentEffectiveTier);
+			if (run) activateDecision(run, routeDecision, skillName);
 			return;
 		}
 
 		if (requiresMeteredConfirmation(candidate)) {
 			if (source === "implicit-read") {
 				if (run) raiseRunThinking(run, requestedThinking, skillName, ctx);
-				warnOnce(ctx, `metered:implicit:${metadata.tier}`, `skipped metered ${candidate.model} for ${metadata.tier} because implicit skill reads do not prompt`);
+				const warning = `skipped metered ${candidate.model} for ${metadata.tier} because implicit skill reads do not prompt`;
+				warnOnce(ctx, `metered:implicit:${metadata.tier}`, warning);
+				const routeDecision = recordRouteDecision(ctx, metadata.tier, candidate, "not-requested-implicit", "metered-implicit-skip", [warning], activeRestoration, currentEffectiveTier);
+				if (run) activateDecision(run, routeDecision, skillName);
 				return;
 			}
 			if (!ctx.hasUI) {
 				if (run) raiseRunThinking(run, requestedThinking, skillName, ctx);
-				warnOnce(ctx, `metered:no-ui:${metadata.tier}`, `skipped metered ${candidate.model} for ${metadata.tier} because no confirmation UI is available`);
+				const warning = `skipped metered ${candidate.model} for ${metadata.tier} because no confirmation UI is available`;
+				warnOnce(ctx, `metered:no-ui:${metadata.tier}`, warning);
+				const routeDecision = recordRouteDecision(ctx, metadata.tier, candidate, "unavailable-ui", "metered-no-ui-skip", [warning], activeRestoration, currentEffectiveTier);
+				if (run) activateDecision(run, routeDecision, skillName);
 				return;
 			}
 			const policies = [metadata.costPolicy, metadata.meteredPolicy].filter(Boolean).join(", ");
@@ -265,11 +343,15 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 			);
 			if (!confirmed) {
 				if (run) raiseRunThinking(run, requestedThinking, skillName, ctx);
-				warnOnce(ctx, `metered:declined:${metadata.tier}`, `declined metered ${candidate.model} for ${metadata.tier}`);
+				const warning = `declined metered ${candidate.model} for ${metadata.tier}`;
+				warnOnce(ctx, `metered:declined:${metadata.tier}`, warning);
+				const routeDecision = recordRouteDecision(ctx, metadata.tier, candidate, "declined", "metered-declined", [warning], activeRestoration, currentEffectiveTier);
+				if (run) activateDecision(run, routeDecision, skillName);
 				return;
 			}
 		}
 
+		const consentBasis: ConsentBasis = candidate.metered ? "confirmed" : "not-needed";
 		const originalModel = run?.originalModel ?? ctx.model;
 		const originalThinking = run?.originalThinking ?? pi.getThinkingLevel();
 		const selectedThinking = run
@@ -285,10 +367,14 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 		}
 		if (!switched) {
 			if (run) raiseRunThinking(run, requestedThinking, skillName, ctx);
-			warnOnce(ctx, `switch:${candidate.model}`, `could not select ${candidate.model}; retained ${modelId(ctx.model)}`);
+			const warning = `could not select ${candidate.model}; retained ${modelId(ctx.model)}`;
+			warnOnce(ctx, `switch:${candidate.model}`, warning);
+			const routeDecision = recordRouteDecision(ctx, metadata.tier, candidate, consentBasis, "model-switch-failed", [warning], activeRestoration, currentEffectiveTier);
+			if (run) activateDecision(run, routeDecision, skillName);
 			return;
 		}
 
+		const activeDecision = recordRouteDecision(ctx, metadata.tier, candidate, consentBasis, "routed", [], "pending");
 		if (!run) {
 			run = {
 				originalModel,
@@ -303,6 +389,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 				routeRunId: randomUUID(),
 				responseIndex: 0,
 				tierSourceSkill: skillName,
+				activeDecision,
 				attributionActive: true,
 			};
 		} else {
@@ -310,8 +397,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 			run.activeRank = route.rank;
 			run.requestedThinking = selectedThinking;
 			run.activeThinking = pi.getThinkingLevel();
-			run.tierSourceSkill = skillName;
-			if (!run.routedSkills.includes(skillName)) run.routedSkills.push(skillName);
+			activateDecision(run, activeDecision, skillName);
 		}
 		updateStatus(ctx);
 		notify(ctx, `model-tier: ${skillName} → ${metadata.tier} → ${candidate.model} (thinking:${run.activeThinking})`, "info");
@@ -321,12 +407,14 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 		const state = run;
 		if (!state) return;
 		if (state.manualModelOverride) {
+			updateRestoration(state, "cancelled-by-manual-override");
 			run = undefined;
 			updateStatus(ctx);
 			return;
 		}
 
 		state.restoreOwed = true;
+		updateRestoration(state, "pending");
 		updateStatus(ctx);
 		switchingModel = true;
 		let restored = false;
@@ -337,9 +425,11 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 			switchingModel = false;
 		}
 		if (restored) {
+			updateRestoration(state, "restored");
 			run = undefined;
 			if (announce) notify(ctx, `model-tier: restored ${modelId(state.originalModel)} (thinking:${state.originalThinking})`, "info");
 		} else {
+			updateRestoration(state, "failed");
 			notify(ctx, `model-tier: could not restore ${modelId(state.originalModel)}; will retry before the next run or when the agent settles (choose a model manually to clear)`, "warning");
 		}
 		updateStatus(ctx);
@@ -347,6 +437,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 
 	pi.on("session_start", async (_event, ctx) => {
 		pendingExplicitRoute = undefined;
+		latestRouteDecision = undefined;
 		await reloadConfig(ctx);
 		updateStatus(ctx);
 	});
@@ -402,7 +493,9 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 		if (!run || switchingModel || event.source === "restore") return;
 		run.manualModelOverride = true;
 		run.attributionActive = false;
+		updateRestoration(run, "cancelled-by-manual-override");
 		if (run.restoreOwed) {
+			updateRestoration(run, "cancelled-by-manual-override");
 			run = undefined;
 			updateStatus(ctx);
 		}
@@ -415,6 +508,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 	pi.on("agent_settled", async (_event, ctx) => {
 		if (run && !ctx.isIdle()) {
 			run.restoreOwed = true;
+			updateRestoration(run, "deferred");
 			notify(ctx, `model-tier: deferred restoration of ${modelId(run.originalModel)} while another run is active`, "warning");
 			updateStatus(ctx);
 		} else {
@@ -486,6 +580,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 				`restoration owed: ${run?.restoreOwed ?? false}`,
 				`manual model override: ${run?.manualModelOverride ?? false}`,
 				`config: ${loaded?.loadedPaths.join(", ") || "defaults"}`,
+				`last route decision: ${latestRouteDecision ? JSON.stringify(latestRouteDecision) : "(none)"}`,
 				`warnings: ${unavailableWarnings.join("; ") || "(none)"}`,
 				`usage ledger: ${usageLedger ? JSON.stringify(usageLedger.health()) : "disabled"}`,
 			];

@@ -15,6 +15,7 @@ import {
 	parseSkillRouting,
 	requiresMeteredConfirmation,
 	selectCandidate,
+	type RouteDecisionRecord,
 	type TierRoute,
 } from "./routing.ts";
 
@@ -573,6 +574,14 @@ async function createRouterHarness(
 	};
 }
 
+function lastRouteDecision(harness: RouterHarness): RouteDecisionRecord {
+	const status = harness.notifications.at(-1);
+	assert.ok(status, "expected /model-tier status output");
+	const line = status.split("\n").find((entry) => entry.startsWith("last route decision: "));
+	assert.ok(line, "expected a normalized route-decision record in status output");
+	return JSON.parse(line.slice("last route decision: ".length)) as RouteDecisionRecord;
+}
+
 describe("extension lifecycle", () => {
 	it("routes economy, standard, and premium while honoring declared effort", async () => {
 		const harness = await createRouterHarness({
@@ -599,8 +608,23 @@ describe("extension lifecycle", () => {
 		assert.deepEqual(harness.modelSelections, ["provider/standard"]);
 		assert.equal(harness.ctx.model.id, "standard");
 		assert.match(harness.notifications.join("\n"), /review → standard → provider\/standard \(thinking:medium\)/);
+		await harness.invokeCommand("model-tier", "status");
+		assert.deepEqual(lastRouteDecision(harness), {
+			requestedTier: "standard",
+			effectiveTier: "standard",
+			candidate: { model: "provider/standard", metered: false },
+			effectiveModel: { provider: "provider", model: "standard" },
+			thinkingLevel: "medium",
+			meteredClassification: false,
+			consentBasis: "not-needed",
+			reason: "routed",
+			warnings: [],
+			restoration: "pending",
+		});
 
 		await harness.emit("agent_settled");
+		await harness.invokeCommand("model-tier", "status");
+		assert.equal(lastRouteDecision(harness).restoration, "restored");
 		assert.deepEqual(harness.modelSelections, ["provider/standard", "provider/original"]);
 		assert.deepEqual(harness.thinkingSelections, ["medium", "low"]);
 		assert.match(harness.notifications.join("\n"), /restored provider\/original \(thinking:low\)/);
@@ -731,6 +755,19 @@ describe("extension lifecycle", () => {
 		assert.deepEqual(declined.modelSelectionAttempts, []);
 		assert.equal(declined.ctx.model.id, "original");
 		assert.match(declined.notifications.join("\n"), /declined metered provider\/premium/);
+		await declined.invokeCommand("model-tier", "status");
+		assert.deepEqual(lastRouteDecision(declined), {
+			requestedTier: "premium",
+			effectiveTier: "premium",
+			candidate: { model: "provider/premium", metered: true },
+			effectiveModel: { provider: "provider", model: "original" },
+			thinkingLevel: "low",
+			meteredClassification: true,
+			consentBasis: "declined",
+			reason: "metered-declined",
+			warnings: ["declined metered provider/premium for premium"],
+			restoration: "not-applicable",
+		});
 
 		const headless = await createRouterHarness(skill, { hasUI: false });
 		await headless.invokeSkill("review");
@@ -817,6 +854,21 @@ describe("extension lifecycle", () => {
 		assert.deepEqual(harness.thinkingSelections, ["medium", "xhigh"]);
 		assert.match(harness.notifications.join("\n"), /raised thinking to xhigh for nested deep-check/);
 		assert.equal(harness.ctx.model.id, "standard");
+		await harness.emit("message_end", { message: assistantMessage("provider", "standard") });
+		await harness.invokeCommand("model-tier", "status");
+		assert.deepEqual(lastRouteDecision(harness), {
+			requestedTier: "economy",
+			effectiveTier: "standard",
+			candidate: { model: "provider/standard", metered: false },
+			effectiveModel: { provider: "provider", model: "standard" },
+			thinkingLevel: "xhigh",
+			meteredClassification: false,
+			consentBasis: "not-applicable",
+			reason: "retain-lower",
+			warnings: [],
+			restoration: "pending",
+		});
+		assert.deepEqual(harness.usageRecords.map((record) => [record.tier, record.thinking]), [["standard", "xhigh"]]);
 	});
 
 	it("preserves requested effort across model-specific clamping and later upgrades", async () => {
@@ -849,6 +901,34 @@ describe("extension lifecycle", () => {
 		assert.equal(harness.ctx.model.id, "standard");
 	});
 
+	it("keeps status and ledger attribution aligned after a nested switch failure", async () => {
+		const harness = await createRouterHarness(
+			{
+				build: { tier: "standard", rank: 20 },
+				audit: { tier: "premium", rank: 40 },
+			},
+			{ setModelResults: { "provider/premium": [false] } },
+		);
+		await harness.invokeSkill("build");
+		await harness.invokeSkill("audit");
+		await harness.emit("message_end", { message: assistantMessage("provider", "standard") });
+		await harness.invokeCommand("model-tier", "status");
+
+		assert.deepEqual(lastRouteDecision(harness), {
+			requestedTier: "premium",
+			effectiveTier: "standard",
+			candidate: { model: "provider/premium", metered: false },
+			effectiveModel: { provider: "provider", model: "standard" },
+			thinkingLevel: "high",
+			meteredClassification: false,
+			consentBasis: "not-needed",
+			reason: "model-switch-failed",
+			warnings: ["could not select provider/premium; retained provider/standard"],
+			restoration: "pending",
+		});
+		assert.deepEqual(harness.usageRecords.map((record) => [record.tier, record.thinking]), [["standard", "high"]]);
+	});
+
 	it("does not route nested skills after a manual model selection", async () => {
 		const harness = await createRouterHarness({
 			build: { tier: "standard", rank: 20 },
@@ -856,6 +936,8 @@ describe("extension lifecycle", () => {
 		});
 		await harness.invokeSkill("build");
 		await harness.selectManually(model("provider", "manual"));
+		await harness.invokeCommand("model-tier", "status");
+		assert.equal(lastRouteDecision(harness).restoration, "cancelled-by-manual-override");
 		await harness.invokeSkill("audit");
 
 		assert.deepEqual(harness.modelSelections, ["provider/standard"]);
