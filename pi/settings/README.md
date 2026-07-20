@@ -8,8 +8,9 @@ The examples are a **July 2026 snapshot**, not a universal configuration. Pi pac
 
 - [`settings.example.json`](settings.example.json) — global Pi settings starter.
 - [`mcp-adapter.safe-example.json`](mcp-adapter.safe-example.json) — adapter-level safety defaults with no MCP servers configured.
+- [`pi-permission-system.config.example.json`](pi-permission-system.config.example.json) — conservative policy proposed by the [20.9.0 audit](../../docs/pi-permission-system-audit.md); the package remains deferred and is not in the settings starter.
 
-Neither file contains credentials, account identifiers, local history, or generated state.
+None of these files contains credentials, account identifiers, local history, or generated state.
 
 ## Use the settings starter
 
@@ -56,6 +57,7 @@ These are upstream packages referenced by `settings.example.json`; this reposito
 | [`pi-subagents`](https://github.com/nicobailon/pi-subagents) | Child agents, chains, parallel work, reviews, and async runs. | No initial config required, but child models can add cost and execute tools. Review agents, model routing, and tool boundaries. |
 | [`pi-web-access`](https://github.com/nicobailon/pi-web-access) | Web search, URL/PDF/GitHub fetching, and video analysis. | Basic search can work without a key; other providers use separate secrets. `ffmpeg` and `yt-dlp` are optional for frame extraction. |
 | [`@juicesharp/rpiv-todo`](https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-todo) | Ephemeral model execution checklist and overlay. | Use it for current-session execution, not as a durable issue tracker. Restart Pi after installation. |
+| [`@gotgenes/pi-permission-system`](https://github.com/gotgenes/pi-packages/tree/main/packages/pi-permission-system) | Host-level allow/ask/deny gates for tools, bash, paths, MCP, skills, and subagents. | Global installation is deferred by the [20.9.0 audit](../../docs/pi-permission-system-audit.md). Do not install unpinned or enable yolo mode; use the conservative policy only for an explicitly approved pilot. |
 
 Install reviewed packages individually so each source is visible:
 
@@ -104,5 +106,7 @@ Before adding or importing any server:
 3. Reference secrets through narrowly scoped environment variables or the integration's dedicated secret store; never place literal tokens in this repository.
 4. Keep `directTools` false or narrowly list reviewed tools. More direct tools increase prompt size and capability exposure.
 5. Keep output guarding enabled. Spilled temporary output can still contain sensitive data and needs appropriate cleanup.
+
+Do not treat `@gotgenes/pi-permission-system@20.9.0` as a complete safety wrapper around `pi-mcp-adapter@2.11.0`: proxy arguments use an input shape its path gate does not inspect, direct tools use separate permission surfaces, and MCP App callbacks do not pass through Pi's tool-call gate. Keep the adapter's own conservative settings; see the [permission-system audit](../../docs/pi-permission-system-audit.md).
 
 Never derive a shareable example by copying raw `mcp.json`, `.mcp.json`, `auth.json`, token files, `mcp-cache.json`, trust files, session JSONL, subagent run artifacts, web-search configuration, package caches, run history, or model-usage ledgers. Build examples from documented schemas and empty placeholders instead.

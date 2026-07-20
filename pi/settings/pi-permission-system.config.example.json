@@ -1,0 +1,77 @@
+{
+  "$schema": "https://raw.githubusercontent.com/gotgenes/pi-packages/9fadd87bf0507b5272bea0812e6393463b1cf994/packages/pi-permission-system/schemas/permissions.schema.json",
+  "debugLog": false,
+  "permissionReviewLog": true,
+  "yoloMode": false,
+  "doublePressToConfirm": true,
+  "authorizerChain": [],
+  "piInfrastructureReadPaths": [
+    "~/.claude/skills/*",
+    "~/.claude/handoffs/*"
+  ],
+  "permission": {
+    "*": "ask",
+    "path": {
+      "*": "allow",
+      "*.env": "deny",
+      "*.env.*": "deny",
+      "*.env.example": "allow",
+      "~/.ssh/*": "deny",
+      "~/.aws/*": "deny",
+      "~/.config/gcloud/*": "deny",
+      "~/.kube/config": "deny",
+      "~/.netrc": "deny",
+      "~/.git-credentials": "deny",
+      "~/.config/gh/hosts.yml": "deny",
+      "~/.npmrc": "deny",
+      "~/.pi/agent/auth.json": "deny",
+      "~/.pi/agent/models.json": "ask",
+      "~/.pi/agent/settings.json": "ask",
+      "~/.pi/agent/sessions/*": "ask",
+      "~/.claude/settings*.json": "ask",
+      "*/.git/config": "ask"
+    },
+    "read": "allow",
+    "grep": "allow",
+    "find": "allow",
+    "ls": "allow",
+    "write": "ask",
+    "edit": "ask",
+    "bash": {
+      "*": "ask"
+    },
+    "mcp": {
+      "*": "deny",
+      "mcp_status": "allow"
+    },
+    "skill": {
+      "*": "ask"
+    },
+    "external_directory": {
+      "*": "ask"
+    },
+    "multi_tool_use.parallel": "deny",
+    "ask_user_question": "allow",
+    "todo": "allow",
+    "subagent": "ask",
+    "subagent_wait": "allow",
+    "subagent_supervisor": "allow",
+    "intercom": "ask",
+    "web_search": "ask",
+    "fetch_content": "ask",
+    "get_search_content": "allow",
+    "jira_*": "ask",
+    "jira_get_*": "allow",
+    "jira_list_*": "allow",
+    "jira_search_*": "allow",
+    "jira_issue": "allow",
+    "story_context": "allow",
+    "confluence_*": "ask",
+    "confluence_get_*": "allow",
+    "confluence_list_*": "allow",
+    "confluence_search*": "allow",
+    "confluence_page": "allow",
+    "figma_*": "allow",
+    "figma_render_nodes": "ask"
+  }
+}
