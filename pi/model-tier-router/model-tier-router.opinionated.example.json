@@ -1,0 +1,37 @@
+{
+  "enabled": true,
+  "routeImplicitSkillReads": true,
+  "usageLedger": {
+    "enabled": true,
+    "retentionDays": 30,
+    "maxBytes": 10485760
+  },
+  "tiers": {
+    "economy": {
+      "rank": 10,
+      "thinking": "medium",
+      "candidates": [
+        { "model": "openai-codex/gpt-5.6-luna", "metered": false },
+        { "model": "anthropic/claude-haiku-4-5", "metered": true },
+        { "model": "google/gemini-3.5-flash", "metered": true }
+      ]
+    },
+    "standard": {
+      "rank": 20,
+      "thinking": "medium",
+      "candidates": [
+        { "model": "openai-codex/gpt-5.6-terra", "metered": false },
+        { "model": "anthropic/claude-sonnet-5", "metered": true }
+      ]
+    },
+    "premium": {
+      "rank": 40,
+      "thinking": "xhigh",
+      "candidates": [
+        { "model": "openai-codex/gpt-5.6-sol", "metered": false },
+        { "model": "anthropic/claude-fable-5", "metered": true },
+        { "model": "anthropic/claude-opus-4-8", "metered": true }
+      ]
+    }
+  }
+}

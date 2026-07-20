@@ -17,7 +17,12 @@ List the models available with your current authentication:
 pi --list-models
 ```
 
-Copy the example and replace every placeholder with an exact `provider/model-id` from that output:
+Choose one of the credential-free examples, then replace every placeholder with an exact `provider/model-id` from that output:
+
+- **Generic** (`model-tier-router.example.json`): the smallest portable baseline, with one candidate in each tier and the usage ledger disabled.
+- **Opinionated** (`model-tier-router.opinionated.example.json`): a concrete July 2026 policy snapshot using OpenAI Codex, Anthropic Claude, and Google Gemini candidates, enabled bounded local usage telemetry, and `medium`/`medium`/`xhigh` default thinking. It is a starting point, not a claim that those models are available or have the same cost classification for you.
+
+For the generic baseline:
 
 ```bash
 cp ./pi/model-tier-router/model-tier-router.example.json \
@@ -25,9 +30,29 @@ cp ./pi/model-tier-router/model-tier-router.example.json \
 $EDITOR ~/.pi/agent/model-tier-router.json
 ```
 
+For the opinionated policy:
+
+```bash
+cp ./pi/model-tier-router/model-tier-router.opinionated.example.json \
+  ~/.pi/agent/model-tier-router.json
+$EDITOR ~/.pi/agent/model-tier-router.json
+```
+
 Candidate order is a bounded **pre-launch selection** preference: the router selects the first configured candidate that is currently available before it sends a provider request. It is not a post-launch retry list. Every candidate must explicitly declare a boolean `metered` value; candidates without one are rejected rather than assumed free. `metered` is the local spend authority, and the router never guesses from provider, authentication details, or portable skill metadata. Every `metered: true` candidate requested through an explicit `/skill:name` command requires interactive confirmation. Declining, or running without a confirmation UI, skips the switch and retains the prior model. `metered: false` is the user's explicit local classification that the candidate may route without a spend prompt.
 
 Model-initiated skill reads never open a blocking spend prompt. An implicit read may route to `metered: false`, but it skips `metered: true` and retains the current route/model. In the copied example configuration, the premium placeholders are therefore confirmation-only for explicit skill commands even though `routeImplicitSkillReads` is enabled.
+
+### Opinionated policy choices
+
+The opinionated example deliberately chooses:
+
+- `enabled: true` so the copied file is active once the extension is installed.
+- `routeImplicitSkillReads: true` so loaded skills can use an available locally unmetered candidate; a metered candidate is still skipped rather than prompting during an implicit read.
+- `economy` (rank 10) and `standard` (rank 20) at `medium` thinking, and `premium` (rank 40) at `xhigh`, allowing nested work to upgrade but never silently downgrade a route.
+- An ordered candidate list in every tier: an OpenAI Codex candidate classified as locally unmetered in this policy, followed by metered Anthropic and, for economy, Google alternatives. Candidate order is only a pre-launch availability preference, not runtime fallback.
+- `usageLedger.enabled: true`, with a 30-day/10 MiB retention bound, for local Pi-normalized response counters. This is global-only telemetry; it records no prompts, responses, credentials, account identifiers, repository paths, or session-file paths.
+
+The provider/model IDs and classifications reflect one local setup as of July 2026. They may be unavailable, renamed, separately billed, included in a subscription, or unsuitable in another setup. `metered: false` is never inferred from a provider, model name, or subscription: keep it only when your own authentication and cost policy make that classification correct. If an explicit skill selects a `metered: true` candidate, Pi asks for confirmation immediately before routing; decline or a missing confirmation UI leaves the current route unchanged. Run `pi --list-models`, remove unavailable candidates, and reassess every `metered` value before using the opinionated example.
 
 ## Runtime fallback safety
 

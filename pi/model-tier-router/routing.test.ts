@@ -176,6 +176,38 @@ describe("configuration", () => {
 		assert.ok(tiers.standard.rank < tiers.premium.rank);
 	});
 
+	it("ships a validated, credential-free opinionated policy example", () => {
+		const root = mkdtempSync(join(tmpdir(), "model-tier-router-"));
+		const agentDir = join(root, "agent");
+		const cwd = join(root, "project");
+		mkdirSync(agentDir, { recursive: true });
+		writeFileSync(
+			join(agentDir, "model-tier-router.json"),
+			readFileSync(new URL("./model-tier-router.opinionated.example.json", import.meta.url), "utf8"),
+		);
+
+		const result = loadRouterConfig({ agentDir, cwd, projectTrusted: false });
+		assert.deepEqual(result.warnings, []);
+		assert.deepEqual(Object.keys(result.config.tiers), ["economy", "standard", "premium"]);
+		assert.deepEqual(result.config.usageLedger, { enabled: true, retentionDays: 30, maxBytes: 10 * 1024 * 1024 });
+		assert.deepEqual(result.config.tiers.economy.candidates, [
+			{ model: "openai-codex/gpt-5.6-luna", metered: false },
+			{ model: "anthropic/claude-haiku-4-5", metered: true },
+			{ model: "google/gemini-3.5-flash", metered: true },
+		]);
+		assert.deepEqual(result.config.tiers.standard.candidates, [
+			{ model: "openai-codex/gpt-5.6-terra", metered: false },
+			{ model: "anthropic/claude-sonnet-5", metered: true },
+		]);
+		assert.deepEqual(result.config.tiers.premium.candidates, [
+			{ model: "openai-codex/gpt-5.6-sol", metered: false },
+			{ model: "anthropic/claude-fable-5", metered: true },
+			{ model: "anthropic/claude-opus-4-8", metered: true },
+		]);
+		assert.ok(result.config.tiers.economy.rank < result.config.tiers.standard.rank);
+		assert.ok(result.config.tiers.standard.rank < result.config.tiers.premium.rank);
+	});
+
 	it("loads global configuration and merges trusted project tiers", () => {
 		const root = mkdtempSync(join(tmpdir(), "model-tier-router-"));
 		const agentDir = join(root, "agent");
