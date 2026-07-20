@@ -1,0 +1,28 @@
+{
+  "theme": "flurdy-dark",
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.6-terra",
+  "defaultThinkingLevel": "medium",
+  "enabledModels": [
+    "openai-codex/gpt-5.6-luna",
+    "openai-codex/gpt-5.6-terra",
+    "openai-codex/gpt-5.6-sol",
+    "anthropic/claude-haiku-4-5",
+    "anthropic/claude-sonnet-5",
+    "anthropic/claude-fable-5",
+    "anthropic/claude-opus-4-8",
+    "google/gemini-3.5-flash"
+  ],
+  "packages": [
+    "npm:pi-mcp-adapter",
+    "npm:@pi-stef/atlassian",
+    "npm:@pi-stef/figma",
+    "npm:@juicesharp/rpiv-ask-user-question",
+    "npm:pi-subagents",
+    "npm:pi-web-access",
+    "npm:@juicesharp/rpiv-todo"
+  ],
+  "skills": [
+    "~/.claude/skills"
+  ]
+}

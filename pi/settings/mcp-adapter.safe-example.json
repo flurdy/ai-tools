@@ -1,0 +1,11 @@
+{
+  "settings": {
+    "toolPrefix": "server",
+    "idleTimeout": 10,
+    "directTools": false,
+    "autoAuth": false,
+    "samplingAutoApprove": false,
+    "outputGuard": true
+  },
+  "mcpServers": {}
+}
