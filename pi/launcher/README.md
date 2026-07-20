@@ -20,10 +20,11 @@ It can launch from:
 For the live dotfiles layout:
 
 ```bash
-mkdir -p ~/.dotfiles/.config/fish/functions ~/.dotfiles/.pi/bin ~/.pi/bin
-cp pl.fish ~/.dotfiles/.config/fish/functions/pl.fish
+mkdir -p ~/.dotfiles/.config/fish/functions ~/.dotfiles/.pi/bin ~/.pi/bin ~/.pi/agent
+cp -f pl.fish ~/.dotfiles/.config/fish/functions/pl.fish
+test -f ~/.pi/agent/pl-launcher.json || cp -f pl-launcher.json.example ~/.pi/agent/pl-launcher.json
 # cp follows the repository symlinks and installs the shared helper contents.
-cp pl-gather pl-mkworktree ~/.dotfiles/.pi/bin/
+cp -f pl-gather pl-mkworktree ~/.dotfiles/.pi/bin/
 chmod +x ~/.dotfiles/.pi/bin/pl-gather ~/.dotfiles/.pi/bin/pl-mkworktree
 ln -sfn ~/.dotfiles/.pi/bin/pl-gather ~/.pi/bin/pl-gather
 ln -sfn ~/.dotfiles/.pi/bin/pl-mkworktree ~/.pi/bin/pl-mkworktree
@@ -42,10 +43,11 @@ pl --thinking=high
 pl --name='ticket work'
 ```
 
-By default, `pl` pins fresh sessions to `openai-codex/gpt-5.6-terra` with `high`
-thinking. This gives free-form implementation a focused-coding baseline without
-spending Sol capacity on every new conversation; routed skills may still upgrade to
-advanced or premium tiers. Continue/resume launches preserve the session's saved
+`pl` pins fresh sessions to the defaults in `~/.pi/agent/pl-launcher.json` so they
+remain stable when extensions temporarily change Pi's persisted defaults. Copy
+`pl-launcher.json.example` to that path to configure a model and thinking level; its default
+is `openai-codex/gpt-5.6-sol` with `high` thinking. The tiered model router may select Terra
+or Luna for work that fits lower tiers. Continue/resume launches preserve the session's saved
 model; use `--model` and `--thinking` to override either value explicitly.
 
 Picker keys:
@@ -58,7 +60,7 @@ Picker keys:
 ## Runtime Assumptions
 
 - Requires Fish for `pl.fish`.
-- Requires Bash 4+, `git`, and `fzf`.
+- Requires Bash 4+, `git`, `fzf`, and `jq` (when a launcher config exists).
 - Uses `gh` when available to show cached PR state.
 - Uses `~/.claude/skills/handoffs/scripts/list.sh` when the handoffs skill is installed.
 - Shows handoffs owned by the current repo as separate rows and starts a fresh Pi session seeded with the selected handoff note.

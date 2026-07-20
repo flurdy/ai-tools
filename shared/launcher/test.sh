@@ -22,15 +22,26 @@ home="$tmp/home"
 bin="$tmp/bin"
 mkdir -p "$repo" "$home" "$bin"
 
-# The Pi frontend pins a stable baseline so temporary model-tier routes in other
-# sessions cannot leak into a new launch through Pi's persisted defaults.
+# The Pi frontend pins a stable launcher baseline so temporary model-tier routes
+# in other sessions cannot leak into a new launch through Pi's persisted defaults.
 fish -n "$PL_FUNCTION"
 nonrepo="$tmp/nonrepo"
 mkdir -p "$nonrepo"
-pl_default=$(fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run' "$PL_FUNCTION" "$nonrepo" 2>/dev/null)
-printf '%s\n' "$pl_default" | grep -qF 'pi --model openai-codex/gpt-5.6-terra --thinking high' \
-  || fail "Pi launcher defaults missing"
-pl_override=$(fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run --model=anthropic/claude-sonnet-5 --thinking=medium' "$PL_FUNCTION" "$nonrepo" 2>/dev/null)
+pl_default=$(HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run' "$PL_FUNCTION" "$nonrepo" 2>/dev/null)
+printf '%s\n' "$pl_default" | grep -qF 'pi --model openai-codex/gpt-5.6-sol --thinking high' \
+  || fail "Pi launcher fallback defaults missing"
+
+mkdir -p "$home/.pi/agent"
+cat > "$home/.pi/agent/pl-launcher.json" <<'EOF'
+{
+  "defaultModel": "openai-codex/gpt-5.6-terra",
+  "defaultThinking": "medium"
+}
+EOF
+pl_configured=$(HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run' "$PL_FUNCTION" "$nonrepo" 2>/dev/null)
+printf '%s\n' "$pl_configured" | grep -qF 'pi --model openai-codex/gpt-5.6-terra --thinking medium' \
+  || fail "Pi launcher config defaults ignored"
+pl_override=$(HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run --model=anthropic/claude-sonnet-5 --thinking=medium' "$PL_FUNCTION" "$nonrepo" 2>/dev/null)
 printf '%s\n' "$pl_override" | grep -qF 'pi --model anthropic/claude-sonnet-5 --thinking medium' \
   || fail "Pi launcher overrides ignored"
 

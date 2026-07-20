@@ -1,11 +1,44 @@
 function pl --description 'Pi launcher: pick a context (main/worktree/handoff/new) and start pi'
     set -l bin "$HOME/.pi/bin"
     set -l dry 0
-    set -l default_model 'openai-codex/gpt-5.6-terra'
+    set -l default_model 'openai-codex/gpt-5.6-sol'
     set -l default_thinking 'high'
+    set -l config_path "$HOME/.pi/agent/pl-launcher.json"
     set -l model ''
     set -l thinking ''
     set -l name ''
+
+    # Keep launcher defaults independent from Pi's persisted defaults: the
+    # model-tier router may temporarily change those while a session is active.
+    if test -f "$config_path"
+        if not command -sq jq
+            echo "pl: ignoring $config_path because jq is unavailable" >&2
+        else
+            set -l config_json (command jq -ce . "$config_path" 2>/dev/null)
+            if test $status -ne 0
+                echo "pl: ignoring invalid JSON in $config_path" >&2
+            else
+                set -l config_model (printf '%s\n' "$config_json" | command jq -r 'if (.defaultModel | type) == "string" then .defaultModel else empty end')
+                if test -n "$config_model"
+                    if string match -rq -- '[[:space:]]' "$config_model"
+                        echo "pl: ignoring invalid defaultModel in $config_path" >&2
+                    else
+                        set default_model "$config_model"
+                    end
+                end
+
+                set -l config_thinking (printf '%s\n' "$config_json" | command jq -r 'if (.defaultThinking | type) == "string" then .defaultThinking else empty end')
+                if test -n "$config_thinking"
+                    switch "$config_thinking"
+                        case off minimal low medium high xhigh max
+                            set default_thinking "$config_thinking"
+                        case '*'
+                            echo "pl: ignoring invalid defaultThinking in $config_path" >&2
+                    end
+                end
+            end
+        end
+    end
 
     for a in $argv
         switch $a
@@ -23,7 +56,8 @@ function pl --description 'Pi launcher: pick a context (main/worktree/handoff/ne
             case --help -h
                 echo 'pl [--model=ID] [--thinking=LEVEL] [--name=NAME] [--dry-run|-n] [--list]'
                 echo '  pick a context via fzf, then launch pi there.'
-                echo '  fresh-session defaults: openai-codex/gpt-5.6-terra with high thinking'
+                echo "  fresh-session defaults: $default_model with $default_thinking thinking"
+                echo "  configure defaults in $config_path"
                 echo '  enter=default session  ctrl-n=new  ctrl-r=resume-pick  ctrl-w=worktree'
                 return 0
         end
