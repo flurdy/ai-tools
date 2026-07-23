@@ -416,9 +416,9 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				function totalWidth(widths: number[]): number {
 					return widths.reduce((sum, w) => sum + w, 0) + widths.length + 1;
 				}
-				function normalize(widths: number[], target: number): number[] {
+				function normalize(widths: number[], target: number, growIndex = widths.length - 1): number[] {
 					const out = [...widths];
-					if (out.length > 0) out[out.length - 1] += Math.max(0, target - totalWidth(out));
+					if (out.length > 0) out[Math.max(0, Math.min(growIndex, out.length - 1))] += Math.max(0, target - totalWidth(out));
 					return out;
 				}
 
@@ -435,7 +435,10 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				}
 				if (target > width || target < 70) return compact(width);
 
-				row1Widths = normalize(row1Widths, target);
+				const pathIndex = row1.indexOf(s.path);
+				const sessionIndex = row1.indexOf(s.session);
+				const growIndex = pathIndex >= 0 ? pathIndex : Math.max(0, sessionIndex);
+				row1Widths = normalize(row1Widths, target, growIndex);
 				row2Widths = normalize(row2Widths, target);
 				return [
 					borderLine(row1Widths, { left: "┌", join: "┬", right: "┐" }, border),
