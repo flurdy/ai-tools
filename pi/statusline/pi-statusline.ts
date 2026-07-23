@@ -4,6 +4,7 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { execFileSync } from "node:child_process";
 import { hostname } from "node:os";
 import { dirname } from "node:path";
+import { BeadsCountsCache, fetchBeadsCounts, findBeadsRoot, formatBeadsCounts } from "./beads-status.ts";
 import { fetchCodexWeeklyQuota, isCodexQuotaStale, type CodexWeeklyQuota } from "./codex-quota.ts";
 import { activeModelLabel, modelLabel } from "./model-label.ts";
 import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT, codexQuotaTone } from "./quota-display.ts";
@@ -295,6 +296,16 @@ export default function piStatusline(pi: ExtensionAPI): void {
 			const quotaAbort = new AbortController();
 			let codexQuota: CodexWeeklyQuota | undefined;
 			let quotaRefreshing = false;
+			const beadsRoot = process.env.PI_STATUSLINE_BEADS === "0" ? undefined : findBeadsRoot(ctx.cwd);
+			const beadsRefreshMs = envMilliseconds("PI_STATUSLINE_BEADS_TTL", 30_000, 5000);
+			const beadsTimeoutMs = envMilliseconds("PI_STATUSLINE_BEADS_TIMEOUT", 2000, 250);
+			const beadsCache = beadsRoot
+				? new BeadsCountsCache({
+					load: (signal) => fetchBeadsCounts(beadsRoot, { timeoutMs: beadsTimeoutMs, signal }),
+					ttlMs: beadsRefreshMs,
+					onChange: () => tui.requestRender(),
+				})
+				: undefined;
 
 			async function refreshCodexQuota(): Promise<void> {
 				if (!quotaEnabled || quotaRefreshing || quotaAbort.signal.aborted) return;
@@ -314,7 +325,9 @@ export default function piStatusline(pi: ExtensionAPI): void {
 			}
 
 			void refreshCodexQuota();
+			void beadsCache?.refresh();
 			const quotaInterval = quotaEnabled ? setInterval(() => void refreshCodexQuota(), quotaRefreshMs) : undefined;
+			const beadsInterval = beadsCache ? setInterval(() => void beadsCache.refresh(), beadsRefreshMs) : undefined;
 
 			const colors = {
 				ok: (s: string) => theme.fg("success", s),
@@ -330,6 +343,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const k8sContext = getK8sContext();
 				const model = modelLabel(ctx.model?.provider, ctx.model?.id ?? "no-model");
 				const sessionName = pi.getSessionName();
+				const beadsCounts = beadsCache?.counts;
 				const effort = thinking ? `⚡${thinking === "high" ? "Hi" : thinking === "medium" ? "Md" : thinking.slice(0, 2)}` : "";
 				const status = `${git.dirty ? "●" : ""}${git.untracked ? "…" : ""}${git.staged ? "✚" : ""}`;
 				const cacheBase = usage.input + usage.cacheRead;
@@ -370,6 +384,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					repo: git.isWorktree ? theme.fg("success", `🌳 ${git.repo ?? "worktree"}`) : "",
 					branch: git.branch ? theme.fg(status ? "warning" : "success", ` ${git.branch}${status ? ` ${status}` : ""}`) : "",
 					pr: pr ? theme.fg("success", ` ${pr}`) : "",
+					beads: beadsCounts ? theme.fg(beadsCounts.blocked > 0 ? "warning" : "accent", formatBeadsCounts(beadsCounts)) : "",
 				};
 			}
 
@@ -392,7 +407,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 			function table(width: number): string[] {
 				const s = segments();
 				const border = (text: string) => theme.fg("border", text);
-				let row1 = [s.host, s.k8s, s.path, s.repo, s.branch, s.pr, s.session].filter(Boolean);
+				let row1 = [s.host, s.k8s, s.path, s.repo, s.branch, s.pr, s.beads, s.session].filter(Boolean);
 				const row2 = [s.agent, s.model, s.effort, s.ctx, s.quotaTable, s.tokens, s.cost, s.duration, s.clock].filter(Boolean);
 
 				function widthsFor(cells: string[]): number[] {
@@ -414,7 +429,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				// If the on-disk path makes the table too wide, drop only that cell first;
 				// the worktree repo + branch usually carry the more useful context.
 				if (target > width && s.path) {
-					row1 = [s.host, s.k8s, s.repo, s.branch, s.pr, s.session].filter(Boolean);
+					row1 = [s.host, s.k8s, s.repo, s.branch, s.pr, s.beads, s.session].filter(Boolean);
 					row1Widths = widthsFor(row1);
 					target = Math.max(totalWidth(row1Widths), totalWidth(row2Widths));
 				}
@@ -435,7 +450,9 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				dispose() {
 					clearInterval(interval);
 					if (quotaInterval) clearInterval(quotaInterval);
+					if (beadsInterval) clearInterval(beadsInterval);
 					quotaAbort.abort();
+					beadsCache?.dispose();
 					unsubBranch();
 				},
 				invalidate() {},

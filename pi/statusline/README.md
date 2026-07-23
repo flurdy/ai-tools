@@ -28,6 +28,9 @@ Then restart Pi, or run `/reload` from an existing Pi session.
 - `PI_STATUSLINE_PR_TTL=120000` — PR cache TTL in milliseconds.
 - `PI_STATUSLINE_LAST_PROMPT=0` — hide the active-run/latest-prompt widget above the editor (recommended when prompts may be visible to others).
 - `PI_STATUSLINE_K8S_CONTEXT=0` — hide the current `kubectl` context (shown by default when available).
+- `PI_STATUSLINE_BEADS=0` — hide Beads work counts in the table footer.
+- `PI_STATUSLINE_BEADS_TTL=30000` — Beads count refresh interval in milliseconds (minimum five seconds).
+- `PI_STATUSLINE_BEADS_TIMEOUT=2000` — timeout for one Beads count lookup in milliseconds (minimum 250 ms).
 - `PI_STATUSLINE_CODEX_QUOTA=0` — disable the Codex weekly-quota lookup.
 - `PI_STATUSLINE_CODEX_QUOTA_TTL=300000` — Codex quota refresh interval in milliseconds (minimum one minute).
 - `PI_STATUSLINE_CODEX_QUOTA_STALE=900000` — age after which the last successful quota snapshot is marked stale (minimum one minute).
@@ -51,9 +54,9 @@ Compact mode is a single line. As space narrows, less-important cells are droppe
 Table mode uses two bordered rows: location/session information on top, then model, capacity, usage, and time signals below.
 
 ```text
-┌──────────────┬───────────┬──────┬───────────────────────────────────────┐
-│ example-host │ ~/project │ main │ ◈ session                             │
-├───┬──────────┴──┬─────┬──┴──────┴──┬──────────┬───────────┬─────┬───────┤
+┌──────────────┬───────────┬──────┬──────────────────────┬────────────────┐
+│ example-host │ ~/project │ main │ ◉ P4:4 ◐1            │ ◈ session      │
+├───┬──────────┴──┬─────┬──┴──────┴──┬──────────┬────────┴──┬─────┬───────┤
 │ π │ GPT-5 Terra │ ⚡Hi │ ███░░░ ctx │ ↑12k ↓2k │ est $0.00 │ 12m │ 12:34 │
 └───┴─────────────┴─────┴────────────┴──────────┴───────────┴─────┴───────┘
 ```
@@ -93,7 +96,12 @@ The latest prompt is taken from your submitted input, so it can expose task deta
 - abbreviated cwd
 - worktree repo, branch, dirty/staged/untracked markers
 - cached GitHub PR number when available
+- open Beads grouped by priority plus compact active and blocked counts in table mode when the cwd is inside a Beads workspace
 - Pi-configured estimated cost, tokens, and cache stats in table mode (not provider billing or subscription usage)
+
+## Beads count source
+
+The table footer discovers the nearest parent `.beads` workspace and asynchronously queries `bd list --json --limit 0 --readonly` and `bd blocked --json --readonly`. Open counts are grouped into non-zero `P0`–`P4` buckets; active and blocked counts use compact symbols, and blocked is omitted when zero. The lookup is cached, timeout-bounded, and never runs during footer rendering. Its cell stays hidden in compact mode, outside Beads workspaces, and when `bd` is missing or a lookup fails.
 
 ## Codex quota source
 
