@@ -145,7 +145,7 @@ cache_beads() {
   command -v jq >/dev/null 2>&1 || return
 
   local timeout_cmd
-  timeout_cmd=$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null) || return
+  timeout_cmd=$(command -v gtimeout 2>/dev/null || command -v timeout 2>/dev/null) || return
 
   local root
   root=$(find_beads_root)
@@ -157,8 +157,9 @@ cache_beads() {
   case "$timeout_seconds" in ''|*[!0-9]*) timeout_seconds=2 ;; esac
   [ "$ttl" -lt 5 ] && ttl=5
   [ "$timeout_seconds" -lt 1 ] && timeout_seconds=1
+  [ "$timeout_seconds" -gt 10 ] && timeout_seconds=10
 
-  local key cache lock now age lock_age
+  local key cache lock now age
   key=$(printf '%s' "$root" | cksum | tr -cd '0-9' | cut -c1-12)
   cache="/tmp/statusline-beads-$key"
   lock="$cache.lock"
@@ -169,14 +170,24 @@ cache_beads() {
   age=$ttl
   [ -f "$cache" ] && age=$(( now - $(stat -c %Y "$cache" 2>/dev/null || stat -f %m "$cache" 2>/dev/null || echo 0) ))
   if [ "$age" -ge "$ttl" ]; then
-    lock_age=10
-    [ -f "$lock" ] && lock_age=$(( now - $(stat -c %Y "$lock" 2>/dev/null || stat -f %m "$lock" 2>/dev/null || echo 0) ))
-    if [ "$lock_age" -ge 10 ]; then
-      ( umask 077
-        : > "$lock"
-        local issues blocked payload tmp="$cache.tmp.$$"
-        if issues=$(cd "$root" && "$timeout_cmd" "$timeout_seconds" bd list --json --limit 0 --readonly 2>/dev/null) &&
-           blocked=$(cd "$root" && "$timeout_cmd" "$timeout_seconds" bd blocked --json --readonly 2>/dev/null) &&
+    ( umask 077
+      local issues blocked payload tmp="$cache.tmp.$BASHPID" lock_dir=""
+      if command -v flock >/dev/null 2>&1; then
+        exec 9>"$lock"
+        flock -n 9 || exit 0
+      else
+        lock_dir="$lock.d"
+        mkdir "$lock_dir" 2>/dev/null || exit 0
+      fi
+      trap 'rm -f "$tmp"; [ -z "$lock_dir" ] || rm -rf "$lock_dir"' EXIT
+
+      local refresh_now refresh_age
+      refresh_now=$(date +%s)
+      refresh_age=$ttl
+      [ -f "$cache" ] && refresh_age=$(( refresh_now - $(stat -c %Y "$cache" 2>/dev/null || stat -f %m "$cache" 2>/dev/null || echo 0) ))
+      if [ "$refresh_age" -ge "$ttl" ]; then
+        if issues=$(cd "$root" && "$timeout_cmd" --kill-after=1 "$timeout_seconds" bd list --json --limit 0 --readonly 2>/dev/null) &&
+           blocked=$(cd "$root" && "$timeout_cmd" --kill-after=1 "$timeout_seconds" bd blocked --json --readonly 2>/dev/null) &&
            payload=$(jq -nr --argjson issues "$issues" --argjson blocked "$blocked" '
              def valid:
                ($issues | type == "array") and
@@ -210,10 +221,9 @@ cache_beads() {
           : > "$tmp"
         fi
         mv -f "$tmp" "$cache" 2>/dev/null
-        rm -f "$lock"
-      ) </dev/null >/dev/null 2>&1 &
-      disown 2>/dev/null
-    fi
+      fi
+    ) </dev/null >/dev/null 2>&1 &
+    disown 2>/dev/null
   fi
 }
 
@@ -452,17 +462,6 @@ if [ -n "$branch" ]; then
   fi
 fi
 
-# Beads work for the nearest parent workspace (cached, non-blocking).
-segment_beads=""
-IFS='|' read -r beads_blocked beads_text <<< "$(cache_beads)"
-if [[ "$beads_blocked" =~ ^[0-9]+$ ]] && [ -n "$beads_text" ]; then
-  if [ "$beads_blocked" -gt 0 ]; then
-    segment_beads="${C_BAR_WARN}${beads_text}${RST}"
-  else
-    segment_beads="${C_MODEL}${beads_text}${RST}"
-  fi
-fi
-
 # Effort level (read from settings.json)
 segment_effort=""
 effort_val=$(jq -r '.effortLevel // empty' ~/.claude/settings.json 2>/dev/null)
@@ -672,6 +671,17 @@ render_table() {
   }
 
   local PAD=1
+
+  # Explicit compact mode never enters this table-only lookup path.
+  local segment_beads="" beads_blocked="" beads_text=""
+  IFS='|' read -r beads_blocked beads_text <<< "$(cache_beads)"
+  if [[ "$beads_blocked" =~ ^[0-9]+$ ]] && [ -n "$beads_text" ]; then
+    if [ "$beads_blocked" -gt 0 ]; then
+      segment_beads="${C_BAR_WARN}${beads_text}${RST}"
+    else
+      segment_beads="${C_MODEL}${beads_text}${RST}"
+    fi
+  fi
 
   # Width budget (shared by the path-guard and the fall-back-to-compact check).
   # The margin guards against terminals that clip the final column and against

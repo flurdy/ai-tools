@@ -9,7 +9,12 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 mkdir -p "$TEST_ROOT/bin" "$TEST_ROOT/workspace/.beads" "$TEST_ROOT/workspace/nested" "$TEST_ROOT/plain" "$TEST_ROOT/fixtures"
 cat > "$TEST_ROOT/bin/bd" <<'EOF'
 #!/usr/bin/env bash
-[ -f "$BD_FIXTURES/delay" ] && sleep 2
+[ -f "$BD_FIXTURES/track-calls" ] && printf '%s\n' "${1:-}" >> "$BD_FIXTURES/calls"
+if [ -f "$BD_FIXTURES/ignore-term" ]; then
+  trap '' TERM
+  sleep 10
+fi
+[ -f "$BD_FIXTURES/delay" ] && sleep "$(cat "$BD_FIXTURES/delay")"
 case "${1:-}" in
   list) cat "$BD_FIXTURES/issues.json" ;;
   blocked) cat "$BD_FIXTURES/blocked.json" ;;
@@ -29,13 +34,14 @@ clear_cache() {
   local cache
   cache=$(cache_path "$TEST_ROOT/workspace")
   rm -f "$cache" "$cache.lock" "$cache.tmp."*
+  rm -rf "$cache.lock.d"
 }
 
 wait_for_cache() {
   local cache
   cache=$(cache_path "$TEST_ROOT/workspace")
   for _ in {1..100}; do
-    [ -f "$cache" ] && [ ! -f "$cache.lock" ] && return
+    [ -f "$cache" ] && [ ! -e "$cache.lock.d" ] && return
     sleep 0.05
   done
   printf 'Timed out waiting for Beads cache\n' >&2
@@ -43,7 +49,7 @@ wait_for_cache() {
 }
 
 render() {
-  local cwd=$1 mode=${2:-table}
+  local cwd=$1 mode=${2:-table} command_path=${3:-$TEST_ROOT/bin:$PATH}
   jq -cn --arg cwd "$cwd" '{
     cwd: $cwd,
     model: {id: "claude-opus-4-8", display_name: "Opus"},
@@ -55,7 +61,7 @@ render() {
     },
     session_id: "beads-statusline-test"
   }' | env \
-    PATH="$TEST_ROOT/bin:$PATH" \
+    PATH="$command_path" \
     COLUMNS=240 \
     LINES=60 \
     CLAUDE_STATUSLINE="$mode" \
@@ -119,20 +125,43 @@ output=$(render "$TEST_ROOT/workspace")
 assert_not_contains "$output" "◉"
 
 printf '[]\n' > "$BD_FIXTURES/issues.json"
-touch "$BD_FIXTURES/delay"
+touch "$BD_FIXTURES/ignore-term"
 clear_cache
 render "$TEST_ROOT/workspace" >/dev/null
 wait_for_cache
 output=$(render "$TEST_ROOT/workspace")
 assert_not_contains "$output" "◉"
-rm -f "$BD_FIXTURES/delay"
+rm -f "$BD_FIXTURES/ignore-term"
 
 clear_cache
 render "$TEST_ROOT/workspace" >/dev/null
 wait_for_cache
 output=$(CLAUDE_STATUSLINE_BEADS=0 render "$TEST_ROOT/workspace")
 assert_not_contains "$output" "◉"
+
+clear_cache
 output=$(render "$TEST_ROOT/workspace" compact)
 assert_not_contains "$output" "◉"
+sleep 0.1
+[ ! -e "$(cache_path "$TEST_ROOT/workspace")" ] || { printf 'Compact mode unexpectedly created a Beads cache\n' >&2; exit 1; }
+
+clear_cache
+output=$(render "$TEST_ROOT/workspace" table "/usr/bin:/bin")
+assert_not_contains "$output" "◉"
+[ ! -e "$(cache_path "$TEST_ROOT/workspace")" ] || { printf 'Missing bd unexpectedly created a Beads cache\n' >&2; exit 1; }
+
+clear_cache
+: > "$BD_FIXTURES/calls"
+touch "$BD_FIXTURES/track-calls"
+printf '0.2\n' > "$BD_FIXTURES/delay"
+pids=()
+for _ in {1..10}; do
+  render "$TEST_ROOT/workspace" >/dev/null &
+  pids+=("$!")
+done
+for pid in "${pids[@]}"; do wait "$pid"; done
+wait_for_cache
+[ "$(wc -l < "$BD_FIXTURES/calls")" -eq 2 ] || { printf 'Concurrent renders started duplicate Beads refreshes\n' >&2; exit 1; }
+rm -f "$BD_FIXTURES/track-calls" "$BD_FIXTURES/delay"
 
 printf 'Claude statusline Beads tests passed\n'
