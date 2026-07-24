@@ -107,6 +107,13 @@ render "$TEST_ROOT/workspace/nested" >/dev/null
 wait_for_cache
 output=$(render "$TEST_ROOT/workspace/nested")
 assert_contains "$output" "◉ P0:1 P2:2 P4:1 ◐2 ⛔1"
+mapfile -t table_lines <<< "$output"
+assert_not_contains "${table_lines[1]}" "◉"
+assert_contains "${table_lines[3]}" "◉ P0:1 P2:2 P4:1 ◐2 ⛔1"
+case "${table_lines[3]}" in
+  *"◉ P0:1 P2:2 P4:1 ◐2 ⛔1"*'$1.23'*) ;;
+  *) printf 'Expected Beads cell immediately before cost on row 2\n' >&2; exit 1 ;;
+esac
 
 printf '[]\n' > "$BD_FIXTURES/issues.json"
 printf '[]\n' > "$BD_FIXTURES/blocked.json"

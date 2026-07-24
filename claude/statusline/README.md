@@ -39,7 +39,7 @@ Useful environment variables:
 
 ## Beads work
 
-Table mode discovers the nearest parent `.beads` workspace and shows non-zero open `P0`–`P4` buckets, the in-progress count, and the blocked count when non-zero. The lookup is detached, cached, atomically deduplicated, and hard-timeout-bounded, so the first result may appear on the next statusline refresh. `CLAUDE_STATUSLINE_BEADS_TIMEOUT` is measured in seconds and clamped to 1–10 seconds.
+Table mode shows Beads work on the second row immediately before cost. It discovers the nearest parent `.beads` workspace and shows non-zero open `P0`–`P4` buckets, the in-progress count, and the blocked count when non-zero. The lookup is detached, cached, atomically deduplicated, and hard-timeout-bounded, so the first result may appear on the next statusline refresh. `CLAUDE_STATUSLINE_BEADS_TIMEOUT` is measured in seconds and clamped to 1–10 seconds.
 
 The cell is hidden in compact output, outside Beads workspaces, when a required command is unavailable, or when `bd` returns an error or invalid data. Explicit `CLAUDE_STATUSLINE=compact` mode does not start Beads lookups.
 
