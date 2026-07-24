@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,6 +44,35 @@ class Workspace:
         return self.root / "repos" / self.slug
 
 
+@dataclass(frozen=True)
+class Registration:
+    root: Path
+    source: Path
+    name: str
+    collection: str
+
+    @property
+    def relative_path(self) -> str:
+        directory = "repos" if self.collection == "repositories" else "infrastructure"
+        return f"{directory}/{self.name}"
+
+    @property
+    def link(self) -> Path:
+        return self.root / self.relative_path
+
+
+@dataclass(frozen=True)
+class RegistrationPlan:
+    registration: Registration
+    current_manifest: dict[str, object]
+    current_manifest_text: str
+    updated_manifest: dict[str, object]
+    current_readme: str
+    updated_readme: str
+    link_exists: bool
+    unchanged: bool
+
+
 def slugify(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     if not slug:
@@ -69,7 +99,7 @@ def workspace_from(arguments: argparse.Namespace) -> Workspace:
         repository = arguments.repo.expanduser().resolve()
         if not repository.is_dir():
             raise WorkspaceError(f"repository does not exist: {repository}")
-        if not (repository / ".git").exists():
+        if not git_is_valid(repository):
             raise WorkspaceError(f"not a Git repository: {repository}")
         name = repository.name
     else:
@@ -102,13 +132,7 @@ def render_template(name: str, replacements: dict[str, str]) -> str:
     return template
 
 
-def repository_summary(workspace: Workspace) -> str:
-    if workspace.repository is None:
-        return "_No repositories are registered yet._"
-    return f"- `{workspace.slug}` — [`repos/{workspace.slug}`](repos/{workspace.slug}) (primary)"
-
-
-def manifest(workspace: Workspace) -> str:
+def initial_manifest(workspace: Workspace) -> dict[str, object]:
     repositories: list[dict[str, str]] = []
     if workspace.repository is not None:
         repositories.append(
@@ -118,25 +142,135 @@ def manifest(workspace: Workspace) -> str:
                 "role": "primary",
             }
         )
-    data = {
+    return {
         "version": 1,
         "name": workspace.name,
         "repositories": repositories,
         "infrastructure": [],
     }
+
+
+def manifest_text(data: dict[str, object]) -> str:
     return json.dumps(data, indent=2) + "\n"
 
 
-def managed_files(workspace: Workspace) -> dict[Path, str]:
-    replacements = {
-        "PROJECT_NAME": workspace.name,
-        "REPOSITORIES": repository_summary(workspace),
+def entry_summary(entries: list[dict[str, str]], empty: str) -> str:
+    if not entries:
+        return empty
+    lines = []
+    for entry in entries:
+        suffix = f" ({entry['role']})" if entry.get("role") else ""
+        lines.append(
+            f"- `{entry['name']}` — [`{entry['path']}`]({entry['path']}){suffix}"
+        )
+    return "\n".join(lines)
+
+
+def readme_replacements(data: dict[str, object]) -> dict[str, str]:
+    repositories = data["repositories"]
+    infrastructure = data["infrastructure"]
+    assert isinstance(repositories, list)
+    assert isinstance(infrastructure, list)
+    return {
+        "PROJECT_NAME": str(data["name"]),
+        "REPOSITORIES": entry_summary(
+            repositories, "_No repositories are registered yet._"
+        ),
+        "INFRASTRUCTURE": entry_summary(
+            infrastructure, "_No infrastructure references are registered yet._"
+        ),
     }
+
+
+def readme_text(data: dict[str, object]) -> str:
+    return render_template("README.md.tmpl", readme_replacements(data))
+
+
+def legacy_readme_text(data: dict[str, object]) -> str | None:
+    infrastructure = data["infrastructure"]
+    assert isinstance(infrastructure, list)
+    if infrastructure:
+        return None
+    return render_template("README.md.legacy.tmpl", readme_replacements(data))
+
+
+def readme_section(collection: str, content: str) -> str:
+    return (
+        f"<!-- project-workspace:{collection}:start -->\n"
+        f"{content}\n"
+        f"<!-- project-workspace:{collection}:end -->"
+    )
+
+
+def replace_readme_section(readme: str, collection: str, content: str) -> str:
+    start = f"<!-- project-workspace:{collection}:start -->"
+    end = f"<!-- project-workspace:{collection}:end -->"
+    if readme.count(start) != 1 or readme.count(end) != 1:
+        raise WorkspaceError(f"generated workspace README has invalid {collection} markers")
+    start_index = readme.index(start)
+    end_start = readme.find(end, start_index + len(start))
+    if end_start < 0:
+        raise WorkspaceError(f"generated workspace README has invalid {collection} markers")
+    end_index = end_start + len(end)
+    return (
+        readme[:start_index]
+        + readme_section(collection, content)
+        + readme[end_index:]
+    )
+
+
+def readme_matches_manifest(readme: str, data: dict[str, object]) -> bool:
+    replacements = readme_replacements(data)
+    markers = [
+        f"<!-- project-workspace:{collection}:{boundary} -->"
+        for collection in ("repositories", "infrastructure")
+        for boundary in ("start", "end")
+    ]
+    if all(readme.count(marker) == 1 for marker in markers):
+        expected = readme
+        for collection, replacement in (
+            ("repositories", replacements["REPOSITORIES"]),
+            ("infrastructure", replacements["INFRASTRUCTURE"]),
+        ):
+            expected = replace_readme_section(expected, collection, replacement)
+        return expected == readme
+    if any(marker in readme for marker in markers):
+        return False
+    legacy = legacy_readme_text(data)
+    return legacy is not None and readme == legacy
+
+
+def updated_readme_text(
+    readme: str,
+    current_manifest: dict[str, object],
+    updated_manifest: dict[str, object],
+) -> str:
+    if readme_matches_manifest(readme, updated_manifest):
+        return readme
+    if not readme_matches_manifest(readme, current_manifest):
+        raise WorkspaceError("generated workspace README has conflicting changes")
+
+    legacy = legacy_readme_text(current_manifest)
+    if legacy is not None and readme == legacy:
+        return readme_text(updated_manifest)
+
+    replacements = readme_replacements(updated_manifest)
+    updated = replace_readme_section(
+        readme, "repositories", replacements["REPOSITORIES"]
+    )
+    return replace_readme_section(
+        updated, "infrastructure", replacements["INFRASTRUCTURE"]
+    )
+
+
+def managed_files(workspace: Workspace) -> dict[Path, str]:
+    data = initial_manifest(workspace)
+    replacements = {"PROJECT_NAME": workspace.name}
     files = {
-        workspace.root / "README.md": render_template("README.md.tmpl", replacements),
+        workspace.root / "README.md": readme_text(data),
         workspace.root / "AGENTS.md": render_template("AGENTS.md.tmpl", replacements),
         workspace.root / "Makefile": render_template("Makefile.tmpl", replacements),
-        workspace.root / "workspace.json": manifest(workspace),
+        workspace.root / "workspace.json": manifest_text(data),
     }
     for directory in MANAGED_DIRECTORIES:
         files[workspace.root / directory / ".gitkeep"] = ""
@@ -165,12 +299,14 @@ def managed_directory_paths(root: Path) -> list[Path]:
 
 def git_is_valid(root: Path) -> bool:
     result = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
+        ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
         capture_output=True,
         check=False,
         text=True,
     )
-    return result.returncode == 0 and result.stdout.strip() == "true"
+    if result.returncode != 0 or not result.stdout.strip():
+        return False
+    return Path(result.stdout.strip()).resolve() == root.resolve()
 
 
 def preflight(workspace: Workspace, files: dict[Path, str], dry_run: bool) -> bool:
@@ -283,6 +419,352 @@ def create_workspace(workspace: Workspace, dry_run: bool) -> None:
     print(f"Initialised workspace: {workspace.root}")
 
 
+def registration_name(value: str) -> str:
+    if value != slugify(value):
+        raise WorkspaceError(
+            "registration name must use lowercase letters, numbers, and single hyphens"
+        )
+    return value
+
+
+def registration_from(arguments: argparse.Namespace) -> Registration:
+    root = Path(os.path.abspath(arguments.workspace.expanduser()))
+    source_input = Path(os.path.abspath(arguments.source.expanduser()))
+    if source_input.is_symlink():
+        raise WorkspaceError(f"registration source must not be a symlink: {source_input}")
+    if not source_input.is_dir():
+        raise WorkspaceError(f"registration source does not exist: {source_input}")
+
+    source = source_input.resolve()
+    collection = (
+        "repositories" if arguments.command == "add-repo" else "infrastructure"
+    )
+    if collection == "repositories" and not git_is_valid(source):
+        raise WorkspaceError(f"not a Git repository: {source}")
+
+    physical_root = root.resolve()
+    if nested(source, physical_root) or nested(physical_root, source):
+        raise WorkspaceError("workspace and registration source must be separate directories")
+
+    name = (
+        registration_name(arguments.name)
+        if arguments.name is not None
+        else slugify(source.name)
+    )
+    return Registration(
+        root=root,
+        source=source,
+        name=name,
+        collection=collection,
+    )
+
+
+def validate_manifest(
+    data: object, root: Path, allowed_orphan: Path | None = None
+) -> dict[str, object]:
+    if not isinstance(data, dict):
+        raise WorkspaceError("workspace.json must contain a JSON object")
+    name = data.get("name")
+    if (
+        data.get("version") != 1
+        or not isinstance(name, str)
+        or not name.strip()
+        or "\n" in name
+        or "\r" in name
+    ):
+        raise WorkspaceError("workspace.json is not a supported project workspace manifest")
+
+    physical_root = root.resolve()
+    names: set[str] = set()
+    targets: set[Path] = set()
+    expected_links: set[Path] = set()
+    for collection, directory in (
+        ("repositories", "repos"),
+        ("infrastructure", "infrastructure"),
+    ):
+        entries = data.get(collection)
+        if not isinstance(entries, list):
+            raise WorkspaceError(f"workspace.json field must be a list: {collection}")
+        for entry in entries:
+            if not isinstance(entry, dict):
+                raise WorkspaceError(f"invalid {collection} entry in workspace.json")
+            entry_name = entry.get("name")
+            path = entry.get("path")
+            if not isinstance(entry_name, str) or not isinstance(path, str):
+                raise WorkspaceError(f"invalid {collection} entry in workspace.json")
+            registration_name(entry_name)
+            if entry_name in names:
+                raise WorkspaceError(
+                    f"duplicate registration name in workspace.json: {entry_name}"
+                )
+            names.add(entry_name)
+            if path != f"{directory}/{entry_name}":
+                raise WorkspaceError(f"unsafe registered path in workspace.json: {path}")
+            if collection == "repositories" and entry.get("role") not in (
+                "primary",
+                "service",
+            ):
+                raise WorkspaceError(
+                    f"repository role is invalid in workspace.json: {entry_name}"
+                )
+
+            link = root / path
+            expected_links.add(link)
+            if not link.is_symlink() or os.path.isabs(os.readlink(link)):
+                raise WorkspaceError(
+                    f"registered path is not a safe relative symlink: {path}"
+                )
+            if not link.exists() or not link.resolve().is_dir():
+                raise WorkspaceError(f"registered path is broken: {path}")
+            target = link.resolve()
+            if nested(target, physical_root) or nested(physical_root, target):
+                raise WorkspaceError(
+                    f"workspace and registered source must be separate: {path}"
+                )
+            if target in targets:
+                raise WorkspaceError(f"source is registered more than once: {target}")
+            targets.add(target)
+            if collection == "repositories" and not git_is_valid(target):
+                raise WorkspaceError(
+                    f"registered repository is not a Git repository: {path}"
+                )
+
+    for directory in (root / "repos", root / "infrastructure"):
+        for child in directory.iterdir():
+            if child.name == ".gitkeep" or child in expected_links:
+                continue
+            if allowed_orphan is not None and child == allowed_orphan:
+                continue
+            raise WorkspaceError(f"unregistered workspace path: {child.relative_to(root)}")
+    return data
+
+
+def load_workspace_data(
+    root: Path, allowed_orphan: Path | None = None
+) -> tuple[dict[str, object], str]:
+    if root.is_symlink():
+        raise WorkspaceError(f"workspace root must not be a symlink: {root}")
+    if not root.is_dir():
+        raise WorkspaceError(f"workspace does not exist: {root}")
+
+    git_path = root / ".git"
+    beads_path = root / ".beads"
+    if git_path.is_symlink() or not git_is_valid(root):
+        raise WorkspaceError(f"not an initialised project workspace: {root}")
+    if beads_path.is_symlink() or not beads_path.is_dir():
+        raise WorkspaceError(f"not an initialised project workspace: {root}")
+    for path in managed_directory_paths(root):
+        if path.is_symlink() or not path.is_dir():
+            raise WorkspaceError(f"workspace directory is unsafe or missing: {path}")
+    for filename in ("README.md", "AGENTS.md", "Makefile"):
+        path = root / filename
+        if existing_text(path) is None:
+            raise WorkspaceError(f"workspace file is missing: {path}")
+
+    manifest_path = root / "workspace.json"
+    raw_manifest = existing_text(manifest_path)
+    if raw_manifest is None:
+        raise WorkspaceError(f"workspace.json is missing: {manifest_path}")
+    try:
+        data = json.loads(raw_manifest)
+    except json.JSONDecodeError as error:
+        raise WorkspaceError(f"workspace.json is invalid: {error}") from error
+    return validate_manifest(data, root, allowed_orphan), raw_manifest
+
+
+def load_workspace_manifest(root: Path) -> tuple[dict[str, object], str]:
+    manifest_data, _raw_manifest = load_workspace_data(root)
+    readme_path = root / "README.md"
+    current_readme = existing_text(readme_path)
+    assert current_readme is not None
+    if not readme_matches_manifest(current_readme, manifest_data):
+        raise WorkspaceError(f"generated workspace README has conflicting changes: {readme_path}")
+    return manifest_data, current_readme
+
+
+def registration_plan(registration: Registration) -> RegistrationPlan:
+    manifest_data, current_manifest_text = load_workspace_data(
+        registration.root, registration.link
+    )
+    current_readme = existing_text(registration.root / "README.md")
+    assert current_readme is not None
+    repositories = manifest_data["repositories"]
+    infrastructure = manifest_data["infrastructure"]
+    assert isinstance(repositories, list)
+    assert isinstance(infrastructure, list)
+
+    matching_entry: dict[str, object] | None = None
+    for collection, entries in (
+        ("repositories", repositories),
+        ("infrastructure", infrastructure),
+    ):
+        for entry in entries:
+            assert isinstance(entry, dict)
+            name = entry["name"]
+            path = entry["path"]
+            link = registration.root / str(path)
+            if name == registration.name:
+                if collection != registration.collection:
+                    raise WorkspaceError(
+                        f"duplicate registration name in another collection: {registration.name}"
+                    )
+                matching_entry = entry
+            if link.resolve() == registration.source and name != registration.name:
+                raise WorkspaceError(f"source is already registered as: {name}")
+
+    expected_target = os.path.relpath(registration.source, registration.link.parent)
+    if matching_entry is not None:
+        if registration.link.resolve() != registration.source:
+            raise WorkspaceError(f"duplicate registration name: {registration.name}")
+        if (
+            not registration.link.is_symlink()
+            or os.readlink(registration.link) != expected_target
+        ):
+            raise WorkspaceError(
+                f"manifest/link conflict for registration: {registration.name}"
+            )
+        if not readme_matches_manifest(current_readme, manifest_data):
+            raise WorkspaceError(
+                f"generated workspace README has conflicting changes: {registration.root / 'README.md'}"
+            )
+        return RegistrationPlan(
+            registration=registration,
+            current_manifest=manifest_data,
+            current_manifest_text=current_manifest_text,
+            updated_manifest=manifest_data,
+            current_readme=current_readme,
+            updated_readme=current_readme,
+            link_exists=True,
+            unchanged=True,
+        )
+
+    link_exists = os.path.lexists(registration.link)
+    if link_exists and (
+        not registration.link.is_symlink()
+        or os.path.isabs(os.readlink(registration.link))
+        or os.readlink(registration.link) != expected_target
+        or registration.link.resolve() != registration.source
+    ):
+        raise WorkspaceError(f"registration link already exists: {registration.link}")
+
+    updated_manifest = json.loads(json.dumps(manifest_data))
+    updated_entries = updated_manifest[registration.collection]
+    assert isinstance(updated_entries, list)
+    entry: dict[str, str] = {
+        "name": registration.name,
+        "path": registration.relative_path,
+    }
+    if registration.collection == "repositories":
+        entry["role"] = "primary" if not repositories else "service"
+    updated_entries.append(entry)
+    try:
+        updated_readme = updated_readme_text(
+            current_readme, manifest_data, updated_manifest
+        )
+    except WorkspaceError as error:
+        raise WorkspaceError(
+            f"generated workspace README has conflicting changes: {registration.root / 'README.md'}"
+        ) from error
+    if readme_matches_manifest(current_readme, updated_manifest) and not link_exists:
+        raise WorkspaceError("workspace README and manifest are inconsistent")
+    return RegistrationPlan(
+        registration=registration,
+        current_manifest=manifest_data,
+        current_manifest_text=current_manifest_text,
+        updated_manifest=updated_manifest,
+        current_readme=current_readme,
+        updated_readme=updated_readme,
+        link_exists=link_exists,
+        unchanged=False,
+    )
+
+
+def atomic_write_text(path: Path, content: str) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, path.stat().st_mode)
+        stream = os.fdopen(descriptor, "w", encoding="utf-8")
+        descriptor = -1
+        with stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+
+
+def print_registration_plan(plan: RegistrationPlan) -> None:
+    registration = plan.registration
+    print(f"Workspace: {registration.root}")
+    link_action = "UNCHANGED" if plan.link_exists else "CREATE"
+    print(f"{link_action} link {registration.relative_path} -> {registration.source}")
+    readme_action = "UNCHANGED" if plan.current_readme == plan.updated_readme else "UPDATE"
+    print(f"{readme_action} file README.md")
+    print(f"{'UNCHANGED' if plan.unchanged else 'UPDATE'} file workspace.json")
+
+
+def apply_registration(plan: RegistrationPlan, dry_run: bool) -> None:
+    if dry_run:
+        print_registration_plan(plan)
+        return
+    registration = plan.registration
+    if plan.unchanged:
+        print(f"Registration unchanged: {registration.relative_path}")
+        return
+
+    target = os.path.relpath(registration.source, registration.link.parent)
+    readme_path = registration.root / "README.md"
+    manifest_path = registration.root / "workspace.json"
+    if (
+        existing_text(readme_path) != plan.current_readme
+        or existing_text(manifest_path) != plan.current_manifest_text
+    ):
+        raise WorkspaceError("workspace changed after registration preflight")
+    if not registration.source.is_dir() or (
+        registration.collection == "repositories"
+        and not git_is_valid(registration.source)
+    ):
+        raise WorkspaceError("registration source changed after preflight")
+
+    link_created = False
+    readme_changed = False
+    try:
+        if not plan.link_exists:
+            registration.link.symlink_to(target, target_is_directory=True)
+            link_created = True
+        if plan.current_readme != plan.updated_readme:
+            atomic_write_text(readme_path, plan.updated_readme)
+            readme_changed = True
+        atomic_write_text(manifest_path, manifest_text(plan.updated_manifest))
+    except BaseException:
+        if link_created:
+            registration.link.unlink(missing_ok=True)
+        if readme_changed and existing_text(readme_path) != plan.current_readme:
+            atomic_write_text(readme_path, plan.current_readme)
+        if existing_text(manifest_path) != plan.current_manifest_text:
+            atomic_write_text(manifest_path, plan.current_manifest_text)
+        raise
+    print(f"Registered {registration.relative_path} -> {registration.source}")
+
+
+def register_source(arguments: argparse.Namespace) -> None:
+    registration = registration_from(arguments)
+    plan = registration_plan(registration)
+    apply_registration(plan, arguments.dry_run)
+
+
+def doctor_workspace(root: Path) -> None:
+    workspace_root = Path(os.path.abspath(root.expanduser()))
+    load_workspace_manifest(workspace_root)
+    print("Workspace: PASS")
+
+
 def parser() -> argparse.ArgumentParser:
     command = argparse.ArgumentParser(prog="project-workspace")
     subcommands = command.add_subparsers(dest="command", required=True)
@@ -291,14 +773,40 @@ def parser() -> argparse.ArgumentParser:
     init.add_argument("--repo", type=Path, help="existing Git repository to link")
     init.add_argument("--output", type=Path, help="workspace root directory")
     init.add_argument("--dry-run", action="store_true", help="preview without writing")
+
+    for name, help_text in (
+        ("add-repo", "register an existing Git repository"),
+        ("add-infrastructure", "register an existing infrastructure reference"),
+    ):
+        registration = subcommands.add_parser(name, help=help_text)
+        registration.add_argument("source", type=Path, help="existing source directory")
+        registration.add_argument(
+            "--name", help="safe link and manifest name (defaults to source name)"
+        )
+        registration.add_argument(
+            "--workspace", type=Path, default=Path.cwd(), help="workspace root"
+        )
+        registration.add_argument(
+            "--dry-run", action="store_true", help="preview without writing"
+        )
+
+    doctor = subcommands.add_parser("doctor", help="validate a project workspace")
+    doctor.add_argument(
+        "--workspace", type=Path, default=Path.cwd(), help="workspace root"
+    )
     return command
 
 
 def main() -> int:
     arguments = parser().parse_args()
     try:
-        workspace = workspace_from(arguments)
-        create_workspace(workspace, arguments.dry_run)
+        if arguments.command == "init":
+            workspace = workspace_from(arguments)
+            create_workspace(workspace, arguments.dry_run)
+        elif arguments.command == "doctor":
+            doctor_workspace(arguments.workspace)
+        else:
+            register_source(arguments)
     except (WorkspaceError, OSError, UnicodeError, subprocess.CalledProcessError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1

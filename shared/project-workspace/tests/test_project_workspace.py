@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -27,7 +28,7 @@ class ProjectWorkspaceTest(unittest.TestCase):
             "git",
             'echo "git $*" >> "$COMMAND_LOG"\n'
             'if [[ "$1" == "-C" ]]; then\n'
-            '  [[ -f "$2/.git/project-workspace-initialized" ]] && echo true\n'
+            '  [[ -f "$2/.git/project-workspace-initialized" ]] && echo "$2"\n'
             "  exit\n"
             "fi\n"
             "mkdir -p .git\n"
@@ -48,7 +49,9 @@ class ProjectWorkspaceTest(unittest.TestCase):
         )
         self.environment = os.environ.copy()
         self.environment["COMMAND_LOG"] = str(self.command_log)
-        self.environment["PATH"] = f"{self.bin}:{self.environment.get('PATH', '')}"
+        self.environment["PATH"] = (
+            f"{self.bin}:{PROJECT}:{self.environment.get('PATH', '')}"
+        )
 
     def write_command(self, name: str, body: str) -> None:
         command = self.bin / name
@@ -66,6 +69,17 @@ class ProjectWorkspaceTest(unittest.TestCase):
             env=self.environment,
             text=True,
         )
+
+    def create_workspace(self, name: str = "workspace") -> Path:
+        workspace = self.root / name
+        self.run_cli("init", name.title(), "--output", str(workspace))
+        return workspace
+
+    def create_repository(self, name: str) -> Path:
+        repository = self.root / name
+        (repository / ".git").mkdir(parents=True)
+        (repository / ".git" / "project-workspace-initialized").touch()
+        return repository
 
     def test_initialises_named_greenfield_workspace_and_reruns_safely(self) -> None:
         workspace = self.root / "example-project"
@@ -93,8 +107,7 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.assertEqual(2, rerun_commands.count("bd init --init-if-missing"))
 
     def test_links_existing_repository_without_absorbing_it(self) -> None:
-        repository = self.root / "application"
-        (repository / ".git").mkdir(parents=True)
+        repository = self.create_repository("application")
         workspace = self.root / "operations"
 
         self.run_cli("init", "--repo", str(repository), "--output", str(workspace))
@@ -142,8 +155,7 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.assertFalse((workspace / ".beads").exists())
 
     def test_rejects_workspace_nested_inside_existing_repository(self) -> None:
-        repository = self.root / "application"
-        (repository / ".git").mkdir(parents=True)
+        repository = self.create_repository("application")
 
         result = self.run_cli(
             "init",
@@ -227,9 +239,419 @@ class ProjectWorkspaceTest(unittest.TestCase):
         commands = self.command_log.read_text(encoding="utf-8")
         self.assertGreaterEqual(commands.count("bd init --init-if-missing"), 3)
 
+    def test_registers_repositories_and_infrastructure_and_reruns_safely(self) -> None:
+        workspace = self.create_workspace()
+        primary = self.create_repository("primary-api")
+        service = self.create_repository("worker")
+        infrastructure = self.root / "deployment-config"
+        infrastructure.mkdir()
+
+        first = self.run_cli(
+            "add-repo", str(primary), "--workspace", str(workspace)
+        )
+        self.run_cli("add-repo", str(service), "--workspace", str(workspace))
+        self.run_cli(
+            "add-infrastructure",
+            str(infrastructure),
+            "--workspace",
+            str(workspace),
+        )
+        manifest_before_rerun = (workspace / "workspace.json").read_text(encoding="utf-8")
+        rerun = self.run_cli(
+            "add-repo", str(primary), "--workspace", str(workspace)
+        )
+
+        self.assertIn("Registered repos/primary-api", first.stdout)
+        self.assertIn("Registration unchanged: repos/primary-api", rerun.stdout)
+        self.assertEqual(
+            manifest_before_rerun,
+            (workspace / "workspace.json").read_text(encoding="utf-8"),
+        )
+        self.assertEqual(primary, (workspace / "repos" / "primary-api").resolve())
+        self.assertEqual(service, (workspace / "repos" / "worker").resolve())
+        self.assertEqual(
+            infrastructure,
+            (workspace / "infrastructure" / "deployment-config").resolve(),
+        )
+        self.assertFalse(os.readlink(workspace / "repos" / "primary-api").startswith("/"))
+        manifest = json.loads(manifest_before_rerun)
+        self.assertEqual(
+            [
+                {
+                    "name": "primary-api",
+                    "path": "repos/primary-api",
+                    "role": "primary",
+                },
+                {"name": "worker", "path": "repos/worker", "role": "service"},
+            ],
+            manifest["repositories"],
+        )
+        self.assertEqual(
+            [
+                {
+                    "name": "deployment-config",
+                    "path": "infrastructure/deployment-config",
+                }
+            ],
+            manifest["infrastructure"],
+        )
+        readme = (workspace / "README.md").read_text(encoding="utf-8")
+        self.assertIn("[`repos/primary-api`](repos/primary-api) (primary)", readme)
+        self.assertIn("[`repos/worker`](repos/worker) (service)", readme)
+        self.assertIn(
+            "[`infrastructure/deployment-config`](infrastructure/deployment-config)",
+            readme,
+        )
+        doctor = subprocess.run(
+            ["make", "doctor"],
+            capture_output=True,
+            check=True,
+            cwd=workspace,
+            env=self.environment,
+            text=True,
+        )
+        self.assertIn("Workspace: PASS", doctor.stdout)
+
+    def test_registration_dry_run_reports_without_writing(self) -> None:
+        workspace = self.create_workspace()
+        repository = self.create_repository("preview-service")
+        manifest_before = (workspace / "workspace.json").read_text(encoding="utf-8")
+        readme_before = (workspace / "README.md").read_text(encoding="utf-8")
+
+        result = self.run_cli(
+            "add-repo",
+            str(repository),
+            "--workspace",
+            str(workspace),
+            "--dry-run",
+        )
+
+        self.assertIn("CREATE link repos/preview-service", result.stdout)
+        self.assertIn("UPDATE file workspace.json", result.stdout)
+        self.assertFalse((workspace / "repos" / "preview-service").exists())
+        self.assertEqual(
+            manifest_before, (workspace / "workspace.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(readme_before, (workspace / "README.md").read_text(encoding="utf-8"))
+
+    def test_registration_recovers_interrupted_link_and_readme_updates(self) -> None:
+        repository = self.create_repository("recoverable")
+
+        linked_workspace = self.create_workspace("linked-interruption")
+        link = linked_workspace / "repos" / "recoverable"
+        link.symlink_to(os.path.relpath(repository, link.parent), target_is_directory=True)
+        linked_result = self.run_cli(
+            "add-repo", str(repository), "--workspace", str(linked_workspace)
+        )
+
+        readme_workspace = self.create_workspace("readme-interruption")
+        manifest_path = readme_workspace / "workspace.json"
+        original_manifest = manifest_path.read_text(encoding="utf-8")
+        self.run_cli(
+            "add-repo", str(repository), "--workspace", str(readme_workspace)
+        )
+        updated_readme = (readme_workspace / "README.md").read_text(encoding="utf-8")
+        manifest_path.write_text(original_manifest, encoding="utf-8")
+        readme_result = self.run_cli(
+            "add-repo", str(repository), "--workspace", str(readme_workspace)
+        )
+
+        self.assertIn("Registered repos/recoverable", linked_result.stdout)
+        self.assertIn("Registered repos/recoverable", readme_result.stdout)
+        self.assertEqual(
+            updated_readme,
+            (readme_workspace / "README.md").read_text(encoding="utf-8"),
+        )
+        for workspace in (linked_workspace, readme_workspace):
+            manifest = json.loads(
+                (workspace / "workspace.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual("recoverable", manifest["repositories"][0]["name"])
+
+    def test_registration_migrates_legacy_readme_and_preserves_custom_sections(self) -> None:
+        workspace = self.root / "legacy-workspace"
+        self.run_cli("init", "Legacy Workspace", "--output", str(workspace))
+        manifest = json.loads((workspace / "workspace.json").read_text(encoding="utf-8"))
+        legacy_template = (
+            PROJECT / "templates" / "README.md.legacy.tmpl"
+        ).read_text(encoding="utf-8")
+        legacy_readme = legacy_template.replace(
+            "{{PROJECT_NAME}}", str(manifest["name"])
+        ).replace("{{REPOSITORIES}}", "_No repositories are registered yet._")
+        (workspace / "README.md").write_text(legacy_readme, encoding="utf-8")
+        legacy_doctor = self.run_cli("doctor", "--workspace", str(workspace))
+        self.assertIn("Workspace: PASS", legacy_doctor.stdout)
+        repository = self.create_repository("legacy-service")
+
+        self.run_cli(
+            "add-repo", str(repository), "--workspace", str(workspace)
+        )
+        migrated = (workspace / "README.md").read_text(encoding="utf-8")
+        self.assertIn("<!-- project-workspace:repositories:start -->", migrated)
+        self.assertIn("[`repos/legacy-service`](repos/legacy-service)", migrated)
+
+        custom = "\n## Local notes\n\nPreserve this text.\n"
+        (workspace / "README.md").write_text(migrated + custom, encoding="utf-8")
+        second = self.create_repository("second-service")
+        self.run_cli("add-repo", str(second), "--workspace", str(workspace))
+        updated = (workspace / "README.md").read_text(encoding="utf-8")
+        self.assertIn("Preserve this text.", updated)
+        self.assertIn("[`repos/second-service`](repos/second-service)", updated)
+
+    def test_registration_accepts_noncanonical_manifest_formatting(self) -> None:
+        workspace = self.create_workspace("noncanonical")
+        manifest_path = workspace / "workspace.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        repository = self.create_repository("formatted-service")
+
+        result = self.run_cli(
+            "add-repo", str(repository), "--workspace", str(workspace)
+        )
+
+        self.assertEqual(0, result.returncode)
+        updated = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual("formatted-service", updated["repositories"][0]["name"])
+
+    def test_registration_rejects_duplicate_names_and_sources_without_writes(self) -> None:
+        workspace = self.create_workspace()
+        first = self.create_repository("shared-name")
+        second_parent = self.root / "other"
+        second = second_parent / "shared-name"
+        (second / ".git").mkdir(parents=True)
+        (second / ".git" / "project-workspace-initialized").touch()
+        self.run_cli("add-repo", str(first), "--workspace", str(workspace))
+        manifest_before = (workspace / "workspace.json").read_text(encoding="utf-8")
+
+        duplicate_name = self.run_cli(
+            "add-repo", str(second), "--workspace", str(workspace), check=False
+        )
+        duplicate_source = self.run_cli(
+            "add-repo",
+            str(first),
+            "--name",
+            "renamed-source",
+            "--workspace",
+            str(workspace),
+            check=False,
+        )
+
+        self.assertNotEqual(0, duplicate_name.returncode)
+        self.assertIn("duplicate registration name", duplicate_name.stderr)
+        self.assertNotEqual(0, duplicate_source.returncode)
+        self.assertIn("source is already registered", duplicate_source.stderr)
+        self.assertFalse((workspace / "repos" / "renamed-source").exists())
+        self.assertEqual(
+            manifest_before, (workspace / "workspace.json").read_text(encoding="utf-8")
+        )
+
+    def test_registration_rejects_non_git_overlap_symlinks_and_traversal(self) -> None:
+        workspace = self.create_workspace()
+        plain_directory = self.root / "plain"
+        plain_directory.mkdir()
+        non_git = self.run_cli(
+            "add-repo",
+            str(plain_directory),
+            "--workspace",
+            str(workspace),
+            check=False,
+        )
+        fake_repository = self.root / "fake-repository"
+        (fake_repository / ".git").mkdir(parents=True)
+        fake_git = self.run_cli(
+            "add-repo",
+            str(fake_repository),
+            "--workspace",
+            str(workspace),
+            check=False,
+        )
+        fake_init = self.run_cli(
+            "init",
+            "--repo",
+            str(fake_repository),
+            "--output",
+            str(self.root / "fake-workspace"),
+            check=False,
+        )
+        overlap_repository = workspace / "nested-repository"
+        (overlap_repository / ".git").mkdir(parents=True)
+        (overlap_repository / ".git" / "project-workspace-initialized").touch()
+        overlap = self.run_cli(
+            "add-repo",
+            str(overlap_repository),
+            "--workspace",
+            str(workspace),
+            check=False,
+        )
+        repository = self.create_repository("safe-source")
+        source_link = self.root / "source-link"
+        source_link.symlink_to(repository, target_is_directory=True)
+        symlink = self.run_cli(
+            "add-repo",
+            str(source_link),
+            "--workspace",
+            str(workspace),
+            check=False,
+        )
+        traversal = self.run_cli(
+            "add-repo",
+            str(repository),
+            "--name",
+            "../escape",
+            "--workspace",
+            str(workspace),
+            check=False,
+        )
+
+        self.assertIn("not a Git repository", non_git.stderr)
+        self.assertIn("not a Git repository", fake_git.stderr)
+        self.assertIn("not a Git repository", fake_init.stderr)
+        self.assertIn("must be separate directories", overlap.stderr)
+        self.assertIn("source must not be a symlink", symlink.stderr)
+        self.assertIn("registration name must use", traversal.stderr)
+        self.assertFalse((workspace.parent / "escape").exists())
+        manifest = json.loads((workspace / "workspace.json").read_text(encoding="utf-8"))
+        self.assertEqual([], manifest["repositories"])
+
+    @unittest.skipUnless(shutil.which("git"), "Git is required for root validation")
+    def test_real_git_root_validation_rejects_repository_subdirectories(self) -> None:
+        real_git = shutil.which("git")
+        assert real_git is not None
+        workspace = self.create_workspace("real-git-workspace")
+        shutil.rmtree(workspace / ".git")
+        subprocess.run(
+            [real_git, "init", "-b", "main"], cwd=workspace, check=True, capture_output=True
+        )
+        repository = self.root / "real-repository"
+        repository.mkdir()
+        subprocess.run(
+            [real_git, "init", "-b", "main"],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+        )
+        subdirectory = repository / "nested"
+        subdirectory.mkdir()
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(CLI),
+                "add-repo",
+                str(subdirectory),
+                "--workspace",
+                str(workspace),
+            ],
+            capture_output=True,
+            check=False,
+            cwd=self.root,
+            env=os.environ.copy(),
+            text=True,
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("not a Git repository", result.stderr)
+
+    def test_registration_rejects_foreign_workspaces_and_manifest_link_conflicts(self) -> None:
+        repository = self.create_repository("service")
+        foreign = self.root / "foreign-workspace"
+        (foreign / ".git").mkdir(parents=True)
+        (foreign / ".beads").mkdir()
+        foreign_result = self.run_cli(
+            "add-repo",
+            str(repository),
+            "--workspace",
+            str(foreign),
+            check=False,
+        )
+
+        workspace = self.create_workspace()
+        orphan = workspace / "repos" / "orphan"
+        orphan.symlink_to(os.path.relpath(repository, orphan.parent), target_is_directory=True)
+        manifest_before = (workspace / "workspace.json").read_text(encoding="utf-8")
+        conflict = self.run_cli(
+            "add-repo",
+            str(repository),
+            "--workspace",
+            str(workspace),
+            check=False,
+        )
+
+        self.assertIn("not an initialised project workspace", foreign_result.stderr)
+        self.assertIn("unregistered workspace path: repos/orphan", conflict.stderr)
+        self.assertEqual(
+            manifest_before, (workspace / "workspace.json").read_text(encoding="utf-8")
+        )
+
+    def test_registration_rejects_manifest_path_traversal_without_writes(self) -> None:
+        workspace = self.create_workspace()
+        repository = self.create_repository("service")
+        manifest_path = workspace / "workspace.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["repositories"] = [
+            {"name": "service", "path": "repos/../outside", "role": "primary"}
+        ]
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        readme_before = (workspace / "README.md").read_text(encoding="utf-8")
+
+        result = self.run_cli(
+            "add-repo",
+            str(repository),
+            "--workspace",
+            str(workspace),
+            check=False,
+        )
+
+        self.assertIn("unsafe registered path", result.stderr)
+        self.assertEqual(
+            json.dumps(manifest, indent=2) + "\n",
+            manifest_path.read_text(encoding="utf-8"),
+        )
+        self.assertEqual(readme_before, (workspace / "README.md").read_text(encoding="utf-8"))
+        self.assertFalse((workspace / "repos" / "service").exists())
+
+    def test_doctor_rejects_missing_workspace_files_and_directories(self) -> None:
+        missing_file = self.create_workspace("missing-file")
+        (missing_file / "AGENTS.md").unlink()
+        file_result = self.run_cli(
+            "doctor", "--workspace", str(missing_file), check=False
+        )
+
+        missing_readme = self.create_workspace("missing-readme")
+        (missing_readme / "README.md").unlink()
+        readme_result = self.run_cli(
+            "doctor", "--workspace", str(missing_readme), check=False
+        )
+
+        missing_directory = self.create_workspace("missing-directory")
+        shutil.rmtree(missing_directory / "docs" / "prds")
+        directory_result = self.run_cli(
+            "doctor", "--workspace", str(missing_directory), check=False
+        )
+
+        overlap = self.create_workspace("overlap")
+        overlap_link = overlap / "repos" / "self"
+        overlap_link.symlink_to("..", target_is_directory=True)
+        overlap_manifest = json.loads(
+            (overlap / "workspace.json").read_text(encoding="utf-8")
+        )
+        overlap_manifest["repositories"] = [
+            {"name": "self", "path": "repos/self", "role": "primary"}
+        ]
+        (overlap / "workspace.json").write_text(
+            json.dumps(overlap_manifest, indent=2) + "\n", encoding="utf-8"
+        )
+        overlap_result = self.run_cli(
+            "doctor", "--workspace", str(overlap), check=False
+        )
+
+        self.assertIn("workspace file is missing", file_result.stderr)
+        self.assertIn("workspace file is missing", readme_result.stderr)
+        self.assertIn("workspace directory is unsafe or missing", directory_result.stderr)
+        self.assertIn("workspace and registered source must be separate", overlap_result.stderr)
+
     def test_generated_make_doctor_validates_state_and_links(self) -> None:
-        repository = self.root / "doctor-repository"
-        (repository / ".git").mkdir(parents=True)
+        repository = self.create_repository("doctor-repository")
         workspace = self.root / "doctor"
         self.run_cli(
             "init", "--repo", str(repository), "--output", str(workspace)
@@ -246,6 +668,49 @@ class ProjectWorkspaceTest(unittest.TestCase):
 
         self.assertIn("Workspace: PASS", result.stdout)
 
+        readme_path = workspace / "README.md"
+        generated_readme = readme_path.read_text(encoding="utf-8")
+        customized_readme = generated_readme + "\n## Local notes\n\nKeep this section.\n"
+        readme_path.write_text(customized_readme, encoding="utf-8")
+        customized = subprocess.run(
+            ["make", "doctor"],
+            capture_output=True,
+            check=True,
+            cwd=workspace,
+            env=self.environment,
+            text=True,
+        )
+        self.assertIn("Workspace: PASS", customized.stdout)
+        readme_path.write_text(
+            customized_readme.replace("`doctor-repository`", "`wrong-name`", 1),
+            encoding="utf-8",
+        )
+        readme_drift = subprocess.run(
+            ["make", "doctor"],
+            capture_output=True,
+            check=False,
+            cwd=workspace,
+            env=self.environment,
+            text=True,
+        )
+        self.assertNotEqual(0, readme_drift.returncode)
+        readme_path.write_text(generated_readme, encoding="utf-8")
+
+        orphan = workspace / "repos" / "orphan"
+        orphan.symlink_to(
+            os.path.relpath(repository, orphan.parent), target_is_directory=True
+        )
+        orphaned = subprocess.run(
+            ["make", "doctor"],
+            capture_output=True,
+            check=False,
+            cwd=workspace,
+            env=self.environment,
+            text=True,
+        )
+        self.assertNotEqual(0, orphaned.returncode)
+        orphan.unlink()
+
         (workspace / "repos" / "doctor-repository").unlink()
         failed = subprocess.run(
             ["make", "doctor"],
@@ -256,6 +721,23 @@ class ProjectWorkspaceTest(unittest.TestCase):
             text=True,
         )
         self.assertNotEqual(0, failed.returncode)
+
+        link = workspace / "repos" / "doctor-repository"
+        target = os.path.relpath(repository, link.parent)
+        link.symlink_to(target, target_is_directory=True)
+        manifest_path = workspace / "workspace.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["repositories"][0]["path"] = "repos/../outside"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        traversal = subprocess.run(
+            ["make", "doctor"],
+            capture_output=True,
+            check=False,
+            cwd=workspace,
+            env=self.environment,
+            text=True,
+        )
+        self.assertNotEqual(0, traversal.returncode)
 
 
 if __name__ == "__main__":

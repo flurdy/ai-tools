@@ -14,20 +14,33 @@ Implementation remains in the repositories linked below.
 
 ## Repositories
 
+<!-- project-workspace:repositories:start -->
 {{REPOSITORIES}}
+<!-- project-workspace:repositories:end -->
 
-For a greenfield workspace, link the first repository under `repos/` and add its
-relative path to `workspace.json` when it exists. Repository-specific instructions and documentation remain authoritative inside each
-repository. Infrastructure repositories or configuration may be linked under
-[`infrastructure/`](infrastructure/) and indexed in `workspace.json`.
+Register existing repositories with `project-workspace add-repo`. Repository-specific
+instructions and documentation remain authoritative inside each repository.
+
+## Infrastructure
+
+<!-- project-workspace:infrastructure:start -->
+{{INFRASTRUCTURE}}
+<!-- project-workspace:infrastructure:end -->
+
+Register infrastructure repositories or configuration with
+`project-workspace add-infrastructure`.
 
 ## Commands
 
 ```bash
+project-workspace add-repo /path/to/repository
+project-workspace add-infrastructure /path/to/infrastructure
 make help
 make status
 make doctor
 ```
 
-Use `bd` from this root for durable cross-project work. Configure multi-repository Git
+Both registration commands support `--dry-run`. Keep custom README content outside the
+`project-workspace` marker pairs surrounding the generated lists. Use `bd` from this root
+for durable cross-project work. Configure multi-repository Git
 operations separately with `/setup-multirepo-git` when needed.
