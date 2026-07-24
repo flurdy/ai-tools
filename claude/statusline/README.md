@@ -24,6 +24,7 @@ Then configure Claude Code to use it as the statusline command. Merge the permis
 - Requires `bash` and `jq`.
 - Uses Git when the current workspace is a repo.
 - Uses `gh` opportunistically to cache PR state. Disable with `CLAUDE_STATUSLINE_PR=0`.
+- Uses `bd`, `jq`, and GNU `timeout`/`gtimeout` opportunistically to cache Beads work counts.
 - Reads `~/.claude/settings.json` for effort display when available.
 
 Useful environment variables:
@@ -32,4 +33,13 @@ Useful environment variables:
 - `CLAUDE_STATUSLINE_MIN_ROWS=50`
 - `CLAUDE_STATUSLINE_PR=0`
 - `CLAUDE_STATUSLINE_PR_TTL=120`
+- `CLAUDE_STATUSLINE_BEADS=0`
+- `CLAUDE_STATUSLINE_BEADS_TTL=30`
+- `CLAUDE_STATUSLINE_BEADS_TIMEOUT=2`
+
+## Beads work
+
+Table mode discovers the nearest parent `.beads` workspace and shows non-zero open `P0`–`P4` buckets, the in-progress count, and the blocked count when non-zero. The lookup is detached, cached, and timeout-bounded, so the first result may appear on the next statusline refresh.
+
+The cell is hidden in compact mode, outside Beads workspaces, when a required command is unavailable, or when `bd` returns an error or invalid data.
 

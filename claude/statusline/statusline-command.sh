@@ -124,6 +124,99 @@ cache_pr() {
   fi
 }
 
+# --- Non-blocking Beads lookup (cached) ---
+# Prints the last-known counts as "blocked|display" and refreshes stale data in
+# a detached process. Outside a Beads workspace, or when bd/jq/timeout is
+# unavailable, it prints nothing and the table omits the cell.
+find_beads_root() {
+  local directory
+  directory=$(cd "$cwd" 2>/dev/null && pwd -P) || return
+  while true; do
+    [ -d "$directory/.beads" ] && { printf '%s' "$directory"; return; }
+    [ "$directory" = "/" ] && return
+    directory=${directory%/*}
+    [ -z "$directory" ] && directory="/"
+  done
+}
+
+cache_beads() {
+  [ "${CLAUDE_STATUSLINE_BEADS:-1}" = "0" ] && return
+  command -v bd >/dev/null 2>&1 || return
+  command -v jq >/dev/null 2>&1 || return
+
+  local timeout_cmd
+  timeout_cmd=$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null) || return
+
+  local root
+  root=$(find_beads_root)
+  [ -z "$root" ] && return
+
+  local ttl="${CLAUDE_STATUSLINE_BEADS_TTL:-30}"
+  local timeout_seconds="${CLAUDE_STATUSLINE_BEADS_TIMEOUT:-2}"
+  case "$ttl" in ''|*[!0-9]*) ttl=30 ;; esac
+  case "$timeout_seconds" in ''|*[!0-9]*) timeout_seconds=2 ;; esac
+  [ "$ttl" -lt 5 ] && ttl=5
+  [ "$timeout_seconds" -lt 1 ] && timeout_seconds=1
+
+  local key cache lock now age lock_age
+  key=$(printf '%s' "$root" | cksum | tr -cd '0-9' | cut -c1-12)
+  cache="/tmp/statusline-beads-$key"
+  lock="$cache.lock"
+  now=$(date +%s)
+
+  [ -f "$cache" ] && cat "$cache"
+
+  age=$ttl
+  [ -f "$cache" ] && age=$(( now - $(stat -c %Y "$cache" 2>/dev/null || stat -f %m "$cache" 2>/dev/null || echo 0) ))
+  if [ "$age" -ge "$ttl" ]; then
+    lock_age=10
+    [ -f "$lock" ] && lock_age=$(( now - $(stat -c %Y "$lock" 2>/dev/null || stat -f %m "$lock" 2>/dev/null || echo 0) ))
+    if [ "$lock_age" -ge 10 ]; then
+      ( umask 077
+        : > "$lock"
+        local issues blocked payload tmp="$cache.tmp.$$"
+        if issues=$(cd "$root" && "$timeout_cmd" "$timeout_seconds" bd list --json --limit 0 --readonly 2>/dev/null) &&
+           blocked=$(cd "$root" && "$timeout_cmd" "$timeout_seconds" bd blocked --json --readonly 2>/dev/null) &&
+           payload=$(jq -nr --argjson issues "$issues" --argjson blocked "$blocked" '
+             def valid:
+               ($issues | type == "array") and
+               ($blocked | type == "array") and
+               all($issues[];
+                 (type == "object") and
+                 (.status | type == "string") and
+                 (if .status == "open" then
+                    (.priority | type == "number") and
+                    (.priority == (.priority | floor)) and
+                    (.priority >= 0 and .priority <= 4)
+                  else true end));
+             if valid then
+               [$issues[] | select(.status == "open") | .priority] as $priorities |
+               ([$issues[] | select(.status == "in_progress")] | length) as $active |
+               ($blocked | length) as $blocked_count |
+               ([range(0; 5) as $priority |
+                 ($priorities | map(select(. == $priority)) | length) as $count |
+                 select($count > 0) |
+                 "P\($priority):\($count)"]) as $priority_parts |
+               "\($blocked_count)|" +
+               (["◉"] +
+                (if ($priority_parts | length) > 0 then $priority_parts else ["0"] end) +
+                ["◐\($active)"] +
+                (if $blocked_count > 0 then ["⛔\($blocked_count)"] else [] end) |
+                join(" "))
+             else error("invalid bd response") end
+           ' 2>/dev/null); then
+          printf '%s\n' "$payload" > "$tmp"
+        else
+          : > "$tmp"
+        fi
+        mv -f "$tmp" "$cache" 2>/dev/null
+        rm -f "$lock"
+      ) </dev/null >/dev/null 2>&1 &
+      disown 2>/dev/null
+    fi
+  fi
+}
+
 # --- Colors ---
 RST='\033[0m'
 BOLD='\033[1m'
@@ -359,6 +452,17 @@ if [ -n "$branch" ]; then
   fi
 fi
 
+# Beads work for the nearest parent workspace (cached, non-blocking).
+segment_beads=""
+IFS='|' read -r beads_blocked beads_text <<< "$(cache_beads)"
+if [[ "$beads_blocked" =~ ^[0-9]+$ ]] && [ -n "$beads_text" ]; then
+  if [ "$beads_blocked" -gt 0 ]; then
+    segment_beads="${C_BAR_WARN}${beads_text}${RST}"
+  else
+    segment_beads="${C_MODEL}${beads_text}${RST}"
+  fi
+fi
+
 # Effort level (read from settings.json)
 segment_effort=""
 effort_val=$(jq -r '.effortLevel // empty' ~/.claude/settings.json 2>/dev/null)
@@ -587,6 +691,7 @@ render_table() {
     probe+=("$segment_path" "$segment_repo")
     [ -n "$segment_git" ] && probe+=("$segment_git")
     [ -n "$segment_pr" ] && probe+=("$segment_pr")
+    [ -n "$segment_beads" ] && probe+=("$segment_beads")
     local psum=2 s
     for s in "${probe[@]}"; do psum=$(( psum + $(visible_len "$s") + 2*PAD + 1 )); done
     [ "$psum" -le "$budget" ] && r1_segs+=("$segment_path")
@@ -596,6 +701,7 @@ render_table() {
   fi
   [ -n "$segment_git" ] && r1_segs+=("$segment_git")
   [ -n "$segment_pr" ] && r1_segs+=("$segment_pr")
+  [ -n "$segment_beads" ] && r1_segs+=("$segment_beads")
 
   # Row 2: Claude session info
   local r2_segs=("$segment_agent" "$segment_model")
