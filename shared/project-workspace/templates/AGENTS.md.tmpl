@@ -12,4 +12,7 @@
 - Use the workspace Beads database for durable cross-project work.
 - Do not duplicate service or infrastructure policy into this root; link to it.
 - Do not modify linked repositories unless the active task explicitly owns those changes.
-- Use `/setup-multirepo-git` for multi-repository Git configuration and safety rules.
+- Opt in with `project-workspace configure-mgit` only after registering repositories;
+  `init` does not create mgit configuration.
+- Once configured, follow `/setup-multirepo-git` and use `./scripts/mgit` for linked
+  repository Git operations. Agent permission policy remains a user-managed choice.

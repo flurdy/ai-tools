@@ -128,8 +128,37 @@ make doctor
 `make doctor` uses the installed `project-workspace` command as the authoritative
 manifest, link, Git-repository, orphan-path, and generated-README validator.
 
-Configure multi-repository Git behavior separately with `/setup-multirepo-git`; the
-scaffold does not create `.mgit.conf` or duplicate that workflow.
+## Configure multi-repository Git (optional)
+
+`init` never creates `.mgit.conf`, `scripts/mgit`, or an agent permission policy. After
+registering one or more repositories, explicitly opt in to the installed
+`setup-multirepo-git` contract:
+
+```bash
+project-workspace configure-mgit --workspace ~/Code/example-workspace --dry-run
+project-workspace configure-mgit --workspace ~/Code/example-workspace
+```
+
+The command derives `repos/` service paths only from validated `workspace.json` entries,
+previews the generated configuration, and creates `.mgit.conf` plus a relative
+`scripts/mgit` symlink to the documented installed skill. It refuses an existing
+configuration or wrapper that differs from the derived topology, and never vendors a
+copy of the wrapper or modifies agent permissions. It then verifies:
+
+```bash
+./scripts/mgit status root
+./scripts/mgit status repos/example-api
+```
+
+Skill discovery follows the existing contract: `SKILLS_DIR` when set, otherwise
+`$CODEX_HOME/skills` (defaulting to `~/.codex/skills`); when that directory does not
+exist, it falls back to `$CLAUDE_HOME/skills` (defaulting to `~/.claude/skills`). An
+installed skill must provide `SKILL.md`, `scripts/mgit`, and the permission and AGENTS
+templates.
+
+`make doctor` reports `Mgit: UNCONFIGURED` when neither file is present, or validates a
+configured wrapper and prints `Mgit: PASS`. A partial, conflicting, or unavailable-skill
+configuration fails doctor rather than being silently accepted.
 
 ## Safety and reruns
 
@@ -151,6 +180,9 @@ scaffold does not create `.mgit.conf` or duplicate that workflow.
 - Registration writes controlled relative links and uses atomic replacement for the
   manifest. Exact reruns are safe, and reruns complete an interrupted link or README
   update that had not yet reached the manifest replacement.
+- `configure-mgit` requires a documented installed `setup-multirepo-git` skill and
+  validates the workspace, its indexed repository links, `.mgit.conf`, and `scripts/mgit`
+  before writing. `--dry-run` performs the same preflight without writes.
 - Normal initialisation requires Git 2.28 or newer and `bd`. It validates or creates the
   workspace Git repository and always runs idempotent, non-interactive Beads
   initialisation so an interrupted setup can recover safely.

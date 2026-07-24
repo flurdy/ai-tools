@@ -24,6 +24,7 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.command_log = self.root / "commands.log"
+        self.skill_root = self.root / "skills"
         self.write_command(
             "git",
             'echo "git $*" >> "$COMMAND_LOG"\n'
@@ -52,6 +53,37 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.environment["PATH"] = (
             f"{self.bin}:{PROJECT}:{self.environment.get('PATH', '')}"
         )
+        self.environment["SKILLS_DIR"] = str(self.skill_root)
+        self.environment["CLAUDE_HOME"] = str(self.root / "missing-claude-home")
+
+    def create_mgit_skill(self, skill_root: Path | None = None) -> Path:
+        skill = (skill_root or self.skill_root) / "setup-multirepo-git"
+        script = skill / "scripts" / "mgit"
+        templates = skill / "templates"
+        script.parent.mkdir(parents=True)
+        templates.mkdir()
+        (skill / "SKILL.md").write_text("# mgit skill\n", encoding="utf-8")
+        (templates / "permissions.json").write_text("{}\n", encoding="utf-8")
+        (templates / "AGENTS-MGIT.md").write_text("# mgit\n", encoding="utf-8")
+        script.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            "subcommand=$1\n"
+            "service=$2\n"
+            "shift 2\n"
+            "if [[ ${MGIT_FAIL:-} == 1 ]]; then\n"
+            "  exit 1\n"
+            "fi\n"
+            "if [[ $service == root || $service == . ]]; then\n"
+            "  path=$PWD\n"
+            "else\n"
+            "  path=$PWD/$service\n"
+            "fi\n"
+            "exec git -C \"$path\" \"$subcommand\" \"$@\"\n",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+        return script
 
     def write_command(self, name: str, body: str) -> None:
         command = self.bin / name
@@ -91,6 +123,8 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.assertTrue((workspace / ".beads").is_dir())
         self.assertTrue((workspace / "docs" / "adrs" / ".gitkeep").is_file())
         self.assertTrue((workspace / "infrastructure" / ".gitkeep").is_file())
+        self.assertFalse((workspace / ".mgit.conf").exists())
+        self.assertFalse((workspace / "scripts" / "mgit").exists())
         manifest = json.loads((workspace / "workspace.json").read_text(encoding="utf-8"))
         self.assertEqual("Example Project", manifest["name"])
         self.assertEqual([], manifest["repositories"])
@@ -609,6 +643,175 @@ class ProjectWorkspaceTest(unittest.TestCase):
         )
         self.assertEqual(readme_before, (workspace / "README.md").read_text(encoding="utf-8"))
         self.assertFalse((workspace / "repos" / "service").exists())
+
+    def test_configure_mgit_requires_an_installed_skill_without_writes(self) -> None:
+        workspace = self.create_workspace()
+        repository = self.create_repository("service")
+        self.run_cli("add-repo", str(repository), "--workspace", str(workspace))
+
+        result = self.run_cli(
+            "configure-mgit", "--workspace", str(workspace), "--dry-run", check=False
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("setup-multirepo-git skill is not installed", result.stderr)
+        self.assertFalse((workspace / ".mgit.conf").exists())
+        self.assertFalse((workspace / "scripts").exists())
+
+    def test_configure_mgit_falls_back_to_claude_skill_directory(self) -> None:
+        workspace = self.create_workspace()
+        repository = self.create_repository("service")
+        self.run_cli("add-repo", str(repository), "--workspace", str(workspace))
+        claude_home = self.root / "claude-home"
+        source = self.create_mgit_skill(claude_home / "skills")
+        self.environment["SKILLS_DIR"] = str(self.root / "missing-skills")
+        self.environment["CLAUDE_HOME"] = str(claude_home)
+
+        result = self.run_cli(
+            "configure-mgit", "--workspace", str(workspace), "--dry-run"
+        )
+
+        self.assertIn(f"CREATE link scripts/mgit -> {source}", result.stdout)
+
+    def test_configure_mgit_treats_empty_skills_dir_as_unset(self) -> None:
+        workspace = self.create_workspace()
+        repository = self.create_repository("service")
+        self.run_cli("add-repo", str(repository), "--workspace", str(workspace))
+        codex_home = self.root / "codex-home"
+        source = self.create_mgit_skill(codex_home / "skills")
+        self.environment["SKILLS_DIR"] = ""
+        self.environment["CODEX_HOME"] = str(codex_home)
+
+        result = self.run_cli(
+            "configure-mgit", "--workspace", str(workspace), "--dry-run"
+        )
+
+        self.assertIn(f"CREATE link scripts/mgit -> {source}", result.stdout)
+
+    def test_configure_mgit_dry_run_previews_without_writing(self) -> None:
+        workspace = self.create_workspace()
+        repository = self.create_repository("service")
+        self.run_cli("add-repo", str(repository), "--workspace", str(workspace))
+        source = self.create_mgit_skill()
+
+        result = self.run_cli(
+            "configure-mgit", "--workspace", str(workspace), "--dry-run"
+        )
+
+        self.assertIn("Services: repos/service", result.stdout)
+        self.assertIn("CREATE file .mgit.conf", result.stdout)
+        self.assertIn(f"CREATE link scripts/mgit -> {source}", result.stdout)
+        self.assertIn(".mgit.conf:\n# Multi-repo workspace configuration", result.stdout)
+        self.assertIn("services=repos/service", result.stdout)
+        self.assertIn("VERIFY ./scripts/mgit status root", result.stdout)
+        self.assertFalse((workspace / ".mgit.conf").exists())
+        self.assertFalse((workspace / "scripts").exists())
+
+    def test_configure_mgit_creates_and_verifies_installed_wrapper(self) -> None:
+        workspace = self.create_workspace()
+        primary = self.create_repository("primary")
+        service = self.create_repository("service")
+        self.run_cli("add-repo", str(primary), "--workspace", str(workspace))
+        self.run_cli("add-repo", str(service), "--workspace", str(workspace))
+        source = self.create_mgit_skill()
+
+        result = self.run_cli("configure-mgit", "--workspace", str(workspace))
+        rerun = self.run_cli("configure-mgit", "--workspace", str(workspace))
+        config = (workspace / ".mgit.conf").read_text(encoding="utf-8")
+        script = workspace / "scripts" / "mgit"
+        doctor = self.run_cli("doctor", "--workspace", str(workspace))
+
+        self.assertIn("Configured mgit", result.stdout)
+        self.assertIn("Configured mgit", rerun.stdout)
+        self.assertEqual(
+            "# Multi-repo workspace configuration\n"
+            "# Presence of this file marks the project root for mgit\n"
+            "services=repos/primary,repos/service\n",
+            config,
+        )
+        self.assertTrue(script.is_symlink())
+        self.assertFalse(os.readlink(script).startswith("/"))
+        self.assertEqual(source, script.resolve())
+        commands = self.command_log.read_text(encoding="utf-8")
+        self.assertIn(f"git -C {workspace} status", commands)
+        self.assertIn(f"git -C {workspace / 'repos' / 'primary'} status", commands)
+        self.assertIn("Mgit: PASS", doctor.stdout)
+
+    def test_configure_mgit_rolls_back_when_verification_fails(self) -> None:
+        workspace = self.create_workspace()
+        repository = self.create_repository("service")
+        self.run_cli("add-repo", str(repository), "--workspace", str(workspace))
+        self.create_mgit_skill()
+        self.environment["MGIT_FAIL"] = "1"
+
+        result = self.run_cli(
+            "configure-mgit", "--workspace", str(workspace), check=False
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertFalse((workspace / ".mgit.conf").exists())
+        self.assertFalse((workspace / "scripts" / "mgit").exists())
+        self.assertFalse((workspace / "scripts").exists())
+
+    def test_configure_mgit_rejects_conflicts_and_manifest_traversal(self) -> None:
+        workspace = self.create_workspace()
+        repository = self.create_repository("service")
+        self.run_cli("add-repo", str(repository), "--workspace", str(workspace))
+        self.create_mgit_skill()
+        config = workspace / ".mgit.conf"
+        config.write_text("services=unrelated\n", encoding="utf-8")
+
+        conflict = self.run_cli(
+            "configure-mgit", "--workspace", str(workspace), check=False
+        )
+        self.assertIn("existing mgit configuration conflicts", conflict.stderr)
+        self.assertFalse((workspace / "scripts").exists())
+
+        config.unlink()
+        script = workspace / "scripts" / "mgit"
+        script.parent.mkdir()
+        script.write_text("untrusted wrapper\n", encoding="utf-8")
+        script_conflict = self.run_cli(
+            "configure-mgit", "--workspace", str(workspace), check=False
+        )
+        self.assertIn("workspace mgit script is unsafe", script_conflict.stderr)
+        script.unlink()
+        script.parent.rmdir()
+        manifest_path = workspace / "workspace.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["repositories"][0]["path"] = "repos/../escape"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        traversal = self.run_cli(
+            "configure-mgit", "--workspace", str(workspace), check=False
+        )
+
+        self.assertIn("unsafe registered path", traversal.stderr)
+        self.assertFalse((workspace / ".mgit.conf").exists())
+        self.assertFalse((workspace / "scripts").exists())
+
+    def test_configure_mgit_rejects_broken_repository_links_without_writes(self) -> None:
+        workspace = self.create_workspace()
+        repository = self.create_repository("service")
+        self.run_cli("add-repo", str(repository), "--workspace", str(workspace))
+        self.create_mgit_skill()
+        (workspace / "repos" / "service").unlink()
+
+        result = self.run_cli(
+            "configure-mgit", "--workspace", str(workspace), check=False
+        )
+
+        self.assertIn("registered path is not a safe relative symlink", result.stderr)
+        self.assertFalse((workspace / ".mgit.conf").exists())
+        self.assertFalse((workspace / "scripts").exists())
+
+    def test_doctor_distinguishes_unconfigured_and_partial_mgit(self) -> None:
+        workspace = self.create_workspace()
+        unconfigured = self.run_cli("doctor", "--workspace", str(workspace))
+        (workspace / ".mgit.conf").write_text("services=\n", encoding="utf-8")
+        partial = self.run_cli("doctor", "--workspace", str(workspace), check=False)
+
+        self.assertIn("Mgit: UNCONFIGURED", unconfigured.stdout)
+        self.assertIn("mgit configuration is incomplete", partial.stderr)
 
     def test_doctor_rejects_missing_workspace_files_and_directories(self) -> None:
         missing_file = self.create_workspace("missing-file")

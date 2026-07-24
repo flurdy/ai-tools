@@ -16,6 +16,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 TEMPLATES = ROOT / "templates"
+MGIT_CONFIG = ".mgit.conf"
+MGIT_SCRIPT = Path("scripts") / "mgit"
+MGIT_SKILL_NAME = "setup-multirepo-git"
+
 MANAGED_DIRECTORIES = (
     "docs/prds",
     "docs/adrs",
@@ -72,6 +76,30 @@ class RegistrationPlan:
     link_exists: bool
     unchanged: bool
 
+
+@dataclass(frozen=True)
+class MgitPlan:
+    root: Path
+    services: tuple[str, ...]
+    source: Path
+    current_config: str | None
+    current_script_target: str | None
+
+    @property
+    def config_path(self) -> Path:
+        return self.root / MGIT_CONFIG
+
+    @property
+    def script_path(self) -> Path:
+        return self.root / MGIT_SCRIPT
+
+    @property
+    def config_text(self) -> str:
+        return mgit_config_text(self.services)
+
+    @property
+    def script_target(self) -> str:
+        return os.path.relpath(self.source, self.script_path.parent)
 
 def slugify(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
@@ -582,6 +610,183 @@ def load_workspace_manifest(root: Path) -> tuple[dict[str, object], str]:
     return manifest_data, current_readme
 
 
+def mgit_config_text(services: tuple[str, ...]) -> str:
+    return (
+        "# Multi-repo workspace configuration\n"
+        "# Presence of this file marks the project root for mgit\n"
+        f"services={','.join(services)}\n"
+    )
+
+
+def installed_mgit_source() -> Path:
+    configured_root = os.environ.get("SKILLS_DIR") or None
+    if configured_root is None:
+        codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+        configured_root = str(codex_home.expanduser() / "skills")
+    root = Path(configured_root).expanduser()
+    if not root.is_dir():
+        claude_home = Path(os.environ.get("CLAUDE_HOME") or Path.home() / ".claude")
+        root = claude_home.expanduser() / "skills"
+
+    skill = root / MGIT_SKILL_NAME
+    source = skill / "scripts" / "mgit"
+    resources = (
+        skill / "SKILL.md",
+        skill / "templates" / "permissions.json",
+        skill / "templates" / "AGENTS-MGIT.md",
+    )
+    if (
+        source.is_file()
+        and os.access(source, os.X_OK)
+        and all(resource.is_file() for resource in resources)
+    ):
+        return source.resolve()
+    raise WorkspaceError(
+        "setup-multirepo-git skill is not installed; install it before configuring mgit"
+    )
+
+
+def mgit_services(manifest: dict[str, object]) -> tuple[str, ...]:
+    repositories = manifest["repositories"]
+    assert isinstance(repositories, list)
+    services = tuple(str(entry["path"]) for entry in repositories)
+    if not services:
+        raise WorkspaceError("workspace has no registered repositories for mgit")
+    return services
+
+
+def current_mgit_script_target(root: Path) -> str | None:
+    script = root / MGIT_SCRIPT
+    if script.parent.is_symlink() or (script.parent.exists() and not script.parent.is_dir()):
+        raise WorkspaceError(f"workspace scripts directory is unsafe: {script.parent}")
+    if not os.path.lexists(script):
+        return None
+    if not script.is_symlink() or os.path.isabs(os.readlink(script)):
+        raise WorkspaceError(f"workspace mgit script is unsafe: {script}")
+    return os.readlink(script)
+
+
+def mgit_plan(root: Path) -> MgitPlan:
+    manifest, _readme = load_workspace_manifest(root)
+    config_path = root / MGIT_CONFIG
+    current_config = existing_text(config_path)
+    source = installed_mgit_source()
+    script_target = current_mgit_script_target(root)
+    plan = MgitPlan(
+        root=root,
+        services=mgit_services(manifest),
+        source=source,
+        current_config=current_config,
+        current_script_target=script_target,
+    )
+    if current_config is not None and current_config != plan.config_text:
+        raise WorkspaceError(f"existing mgit configuration conflicts: {config_path}")
+    if script_target is not None and (
+        script_target != plan.script_target or plan.script_path.resolve() != source
+    ):
+        raise WorkspaceError(f"existing mgit script conflicts: {plan.script_path}")
+    return plan
+
+
+def print_mgit_plan(plan: MgitPlan) -> None:
+    print(f"Workspace: {plan.root}")
+    print("Services: " + ", ".join(plan.services))
+    print(
+        f"{'UNCHANGED' if plan.current_config == plan.config_text else 'CREATE'} "
+        f"file {MGIT_CONFIG}"
+    )
+    print(
+        f"{'UNCHANGED' if plan.current_script_target == plan.script_target else 'CREATE'} "
+        f"link {MGIT_SCRIPT} -> {plan.source}"
+    )
+    print(f"{MGIT_CONFIG}:")
+    print(plan.config_text, end="")
+    print("VERIFY ./scripts/mgit status root")
+    print(f"VERIFY ./scripts/mgit status {plan.services[0]}")
+
+
+def verify_mgit(plan: MgitPlan) -> None:
+    for service in ("root", plan.services[0]):
+        subprocess.run(
+            ["./scripts/mgit", "status", service],
+            cwd=plan.root,
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+
+
+def apply_mgit(plan: MgitPlan, dry_run: bool) -> None:
+    if dry_run:
+        print_mgit_plan(plan)
+        return
+    if (
+        existing_text(plan.config_path) != plan.current_config
+        or current_mgit_script_target(plan.root) != plan.current_script_target
+    ):
+        raise WorkspaceError("workspace changed after mgit preflight")
+
+    script_parent_created = False
+    script_created = False
+    config_changed = False
+    try:
+        if not plan.script_path.parent.exists():
+            plan.script_path.parent.mkdir()
+            script_parent_created = True
+        if plan.current_script_target is None:
+            plan.script_path.symlink_to(plan.script_target)
+            script_created = True
+        if plan.current_config != plan.config_text:
+            atomic_write_text(plan.config_path, plan.config_text)
+            config_changed = True
+        verify_mgit(plan)
+    except BaseException:
+        if config_changed:
+            if plan.current_config is None:
+                plan.config_path.unlink(missing_ok=True)
+            elif existing_text(plan.config_path) != plan.current_config:
+                atomic_write_text(plan.config_path, plan.current_config)
+        if script_created:
+            plan.script_path.unlink(missing_ok=True)
+        if script_parent_created:
+            plan.script_path.parent.rmdir()
+        raise
+    print("Configured mgit")
+
+
+def configure_mgit(arguments: argparse.Namespace) -> None:
+    root = Path(os.path.abspath(arguments.workspace.expanduser()))
+    apply_mgit(mgit_plan(root), arguments.dry_run)
+
+
+def mgit_doctor(root: Path, manifest: dict[str, object]) -> None:
+    config_path = root / MGIT_CONFIG
+    script_path = root / MGIT_SCRIPT
+    if not os.path.lexists(config_path) and not os.path.lexists(script_path):
+        print("Mgit: UNCONFIGURED")
+        return
+    if not os.path.lexists(config_path) or not os.path.lexists(script_path):
+        raise WorkspaceError("mgit configuration is incomplete")
+
+    source = installed_mgit_source()
+    plan = MgitPlan(
+        root=root,
+        services=mgit_services(manifest),
+        source=source,
+        current_config=existing_text(config_path),
+        current_script_target=current_mgit_script_target(root),
+    )
+    if plan.current_config != plan.config_text:
+        raise WorkspaceError(f"existing mgit configuration conflicts: {config_path}")
+    if (
+        plan.current_script_target != plan.script_target
+        or script_path.resolve() != source
+    ):
+        raise WorkspaceError(f"existing mgit script conflicts: {script_path}")
+    verify_mgit(plan)
+    print("Mgit: PASS")
+
+
 def registration_plan(registration: Registration) -> RegistrationPlan:
     manifest_data, current_manifest_text = load_workspace_data(
         registration.root, registration.link
@@ -684,8 +889,9 @@ def atomic_write_text(path: Path, content: str) -> None:
         dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
     )
     temporary = Path(temporary_name)
+    mode = path.stat().st_mode if path.exists() else 0o644
     try:
-        os.fchmod(descriptor, path.stat().st_mode)
+        os.fchmod(descriptor, mode)
         stream = os.fdopen(descriptor, "w", encoding="utf-8")
         descriptor = -1
         with stream:
@@ -761,8 +967,9 @@ def register_source(arguments: argparse.Namespace) -> None:
 
 def doctor_workspace(root: Path) -> None:
     workspace_root = Path(os.path.abspath(root.expanduser()))
-    load_workspace_manifest(workspace_root)
+    manifest, _readme = load_workspace_manifest(workspace_root)
     print("Workspace: PASS")
+    mgit_doctor(workspace_root, manifest)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -790,6 +997,16 @@ def parser() -> argparse.ArgumentParser:
             "--dry-run", action="store_true", help="preview without writing"
         )
 
+    configure = subcommands.add_parser(
+        "configure-mgit", help="opt in to installed setup-multirepo-git support"
+    )
+    configure.add_argument(
+        "--workspace", type=Path, default=Path.cwd(), help="workspace root"
+    )
+    configure.add_argument(
+        "--dry-run", action="store_true", help="preview without writing"
+    )
+
     doctor = subcommands.add_parser("doctor", help="validate a project workspace")
     doctor.add_argument(
         "--workspace", type=Path, default=Path.cwd(), help="workspace root"
@@ -805,6 +1022,8 @@ def main() -> int:
             create_workspace(workspace, arguments.dry_run)
         elif arguments.command == "doctor":
             doctor_workspace(arguments.workspace)
+        elif arguments.command == "configure-mgit":
+            configure_mgit(arguments)
         else:
             register_source(arguments)
     except (WorkspaceError, OSError, UnicodeError, subprocess.CalledProcessError) as error:

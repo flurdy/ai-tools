@@ -42,5 +42,18 @@ make doctor
 
 Both registration commands support `--dry-run`. Keep custom README content outside the
 `project-workspace` marker pairs surrounding the generated lists. Use `bd` from this root
-for durable cross-project work. Configure multi-repository Git
-operations separately with `/setup-multirepo-git` when needed.
+for durable cross-project work.
+
+## Multi-repository Git (optional)
+
+After registering repositories, opt in to the installed `/setup-multirepo-git` wrapper:
+
+```bash
+project-workspace configure-mgit --dry-run
+project-workspace configure-mgit
+```
+
+The command derives the indexed `repos/` service paths, creates `.mgit.conf` and a
+relative `scripts/mgit` link to the installed skill, then verifies the root and first
+service. It does not edit agent permissions or policy. Use `make doctor` to distinguish
+an unconfigured workspace from a validated mgit setup.
