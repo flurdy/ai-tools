@@ -145,6 +145,7 @@ class ProjectWorkspaceTest(unittest.TestCase):
         generated_readme = (workspace / "README.md").read_text(encoding="utf-8")
         self.assertIn("modern Unix-like systems with Python 3.10+", generated_readme)
         self.assertIn("copying the executable alone is unsupported", generated_readme)
+        self.assertIn("records local relative topology", generated_readme)
         manifest = json.loads((workspace / "workspace.json").read_text(encoding="utf-8"))
         self.assertEqual("Example Project", manifest["name"])
         self.assertEqual([], manifest["repositories"])

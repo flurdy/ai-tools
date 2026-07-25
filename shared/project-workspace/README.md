@@ -129,6 +129,20 @@ example-workspace/
 ADRs, architecture, runbooks, and durable work belong in the workspace. Service- and
 infrastructure-specific material remains authoritative in its own repository.
 
+## Portability boundary
+
+Manifest v1 records local relative topology, not repository remotes or reconstruction
+metadata. Moving a workspace together with sources at the same relative paths preserves
+its links. Cloning the workspace Git repository alone does not: check out each source and
+infrastructure dependency at the recorded relative target, restore or sync the workspace
+Beads store through a supported Dolt remote or backup, and recreate optional mgit
+configuration when the installed skill path changes.
+
+`project-workspace` deliberately does not clone, discover, relink, or synchronize those
+independently owned dependencies. See the
+[v1 pilot report](../../docs/project-workspace-v1-pilot-report.md) for the exercised
+relocation and recovery evidence.
+
 The generated Makefile provides:
 
 ```bash

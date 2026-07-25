@@ -74,6 +74,15 @@ The pilot probe is `bd list --limit 1 --no-pager --readonly` with a five-second 
 5. Clone or relocate one workspace to another path or machine and record whether a `relink`/repair contract is actually required.
 6. Record recurring friction in installation, topology churn, role semantics, tracker ownership, upgrades, and diagnosis. Do not treat isolated preferences as roadmap evidence.
 
+### Pilot outcome — 2026-07-25
+
+The [v1 pilot report](project-workspace-v1-pilot-report.md) covers greenfield, multi-repository, infrastructure, optional-mgit, topology-change, whole-layout relocation, and workspace-only clone/recovery paths.
+
+- Keep manifest v1 as a local relative-topology contract and add no lifecycle command from one synthetic second-path reconstruction.
+- Keep `primary` display-only and keep tracker replication under Beads rather than `project-workspace`.
+- Fix the repeatedly observed mixed skill-root discovery failure separately in `ai-tools-o48.5`; explicit `SKILLS_DIR` remains authoritative.
+- Reconsider source identity or a dry-run-first repair command only after real second-machine or repeated independent relocation evidence.
+
 ### After evidence: select one lifecycle outcome
 
 - If portability fails repeatedly, add an explicit dry-run-first `relink`/repair command and decide whether optional source identity belongs in manifest v1 or requires a later schema version.
@@ -98,7 +107,7 @@ The pilot probe is `bd list --limit 1 --no-pager --readonly` with a five-second 
 | 1 | Git-work-tree containment | Name-only `init` cannot scaffold or run `git init` beneath an existing Git work tree, while interrupted initialization at a legitimate workspace root remains recoverable. | Real-Git tests for an existing-repository subdirectory, planted matching manifest, and interrupted-init recovery; `make -C shared/project-workspace test` passes. |
 | 2 | Repository/mgit state consistency | `configure-mgit → add-repo → doctor` succeeds as one consistent supported flow, or registration refuses before any write when managed config is unsafe to regenerate. | Cross-feature tests covering success, conflicts, rollback, and exact rerun; root and newly registered service mgit status both pass. |
 | 3 | Contract hardening and diagnostics | Init and doctor enforce the same relative-link rule; doctor reports actionable mgit failure output and a bounded Beads health result; unknown manifest keys survive registration. | Focused happy/sad tests, one real-tool smoke path, and generated documentation stating the supported platform/install contract. |
-| 4 | Pilot and portability decision | Real use produces a written decision on role semantics, tracker ownership, relink/source identity, one lifecycle command, or no new feature. | Pilot notes from representative workspaces and second-path/machine onboarding; any resulting feature proposal cites repeated observed friction. |
+| 4 | Pilot and portability decision | Real use produces a written decision on role semantics, tracker ownership, relink/source identity, one lifecycle command, or no new feature. | [`project-workspace-v1-pilot-report.md`](project-workspace-v1-pilot-report.md) records representative flows, second-path recovery, the no-lifecycle decision, and focused follow-up `ai-tools-o48.5`. |
 
 ## Tracking recommendation
 
@@ -146,7 +155,6 @@ Do not create `relink`, `remove`, `rename`, discovery, or schema-migration beads
 
 ## Open questions
 
-- Is the intended contract single-machine/local-layout, or should a committed workspace be reconstructable elsewhere?
 - Does `primary` have operational meaning, or should role be removed or made explicit?
 
 ## External validation
@@ -191,7 +199,7 @@ Do not create `relink`, `remove`, `rename`, discovery, or schema-migration beads
 
 ### Residual uncertainty
 
-- Portability beyond one machine remains a product decision for the pilot.
+- Real second-machine behavior remains untested; the pilot decision keeps v1 local-layout until that evidence exists.
 
 ## Recommended implementation tier
 

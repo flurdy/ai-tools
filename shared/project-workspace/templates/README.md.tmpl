@@ -52,6 +52,16 @@ Beads (`bd`), Bash, Make, and filesystem symlinks. Install `project-workspace` t
 user-owned executable symlink to its repository checkout so the script retains access to
 its adjacent templates; copying the executable alone is unsupported.
 
+## Portability boundary
+
+`workspace.json` records local relative topology, not repository remotes. Moving this
+workspace together with sources at the same relative paths preserves its links. A clone
+of this workspace repository alone still needs each source and infrastructure dependency
+at the recorded relative target, workspace Beads restored or synced through a supported
+Dolt remote or backup, and optional mgit configuration recreated when its installed skill
+path changes. Workspace tooling does not clone, discover, relink, or synchronize those
+independently owned dependencies.
+
 ## Multi-repository Git (optional)
 
 After registering repositories, opt in to the installed `/setup-multirepo-git` wrapper:
