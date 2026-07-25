@@ -113,6 +113,15 @@ class ProjectWorkspaceTest(unittest.TestCase):
         (repository / ".git" / "project-workspace-initialized").touch()
         return repository
 
+    def use_real_git(self) -> str:
+        real_git = shutil.which("git")
+        assert real_git is not None
+        real_bin = self.root / "real-bin"
+        real_bin.mkdir()
+        (real_bin / "git").symlink_to(real_git)
+        self.environment["PATH"] = f"{real_bin}:{self.bin}:{os.environ['PATH']}"
+        return real_git
+
     def test_initialises_named_greenfield_workspace_and_reruns_safely(self) -> None:
         workspace = self.root / "example-project"
 
@@ -215,6 +224,75 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.assertNotEqual(0, result.returncode)
         self.assertIn("existing Git repository", result.stderr)
         self.assertFalse((workspace / "workspace.json").exists())
+
+    @unittest.skipUnless(
+        shutil.which("git"), "Git is required for containment validation"
+    )
+    def test_real_git_init_rejects_output_nested_in_existing_work_tree(self) -> None:
+        real_git = self.use_real_git()
+        repository = self.root / "repository"
+        repository.mkdir()
+        subprocess.run(
+            [real_git, "init", "-b", "main"],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+        )
+        workspace = repository / "workspace"
+
+        preview = self.run_cli(
+            "init",
+            "Workspace",
+            "--output",
+            str(workspace),
+            "--dry-run",
+            check=False,
+        )
+        result = self.run_cli(
+            "init", "Workspace", "--output", str(workspace), check=False
+        )
+
+        for rejected in (preview, result):
+            self.assertNotEqual(0, rejected.returncode)
+            self.assertIn("existing Git work tree", rejected.stderr)
+        self.assertFalse(workspace.exists())
+        self.assertFalse(self.command_log.exists())
+
+    @unittest.skipUnless(
+        shutil.which("git"), "Git is required for containment validation"
+    )
+    def test_real_git_init_rejects_planted_manifest_in_existing_repository(self) -> None:
+        real_git = self.use_real_git()
+        workspace = self.root / "foreign"
+        workspace.mkdir()
+        subprocess.run(
+            [real_git, "init", "-b", "main"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+        )
+        (workspace / "workspace.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "name": "Foreign",
+                    "repositories": [],
+                    "infrastructure": [],
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_cli(
+            "init", "Foreign", "--output", str(workspace), check=False
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("existing Git repository", result.stderr)
+        self.assertFalse((workspace / "README.md").exists())
+        self.assertFalse(self.command_log.exists())
 
     def test_rejects_symlinked_workspace_root_and_managed_directory(self) -> None:
         outside = self.root / "outside"

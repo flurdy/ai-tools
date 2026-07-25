@@ -325,16 +325,47 @@ def managed_directory_paths(root: Path) -> list[Path]:
     return sorted(paths, key=lambda path: (len(path.parts), str(path)))
 
 
-def git_is_valid(root: Path) -> bool:
-    result = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
-        capture_output=True,
-        check=False,
-        text=True,
-    )
+def git_worktree_root(path: Path) -> Path | None:
+    candidate = path
+    while not candidate.exists():
+        if candidate == candidate.parent:
+            return None
+        candidate = candidate.parent
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(candidate), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+    except FileNotFoundError:
+        return None
     if result.returncode != 0 or not result.stdout.strip():
-        return False
-    return Path(result.stdout.strip()).resolve() == root.resolve()
+        return None
+    return Path(result.stdout.strip()).resolve()
+
+
+def git_metadata_root(path: Path) -> Path | None:
+    candidate = path
+    while not candidate.exists():
+        if candidate == candidate.parent:
+            return None
+        candidate = candidate.parent
+    while True:
+        if os.path.lexists(candidate / ".git"):
+            return candidate.resolve()
+        if candidate == candidate.parent:
+            return None
+        candidate = candidate.parent
+
+
+def git_is_valid(root: Path) -> bool:
+    worktree_root = git_worktree_root(root)
+    return worktree_root is not None and worktree_root == root.resolve()
+
+
+def workspace_matches_managed_files(files: dict[Path, str]) -> bool:
+    return all(existing_text(path) == expected for path, expected in files.items())
 
 
 def preflight(workspace: Workspace, files: dict[Path, str], dry_run: bool) -> bool:
@@ -352,8 +383,24 @@ def preflight(workspace: Workspace, files: dict[Path, str], dry_run: bool) -> bo
     git_path = workspace.root / ".git"
     if git_path.is_symlink():
         raise WorkspaceError(f"workspace Git metadata must not be a symlink: {git_path}")
-    if os.path.lexists(git_path) and not (workspace.root / "workspace.json").is_file():
-        raise WorkspaceError(f"refusing to scaffold inside an existing Git repository: {workspace.root}")
+    recovery_ready = workspace_matches_managed_files(files)
+    worktree_root = (
+        git_metadata_root(workspace.root)
+        if dry_run
+        else git_worktree_root(workspace.root)
+    )
+    if worktree_root is not None and worktree_root != workspace.root.resolve():
+        raise WorkspaceError(
+            f"refusing to scaffold inside an existing Git work tree: {workspace.root}"
+        )
+    if os.path.lexists(git_path) and not recovery_ready:
+        raise WorkspaceError(
+            f"refusing to scaffold inside an existing Git repository: {workspace.root}"
+        )
+    if worktree_root == workspace.root.resolve() and not recovery_ready:
+        raise WorkspaceError(
+            f"refusing to scaffold inside an existing Git repository: {workspace.root}"
+        )
 
     beads_path = workspace.root / ".beads"
     if beads_path.is_symlink():
@@ -382,7 +429,9 @@ def preflight(workspace: Workspace, files: dict[Path, str], dry_run: bool) -> bo
         raise WorkspaceError("git is required to initialise or validate the workspace")
     if shutil.which("bd") is None:
         raise WorkspaceError("bd is required to initialise project-level tracking")
-    return git_is_valid(workspace.root) if os.path.lexists(git_path) else False
+    if not os.path.lexists(git_path):
+        return False
+    return worktree_root == workspace.root.resolve()
 
 
 def relative(path: Path, root: Path) -> str:
@@ -422,9 +471,11 @@ def create_workspace(workspace: Workspace, dry_run: bool) -> None:
         return
 
     workspace.root.mkdir(parents=True, exist_ok=True)
-    manifest_path = workspace.root / "workspace.json"
-    if not manifest_path.exists():
-        manifest_path.write_text(files[manifest_path], encoding="utf-8")
+    for directory in MANAGED_DIRECTORIES:
+        (workspace.root / directory).mkdir(parents=True, exist_ok=True)
+    for path, content in files.items():
+        if not path.exists():
+            path.write_text(content, encoding="utf-8")
 
     if not git_ready:
         subprocess.run(["git", "init", "-b", "main"], cwd=workspace.root, check=True)
@@ -433,12 +484,6 @@ def create_workspace(workspace: Workspace, dry_run: bool) -> None:
         cwd=workspace.root,
         check=True,
     )
-
-    for directory in MANAGED_DIRECTORIES:
-        (workspace.root / directory).mkdir(parents=True, exist_ok=True)
-    for path, content in files.items():
-        if not path.exists():
-            path.write_text(content, encoding="utf-8")
 
     if workspace.repository_link is not None and not os.path.lexists(workspace.repository_link):
         target = os.path.relpath(workspace.repository, workspace.repository_link.parent)
