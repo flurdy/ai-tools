@@ -85,6 +85,7 @@ The v1 outcome should:
 - Generic plugin architecture or provider-specific metadata in the core manifest.
 - Automatic agent-permission changes or implicit mgit setup.
 - Package-manager channels, self-update, multi-version CI matrices, `--version`, or install automation before a second consumer or pilot evidence justifies release infrastructure.
+- Repository-relocating conversion; existing `ai-tools-aqd` is deferred pending pilot evidence because it broadens lifecycle management before the core contract is proven.
 - File locking until a credible multi-writer use case changes the trusted single-user threat model.
 - A size-only rewrite of the CLI or tests. Split by feature boundary when the next proven change makes that separation pay for itself.
 
