@@ -73,7 +73,9 @@ project-workspace configure-mgit
 
 The command derives the indexed `repos/` service paths, creates `.mgit.conf` and a
 relative `scripts/mgit` link to the installed skill, then verifies the root and first
-service. Later `add-repo` commands update exact managed configuration transactionally
+service. A non-empty `SKILLS_DIR` selects one authoritative skill root; otherwise
+complete installations are discovered in Codex, Claude, then Pi's `~/.agents/skills`
+roots. Later `add-repo` commands update exact managed configuration transactionally
 and verify the new service; conflicting or partial mgit state stops registration before
 writes. Infrastructure registration leaves mgit unchanged. The command does not edit
 agent permissions or policy. Use `make doctor` to distinguish an unconfigured workspace

@@ -80,7 +80,7 @@ The [v1 pilot report](project-workspace-v1-pilot-report.md) covers greenfield, m
 
 - Keep manifest v1 as a local relative-topology contract and add no lifecycle command from one synthetic second-path reconstruction.
 - Keep `primary` display-only and keep tracker replication under Beads rather than `project-workspace`.
-- Fix the repeatedly observed mixed skill-root discovery failure separately in `ai-tools-o48.5`; explicit `SKILLS_DIR` remains authoritative.
+- Resolve the repeatedly observed mixed skill-root discovery failure separately in `ai-tools-o48.5`; a non-empty explicit `SKILLS_DIR` remains authoritative.
 - Reconsider source identity or a dry-run-first repair command only after real second-machine or repeated independent relocation evidence.
 
 ### After evidence: select one lifecycle outcome

@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-25  
 **Bead:** `ai-tools-o48.3`  
-**Decision:** Keep v1 as a local-layout workspace and add no lifecycle command. Fix mixed agent-skill discovery separately in `ai-tools-o48.5`.
+**Decision:** Keep v1 as a local-layout workspace and add no lifecycle command. Mixed agent-skill discovery is resolved separately in `ai-tools-o48.5`.
 
 ## Pilot environment
 
@@ -24,7 +24,7 @@
 | Reconstructed source layout | Cloned all three sources and copied infrastructure to the relative paths preserved by the links | Repository validation recovered without manifest edits. Doctor then exposed the next missing dependency: the embedded Beads database was not in Git. |
 | Tracker-store recovery | Copied the original disposable `embeddeddolt` store into the cloned workspace | Recovered `workspace-41o`; doctor advanced to the remaining mgit failure. A real cross-machine workflow must instead configure and use a supported Dolt remote or backup. |
 | Relocated mgit installation link | Reused the committed relative `scripts/mgit` link at a different path depth | Failed safely with `existing mgit script conflicts`. Removing the disposable generated mgit pair and rerunning `configure-mgit` recovered it. |
-| Mixed skill roots | Ran doctor with `~/.codex/skills` present but the complete skill available through `~/.claude/skills`/`~/.agents/skills` | Failed without `SKILLS_DIR` and passed with it. `installed_mgit_source` stops at the first existing root instead of the first complete installation. |
+| Mixed skill roots | Ran doctor with `~/.codex/skills` present but the complete skill available through `~/.claude/skills`/`~/.agents/skills` | The pilot failed without `SKILLS_DIR` and passed with it. Follow-up `ai-tools-o48.5` searches default roots for the first complete installation. |
 
 The decisive checks used the public CLI rather than internal functions:
 
@@ -64,7 +64,7 @@ One synthetic second-path reconstruction is not repeated user evidence for a cor
 
 ### One focused installation follow-up
 
-`ai-tools-o48.5` tracks complete-skill discovery across supported agent roots. This is narrower than a lifecycle feature, was reproduced by two commands, and directly affects the current Pi/Claude/Codex installation model. Explicit `SKILLS_DIR` must remain authoritative.
+`ai-tools-o48.5` resolves complete-skill discovery across supported agent roots. This is narrower than a lifecycle feature, was reproduced by two commands, and directly affects the current Pi/Claude/Codex installation model. A non-empty explicit `SKILLS_DIR` remains authoritative.
 
 ### Other decisions
 

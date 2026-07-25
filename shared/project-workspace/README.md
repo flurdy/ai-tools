@@ -181,10 +181,12 @@ mgit unchanged. Configuration verifies:
 ./scripts/mgit status repos/example-api
 ```
 
-Skill discovery follows the existing contract: `SKILLS_DIR` when set, otherwise
-`$CODEX_HOME/skills` (defaulting to `~/.codex/skills`); when that directory does not
-exist, it falls back to `$CLAUDE_HOME/skills` (defaulting to `~/.claude/skills`). An
-installed skill must provide `SKILL.md`, `scripts/mgit`, and the permission and AGENTS
+A non-empty `SKILLS_DIR` is an authoritative skill root and is not combined with
+defaults; an empty value is treated as unset. Without that override, discovery checks
+`$CODEX_HOME/skills` (default `~/.codex/skills`), then `$CLAUDE_HOME/skills` (default
+`~/.claude/skills`), then Pi's `~/.agents/skills`, and uses the first complete
+`setup-multirepo-git` installation. Existing but incomplete roots are skipped. A complete
+skill must provide executable `scripts/mgit`, `SKILL.md`, and the permission and AGENTS
 templates.
 
 `make doctor` reports `Mgit: UNCONFIGURED` when neither file is present, or validates a

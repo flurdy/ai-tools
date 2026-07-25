@@ -146,6 +146,7 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.assertIn("modern Unix-like systems with Python 3.10+", generated_readme)
         self.assertIn("copying the executable alone is unsupported", generated_readme)
         self.assertIn("records local relative topology", generated_readme)
+        self.assertIn("Codex, Claude, then Pi's", generated_readme)
         manifest = json.loads((workspace / "workspace.json").read_text(encoding="utf-8"))
         self.assertEqual("Example Project", manifest["name"])
         self.assertEqual([], manifest["repositories"])
@@ -827,14 +828,57 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.assertFalse((workspace / ".mgit.conf").exists())
         self.assertFalse((workspace / "scripts").exists())
 
-    def test_configure_mgit_falls_back_to_claude_skill_directory(self) -> None:
+    def test_configure_mgit_keeps_explicit_skills_dir_authoritative(self) -> None:
         workspace = self.create_workspace()
         repository = self.create_repository("service")
         self.run_cli("add-repo", str(repository), "--workspace", str(workspace))
         claude_home = self.root / "claude-home"
-        source = self.create_mgit_skill(claude_home / "skills")
+        self.create_mgit_skill(claude_home / "skills")
         self.environment["SKILLS_DIR"] = str(self.root / "missing-skills")
         self.environment["CLAUDE_HOME"] = str(claude_home)
+
+        result = self.run_cli(
+            "configure-mgit",
+            "--workspace",
+            str(workspace),
+            "--dry-run",
+            check=False,
+        )
+
+        self.assertIn("setup-multirepo-git skill is not installed", result.stderr)
+        self.assertFalse((workspace / ".mgit.conf").exists())
+        self.assertFalse((workspace / "scripts").exists())
+
+    def test_configure_mgit_searches_default_roots_for_complete_skill(self) -> None:
+        workspace = self.create_workspace()
+        repository = self.create_repository("service")
+        self.run_cli("add-repo", str(repository), "--workspace", str(workspace))
+        codex_home = self.root / "codex-home"
+        (codex_home / "skills").mkdir(parents=True)
+        claude_home = self.root / "claude-home"
+        source = self.create_mgit_skill(claude_home / "skills")
+        self.environment.pop("SKILLS_DIR")
+        self.environment["CODEX_HOME"] = str(codex_home)
+        self.environment["CLAUDE_HOME"] = str(claude_home)
+
+        result = self.run_cli(
+            "configure-mgit", "--workspace", str(workspace), "--dry-run"
+        )
+
+        self.assertIn(f"CREATE link scripts/mgit -> {source}", result.stdout)
+
+    def test_configure_mgit_finds_pi_agents_skill(self) -> None:
+        workspace = self.create_workspace()
+        repository = self.create_repository("service")
+        self.run_cli("add-repo", str(repository), "--workspace", str(workspace))
+        home = self.root / "home"
+        (home / ".codex" / "skills").mkdir(parents=True)
+        (home / ".claude" / "skills").mkdir(parents=True)
+        source = self.create_mgit_skill(home / ".agents" / "skills")
+        self.environment.pop("SKILLS_DIR")
+        self.environment.pop("CODEX_HOME", None)
+        self.environment.pop("CLAUDE_HOME", None)
+        self.environment["HOME"] = str(home)
 
         result = self.run_cli(
             "configure-mgit", "--workspace", str(workspace), "--dry-run"

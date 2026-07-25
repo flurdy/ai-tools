@@ -671,17 +671,8 @@ def mgit_config_text(services: tuple[str, ...]) -> str:
     )
 
 
-def installed_mgit_source() -> Path:
-    configured_root = os.environ.get("SKILLS_DIR") or None
-    if configured_root is None:
-        codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
-        configured_root = str(codex_home.expanduser() / "skills")
-    root = Path(configured_root).expanduser()
-    if not root.is_dir():
-        claude_home = Path(os.environ.get("CLAUDE_HOME") or Path.home() / ".claude")
-        root = claude_home.expanduser() / "skills"
-
-    skill = root / MGIT_SKILL_NAME
+def mgit_source_in(root: Path) -> Path | None:
+    skill = root.expanduser() / MGIT_SKILL_NAME
     source = skill / "scripts" / "mgit"
     resources = (
         skill / "SKILL.md",
@@ -694,6 +685,25 @@ def installed_mgit_source() -> Path:
         and all(resource.is_file() for resource in resources)
     ):
         return source.resolve()
+    return None
+
+
+def installed_mgit_source() -> Path:
+    configured_root = os.environ.get("SKILLS_DIR") or None
+    if configured_root is not None:
+        roots = (Path(configured_root),)
+    else:
+        codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+        claude_home = Path(os.environ.get("CLAUDE_HOME") or Path.home() / ".claude")
+        roots = (
+            codex_home / "skills",
+            claude_home / "skills",
+            Path.home() / ".agents" / "skills",
+        )
+    for root in roots:
+        source = mgit_source_in(root)
+        if source is not None:
+            return source
     raise WorkspaceError(
         "setup-multirepo-git skill is not installed; install it before configuring mgit"
     )
