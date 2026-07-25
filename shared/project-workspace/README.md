@@ -10,6 +10,17 @@ scope until real workspace use demonstrates a need.
 
 Run the focused test suite with `make test` from this directory.
 
+## Supported environment
+
+The v1 pilot supports modern Unix-like systems with Python 3.10+, Git 2.28+,
+Beads (`bd`), Bash, Make, and filesystem symlinks. Native Windows, environments
+without symlink support, copied standalone executables, package-manager installs, and
+self-update are not supported.
+
+The supported installation is a user-owned executable symlink to a checkout of this
+repository. The CLI resolves its templates relative to the symlink's real target, so the
+script and `templates/` directory must remain together in that checkout.
+
 ## Run the CLI
 
 From this directory:
@@ -126,7 +137,10 @@ make doctor
 ```
 
 `make doctor` uses the installed `project-workspace` command as the authoritative
-manifest, link, Git-repository, orphan-path, and generated-README validator.
+manifest, relative-link, Git-repository, orphan-path, and generated-README validator.
+It also runs the non-mutating `bd list --limit 1 --no-pager --readonly` health probe with
+a five-second timeout. A missing `bd` executable, an unusable Beads store, and a probe
+timeout produce distinct failures.
 
 ## Configure multi-repository Git (optional)
 
@@ -161,7 +175,9 @@ templates.
 
 `make doctor` reports `Mgit: UNCONFIGURED` when neither file is present, or validates a
 configured wrapper and prints `Mgit: PASS`. A partial, conflicting, or unavailable-skill
-configuration fails doctor rather than being silently accepted.
+configuration fails doctor rather than being silently accepted. Failed wrapper
+verification reports bounded, control-character-sanitized stderr with the failing
+service so the error remains actionable.
 
 ## Safety and reruns
 

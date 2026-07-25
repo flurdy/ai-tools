@@ -42,7 +42,15 @@ make doctor
 
 Both registration commands support `--dry-run`. Keep custom README content outside the
 `project-workspace` marker pairs surrounding the generated lists. Use `bd` from this root
-for durable cross-project work.
+for durable cross-project work. `make doctor` runs a bounded, non-mutating Beads health
+probe and reports missing tooling separately from an unusable store.
+
+## Tooling requirements
+
+Workspace tooling supports modern Unix-like systems with Python 3.10+, Git 2.28+,
+Beads (`bd`), Bash, Make, and filesystem symlinks. Install `project-workspace` through a
+user-owned executable symlink to its repository checkout so the script retains access to
+its adjacent templates; copying the executable alone is unsupported.
 
 ## Multi-repository Git (optional)
 

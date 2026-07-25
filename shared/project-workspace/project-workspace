@@ -19,6 +19,8 @@ TEMPLATES = ROOT / "templates"
 MGIT_CONFIG = ".mgit.conf"
 MGIT_SCRIPT = Path("scripts") / "mgit"
 MGIT_SKILL_NAME = "setup-multirepo-git"
+BEADS_HEALTH_TIMEOUT_SECONDS = 5
+DIAGNOSTIC_OUTPUT_LIMIT = 2_000
 
 MANAGED_DIRECTORIES = (
     "docs/prds",
@@ -417,7 +419,11 @@ def preflight(workspace: Workspace, files: dict[Path, str], dry_run: bool) -> bo
 
     link = workspace.repository_link
     if link is not None and os.path.lexists(link):
-        if not link.is_symlink() or link.resolve() != workspace.repository:
+        if (
+            not link.is_symlink()
+            or os.path.isabs(os.readlink(link))
+            or link.resolve() != workspace.repository
+        ):
             conflicts.append(link)
 
     if conflicts:
@@ -752,15 +758,35 @@ def print_mgit_plan(plan: MgitPlan) -> None:
     print(f"VERIFY ./scripts/mgit status {plan.services[0]}")
 
 
+def diagnostic_output(value: str, returncode: int) -> str:
+    safe = "".join(
+        character
+        if character in "\n\t" or character.isprintable()
+        else "?"
+        for character in value
+    ).strip()
+    if not safe:
+        return f"exit status {returncode}"
+    if len(safe) > DIAGNOSTIC_OUTPUT_LIMIT:
+        return safe[:DIAGNOSTIC_OUTPUT_LIMIT].rstrip() + "\n[output truncated]"
+    return safe
+
+
 def verify_mgit(plan: MgitPlan, service: str | None = None) -> None:
     for target in ("root", service or plan.services[0]):
-        subprocess.run(
-            ["./scripts/mgit", "status", target],
-            cwd=plan.root,
-            capture_output=True,
-            check=True,
-            text=True,
-        )
+        try:
+            subprocess.run(
+                ["./scripts/mgit", "status", target],
+                cwd=plan.root,
+                capture_output=True,
+                check=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as error:
+            raise WorkspaceError(
+                f"mgit verification failed for {target}: "
+                f"{diagnostic_output(error.stderr or '', error.returncode)}"
+            ) from error
 
 
 def apply_mgit(plan: MgitPlan, dry_run: bool) -> None:
@@ -1062,10 +1088,36 @@ def register_source(arguments: argparse.Namespace) -> None:
     apply_registration(plan, arguments.dry_run)
 
 
+def beads_doctor(root: Path) -> None:
+    if shutil.which("bd") is None:
+        raise WorkspaceError("bd is required to validate workspace tracking")
+    try:
+        result = subprocess.run(
+            ["bd", "list", "--limit", "1", "--no-pager", "--readonly"],
+            cwd=root,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=BEADS_HEALTH_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise WorkspaceError(
+            f"workspace Beads health check timed out after "
+            f"{BEADS_HEALTH_TIMEOUT_SECONDS} seconds"
+        ) from error
+    if result.returncode != 0:
+        raise WorkspaceError(
+            "workspace Beads store is unusable: "
+            f"{diagnostic_output(result.stderr, result.returncode)}"
+        )
+    print("Beads: PASS")
+
+
 def doctor_workspace(root: Path) -> None:
     workspace_root = Path(os.path.abspath(root.expanduser()))
     manifest, _readme = load_workspace_manifest(workspace_root)
     print("Workspace: PASS")
+    beads_doctor(workspace_root)
     mgit_doctor(workspace_root, manifest)
 
 

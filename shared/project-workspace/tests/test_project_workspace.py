@@ -42,6 +42,13 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.write_command(
             "bd",
             'echo "bd $*" >> "$COMMAND_LOG"\n'
+            'if [[ "$1" == "list" ]]; then\n'
+            '  if [[ "${BD_HEALTH_FAIL:-}" == "1" ]]; then\n'
+            '    echo "${BD_HEALTH_ERROR:-store unavailable}" >&2\n'
+            "    exit 2\n"
+            "  fi\n"
+            "  exit\n"
+            "fi\n"
             "mkdir -p .beads\n"
             'if [[ "${BD_FAIL_ONCE:-}" == "1" && ! -f "$COMMAND_LOG.bd-failed" ]]; then\n'
             '  touch "$COMMAND_LOG.bd-failed"\n'
@@ -72,6 +79,7 @@ class ProjectWorkspaceTest(unittest.TestCase):
             "service=$2\n"
             "shift 2\n"
             "if [[ ${MGIT_FAIL:-} == 1 ]]; then\n"
+            '  echo "${MGIT_ERROR:-mgit status failed}" >&2\n'
             "  exit 1\n"
             "fi\n"
             "if [[ $service == root || $service == . ]]; then\n"
@@ -134,6 +142,9 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.assertTrue((workspace / "infrastructure" / ".gitkeep").is_file())
         self.assertFalse((workspace / ".mgit.conf").exists())
         self.assertFalse((workspace / "scripts" / "mgit").exists())
+        generated_readme = (workspace / "README.md").read_text(encoding="utf-8")
+        self.assertIn("modern Unix-like systems with Python 3.10+", generated_readme)
+        self.assertIn("copying the executable alone is unsupported", generated_readme)
         manifest = json.loads((workspace / "workspace.json").read_text(encoding="utf-8"))
         self.assertEqual("Example Project", manifest["name"])
         self.assertEqual([], manifest["repositories"])
@@ -166,6 +177,25 @@ class ProjectWorkspaceTest(unittest.TestCase):
         )
         readme = (workspace / "README.md").read_text(encoding="utf-8")
         self.assertIn("[`repos/application`](repos/application)", readme)
+
+    def test_init_and_doctor_reject_absolute_repository_links(self) -> None:
+        repository = self.create_repository("application")
+        workspace = self.root / "operations"
+        self.run_cli("init", "--repo", str(repository), "--output", str(workspace))
+        link = workspace / "repos" / "application"
+        link.unlink()
+        link.symlink_to(repository, target_is_directory=True)
+
+        rerun = self.run_cli(
+            "init", "--repo", str(repository), "--output", str(workspace), check=False
+        )
+        doctor = self.run_cli("doctor", "--workspace", str(workspace), check=False)
+
+        self.assertNotEqual(0, rerun.returncode)
+        self.assertIn("refusing to overwrite", rerun.stderr)
+        self.assertNotEqual(0, doctor.returncode)
+        self.assertIn("not a safe relative symlink", doctor.stderr)
+        self.assertTrue(os.path.isabs(os.readlink(link)))
 
     def test_dry_run_reports_plan_without_writing(self) -> None:
         workspace = self.root / "preview"
@@ -224,6 +254,49 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.assertNotEqual(0, result.returncode)
         self.assertIn("existing Git repository", result.stderr)
         self.assertFalse((workspace / "workspace.json").exists())
+
+    @unittest.skipUnless(
+        shutil.which("git") and shutil.which("bd"),
+        "Git and Beads are required for the health-probe smoke test",
+    )
+    def test_real_beads_health_probe(self) -> None:
+        real_tools = self.root / "real-workspace-tools"
+        real_tools.mkdir()
+        for name in ("git", "bd"):
+            source = shutil.which(name)
+            assert source is not None
+            (real_tools / name).symlink_to(source)
+        environment = os.environ.copy()
+        environment["PATH"] = f"{real_tools}:{environment['PATH']}"
+        environment["BEADS_ACTOR"] = "project-workspace-test"
+        workspace = self.root / "real-beads-workspace"
+
+        subprocess.run(
+            [
+                sys.executable,
+                str(CLI),
+                "init",
+                "Real Beads Workspace",
+                "--output",
+                str(workspace),
+            ],
+            capture_output=True,
+            check=True,
+            cwd=self.root,
+            env=environment,
+            text=True,
+        )
+        result = subprocess.run(
+            [sys.executable, str(CLI), "doctor", "--workspace", str(workspace)],
+            capture_output=True,
+            check=True,
+            cwd=self.root,
+            env=environment,
+            text=True,
+        )
+
+        self.assertIn("Workspace: PASS", result.stdout)
+        self.assertIn("Beads: PASS", result.stdout)
 
     @unittest.skipUnless(
         shutil.which("git"), "Git is required for containment validation"
@@ -524,6 +597,23 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.assertEqual(0, result.returncode)
         updated = json.loads(manifest_path.read_text(encoding="utf-8"))
         self.assertEqual("formatted-service", updated["repositories"][0]["name"])
+
+    def test_registration_preserves_unknown_manifest_keys(self) -> None:
+        workspace = self.create_workspace("extensible")
+        primary = self.create_repository("primary")
+        service = self.create_repository("service")
+        self.run_cli("add-repo", str(primary), "--workspace", str(workspace))
+        manifest_path = workspace / "workspace.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["future"] = {"enabled": True}
+        manifest["repositories"][0]["future-role"] = "coordinator"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+        self.run_cli("add-repo", str(service), "--workspace", str(workspace))
+        updated = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+        self.assertEqual({"enabled": True}, updated["future"])
+        self.assertEqual("coordinator", updated["repositories"][0]["future-role"])
 
     def test_registration_rejects_duplicate_names_and_sources_without_writes(self) -> None:
         workspace = self.create_workspace()
@@ -1000,8 +1090,63 @@ class ProjectWorkspaceTest(unittest.TestCase):
         (workspace / ".mgit.conf").write_text("services=\n", encoding="utf-8")
         partial = self.run_cli("doctor", "--workspace", str(workspace), check=False)
 
+        self.assertIn("Beads: PASS", unconfigured.stdout)
         self.assertIn("Mgit: UNCONFIGURED", unconfigured.stdout)
         self.assertIn("mgit configuration is incomplete", partial.stderr)
+
+    def test_doctor_distinguishes_missing_bd_from_an_unusable_store(self) -> None:
+        missing_workspace = self.create_workspace("missing-bd")
+        bin_without_bd = self.root / "bin-without-bd"
+        bin_without_bd.mkdir()
+        git_script = (self.bin / "git").read_text(encoding="utf-8")
+        (bin_without_bd / "git").write_text(
+            git_script.replace("#!/usr/bin/env bash", "#!/bin/bash", 1),
+            encoding="utf-8",
+        )
+        (bin_without_bd / "git").chmod(0o755)
+        missing_environment = self.environment.copy()
+        missing_environment["PATH"] = str(bin_without_bd)
+
+        missing = subprocess.run(
+            [
+                sys.executable,
+                str(CLI),
+                "doctor",
+                "--workspace",
+                str(missing_workspace),
+            ],
+            capture_output=True,
+            check=False,
+            cwd=self.root,
+            env=missing_environment,
+            text=True,
+        )
+
+        unusable_workspace = self.create_workspace("unusable-beads")
+        self.environment["BD_HEALTH_FAIL"] = "1"
+        self.environment["BD_HEALTH_ERROR"] = "database cannot be opened"
+        unusable = self.run_cli(
+            "doctor", "--workspace", str(unusable_workspace), check=False
+        )
+
+        self.assertIn("bd is required to validate workspace tracking", missing.stderr)
+        self.assertIn("workspace Beads store is unusable", unusable.stderr)
+        self.assertIn("database cannot be opened", unusable.stderr)
+
+    def test_doctor_surfaces_mgit_verification_stderr(self) -> None:
+        workspace = self.create_workspace("mgit-diagnostics")
+        repository = self.create_repository("service")
+        self.run_cli("add-repo", str(repository), "--workspace", str(workspace))
+        self.create_mgit_skill()
+        self.run_cli("configure-mgit", "--workspace", str(workspace))
+        self.environment["MGIT_FAIL"] = "1"
+        self.environment["MGIT_ERROR"] = "\x1b[31mrepository status unavailable\x1b[0m"
+
+        result = self.run_cli("doctor", "--workspace", str(workspace), check=False)
+
+        self.assertIn("mgit verification failed for root:", result.stderr)
+        self.assertIn("repository status unavailable", result.stderr)
+        self.assertNotIn("\x1b", result.stderr)
 
     def test_doctor_rejects_missing_workspace_files_and_directories(self) -> None:
         missing_file = self.create_workspace("missing-file")

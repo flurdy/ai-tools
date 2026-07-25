@@ -66,6 +66,8 @@ The v1 outcome should:
 2. Make repository registration and managed mgit state one safe transition. A supported command sequence must never return success and leave `doctor` failing. Prefer transactional regeneration when the existing `.mgit.conf` exactly matches the pre-registration manifest; otherwise refuse before writes.
 3. Align relative-link invariants, expose mgit stderr, select a Beads health probe, lock in unknown-key preservation, and document Python 3.10+/Unix/symlink-only installation expectations.
 
+The pilot probe is `bd list --limit 1 --no-pager --readonly` with a five-second subprocess timeout. It is bounded, non-mutating, exercises store access, and lets doctor distinguish a missing executable from an unusable store.
+
 ### Next: pilot before adding command families
 
 4. Dogfood v1 in representative greenfield, existing multi-repository, infrastructure, and optional-mgit workspaces.
@@ -146,8 +148,6 @@ Do not create `relink`, `remove`, `rename`, discovery, or schema-migration beads
 
 - Is the intended contract single-machine/local-layout, or should a committed workspace be reconstructable elsewhere?
 - Does `primary` have operational meaning, or should role be removed or made explicit?
-- Which Beads command is the safest stable non-mutating doctor probe, and what timeout is acceptable?
-- Should exact managed mgit state be regenerated transactionally during repository registration, or should registration refuse with an explicit recovery command?
 
 ## External validation
 
@@ -191,8 +191,6 @@ Do not create `relink`, `remove`, `rename`, discovery, or schema-migration beads
 
 ### Residual uncertainty
 
-- The safest stable Beads health probe remains unresolved.
-- The exact managed-mgit transition policy needs a small implementation design before coding.
 - Portability beyond one machine remains a product decision for the pilot.
 
 ## Recommended implementation tier
