@@ -75,6 +75,7 @@ class RegistrationPlan:
     updated_readme: str
     link_exists: bool
     unchanged: bool
+    mgit_transition: MgitPlan | None
 
 
 @dataclass(frozen=True)
@@ -447,7 +448,8 @@ def print_plan(
     print(f"Workspace: {workspace.root}")
     for directory in MANAGED_DIRECTORIES:
         path = workspace.root / directory
-        print(f"{'KEEP' if path.is_dir() else 'CREATE'} directory {relative(path, workspace.root)}")
+        action = "KEEP" if path.is_dir() else "CREATE"
+        print(f"{action} directory {relative(path, workspace.root)}")
     for path, expected in files.items():
         current = existing_text(path)
         action = "UNCHANGED" if current == expected else "CREATE"
@@ -750,10 +752,10 @@ def print_mgit_plan(plan: MgitPlan) -> None:
     print(f"VERIFY ./scripts/mgit status {plan.services[0]}")
 
 
-def verify_mgit(plan: MgitPlan) -> None:
-    for service in ("root", plan.services[0]):
+def verify_mgit(plan: MgitPlan, service: str | None = None) -> None:
+    for target in ("root", service or plan.services[0]):
         subprocess.run(
-            ["./scripts/mgit", "status", service],
+            ["./scripts/mgit", "status", target],
             cwd=plan.root,
             capture_output=True,
             check=True,
@@ -804,13 +806,16 @@ def configure_mgit(arguments: argparse.Namespace) -> None:
     apply_mgit(mgit_plan(root), arguments.dry_run)
 
 
-def mgit_doctor(root: Path, manifest: dict[str, object]) -> None:
+def configured_mgit_plan(
+    root: Path, manifest: dict[str, object]
+) -> MgitPlan | None:
     config_path = root / MGIT_CONFIG
     script_path = root / MGIT_SCRIPT
-    if not os.path.lexists(config_path) and not os.path.lexists(script_path):
-        print("Mgit: UNCONFIGURED")
-        return
-    if not os.path.lexists(config_path) or not os.path.lexists(script_path):
+    config_exists = os.path.lexists(config_path)
+    script_exists = os.path.lexists(script_path)
+    if not config_exists and not script_exists:
+        return None
+    if not config_exists or not script_exists:
         raise WorkspaceError("mgit configuration is incomplete")
 
     source = installed_mgit_source()
@@ -828,6 +833,14 @@ def mgit_doctor(root: Path, manifest: dict[str, object]) -> None:
         or script_path.resolve() != source
     ):
         raise WorkspaceError(f"existing mgit script conflicts: {script_path}")
+    return plan
+
+
+def mgit_doctor(root: Path, manifest: dict[str, object]) -> None:
+    plan = configured_mgit_plan(root, manifest)
+    if plan is None:
+        print("Mgit: UNCONFIGURED")
+        return
     verify_mgit(plan)
     print("Mgit: PASS")
 
@@ -842,6 +855,11 @@ def registration_plan(registration: Registration) -> RegistrationPlan:
     infrastructure = manifest_data["infrastructure"]
     assert isinstance(repositories, list)
     assert isinstance(infrastructure, list)
+    current_mgit = (
+        configured_mgit_plan(registration.root, manifest_data)
+        if registration.collection == "repositories"
+        else None
+    )
 
     matching_entry: dict[str, object] | None = None
     for collection, entries in (
@@ -874,8 +892,9 @@ def registration_plan(registration: Registration) -> RegistrationPlan:
                 f"manifest/link conflict for registration: {registration.name}"
             )
         if not readme_matches_manifest(current_readme, manifest_data):
+            readme_path = registration.root / "README.md"
             raise WorkspaceError(
-                f"generated workspace README has conflicting changes: {registration.root / 'README.md'}"
+                f"generated workspace README has conflicting changes: {readme_path}"
             )
         return RegistrationPlan(
             registration=registration,
@@ -886,6 +905,7 @@ def registration_plan(registration: Registration) -> RegistrationPlan:
             updated_readme=current_readme,
             link_exists=True,
             unchanged=True,
+            mgit_transition=None,
         )
 
     link_exists = os.path.lexists(registration.link)
@@ -912,11 +932,21 @@ def registration_plan(registration: Registration) -> RegistrationPlan:
             current_readme, manifest_data, updated_manifest
         )
     except WorkspaceError as error:
+        readme_path = registration.root / "README.md"
         raise WorkspaceError(
-            f"generated workspace README has conflicting changes: {registration.root / 'README.md'}"
+            f"generated workspace README has conflicting changes: {readme_path}"
         ) from error
     if readme_matches_manifest(current_readme, updated_manifest) and not link_exists:
         raise WorkspaceError("workspace README and manifest are inconsistent")
+    mgit_transition = None
+    if current_mgit is not None:
+        mgit_transition = MgitPlan(
+            root=current_mgit.root,
+            services=mgit_services(updated_manifest),
+            source=current_mgit.source,
+            current_config=current_mgit.current_config,
+            current_script_target=current_mgit.current_script_target,
+        )
     return RegistrationPlan(
         registration=registration,
         current_manifest=manifest_data,
@@ -926,6 +956,7 @@ def registration_plan(registration: Registration) -> RegistrationPlan:
         updated_readme=updated_readme,
         link_exists=link_exists,
         unchanged=False,
+        mgit_transition=mgit_transition,
     )
 
 
@@ -958,6 +989,9 @@ def print_registration_plan(plan: RegistrationPlan) -> None:
     readme_action = "UNCHANGED" if plan.current_readme == plan.updated_readme else "UPDATE"
     print(f"{readme_action} file README.md")
     print(f"{'UNCHANGED' if plan.unchanged else 'UPDATE'} file workspace.json")
+    if plan.mgit_transition is not None:
+        print(f"UPDATE file {MGIT_CONFIG}")
+        print(f"VERIFY ./scripts/mgit status {registration.relative_path}")
 
 
 def apply_registration(plan: RegistrationPlan, dry_run: bool) -> None:
@@ -972,9 +1006,18 @@ def apply_registration(plan: RegistrationPlan, dry_run: bool) -> None:
     target = os.path.relpath(registration.source, registration.link.parent)
     readme_path = registration.root / "README.md"
     manifest_path = registration.root / "workspace.json"
+    mgit = plan.mgit_transition
     if (
         existing_text(readme_path) != plan.current_readme
         or existing_text(manifest_path) != plan.current_manifest_text
+        or (
+            mgit is not None
+            and (
+                existing_text(mgit.config_path) != mgit.current_config
+                or current_mgit_script_target(registration.root)
+                != mgit.current_script_target
+            )
+        )
     ):
         raise WorkspaceError("workspace changed after registration preflight")
     if not registration.source.is_dir() or (
@@ -985,6 +1028,7 @@ def apply_registration(plan: RegistrationPlan, dry_run: bool) -> None:
 
     link_created = False
     readme_changed = False
+    mgit_changed = False
     try:
         if not plan.link_exists:
             registration.link.symlink_to(target, target_is_directory=True)
@@ -992,12 +1036,20 @@ def apply_registration(plan: RegistrationPlan, dry_run: bool) -> None:
         if plan.current_readme != plan.updated_readme:
             atomic_write_text(readme_path, plan.updated_readme)
             readme_changed = True
+        if mgit is not None and mgit.current_config != mgit.config_text:
+            atomic_write_text(mgit.config_path, mgit.config_text)
+            mgit_changed = True
         atomic_write_text(manifest_path, manifest_text(plan.updated_manifest))
+        if mgit is not None:
+            verify_mgit(mgit, registration.relative_path)
     except BaseException:
         if link_created:
             registration.link.unlink(missing_ok=True)
         if readme_changed and existing_text(readme_path) != plan.current_readme:
             atomic_write_text(readme_path, plan.current_readme)
+        if mgit_changed and existing_text(mgit.config_path) != mgit.current_config:
+            assert mgit.current_config is not None
+            atomic_write_text(mgit.config_path, mgit.current_config)
         if existing_text(manifest_path) != plan.current_manifest_text:
             atomic_write_text(manifest_path, plan.current_manifest_text)
         raise

@@ -55,5 +55,8 @@ project-workspace configure-mgit
 
 The command derives the indexed `repos/` service paths, creates `.mgit.conf` and a
 relative `scripts/mgit` link to the installed skill, then verifies the root and first
-service. It does not edit agent permissions or policy. Use `make doctor` to distinguish
-an unconfigured workspace from a validated mgit setup.
+service. Later `add-repo` commands update exact managed configuration transactionally
+and verify the new service; conflicting or partial mgit state stops registration before
+writes. Infrastructure registration leaves mgit unchanged. The command does not edit
+agent permissions or policy. Use `make doctor` to distinguish an unconfigured workspace
+from a validated mgit setup.

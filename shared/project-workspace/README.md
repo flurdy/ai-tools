@@ -143,7 +143,10 @@ The command derives `repos/` service paths only from validated `workspace.json` 
 previews the generated configuration, and creates `.mgit.conf` plus a relative
 `scripts/mgit` symlink to the documented installed skill. It refuses an existing
 configuration or wrapper that differs from the derived topology, and never vendors a
-copy of the wrapper or modifies agent permissions. It then verifies:
+copy of the wrapper or modifies agent permissions. Later `add-repo` commands regenerate
+an exact managed `.mgit.conf` transactionally and verify the new service; conflicting or
+partial mgit state is rejected before registration writes. `add-infrastructure` leaves
+mgit unchanged. Configuration verifies:
 
 ```bash
 ./scripts/mgit status root

@@ -815,6 +815,118 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.assertIn(f"git -C {workspace / 'repos' / 'primary'} status", commands)
         self.assertIn("Mgit: PASS", doctor.stdout)
 
+    def test_registration_updates_managed_mgit_and_verifies_new_service(self) -> None:
+        workspace = self.create_workspace()
+        primary = self.create_repository("primary")
+        service = self.create_repository("service")
+        self.run_cli("add-repo", str(primary), "--workspace", str(workspace))
+        self.create_mgit_skill()
+        self.run_cli("configure-mgit", "--workspace", str(workspace))
+        config_path = workspace / ".mgit.conf"
+        manifest_path = workspace / "workspace.json"
+        config_before = config_path.read_text(encoding="utf-8")
+        manifest_before = manifest_path.read_text(encoding="utf-8")
+        self.command_log.write_text("", encoding="utf-8")
+
+        preview = self.run_cli(
+            "add-repo",
+            str(service),
+            "--workspace",
+            str(workspace),
+            "--dry-run",
+        )
+
+        self.assertIn("UPDATE file .mgit.conf", preview.stdout)
+        self.assertIn("VERIFY ./scripts/mgit status repos/service", preview.stdout)
+        self.assertEqual(config_before, config_path.read_text(encoding="utf-8"))
+        self.assertEqual(manifest_before, manifest_path.read_text(encoding="utf-8"))
+        self.assertFalse((workspace / "repos" / "service").exists())
+
+        result = self.run_cli(
+            "add-repo", str(service), "--workspace", str(workspace)
+        )
+        config_after = config_path.read_text(encoding="utf-8")
+        rerun = self.run_cli(
+            "add-repo", str(service), "--workspace", str(workspace)
+        )
+        doctor = self.run_cli("doctor", "--workspace", str(workspace))
+
+        self.assertIn("Registered repos/service", result.stdout)
+        self.assertIn("Registration unchanged: repos/service", rerun.stdout)
+        self.assertIn("services=repos/primary,repos/service", config_after)
+        self.assertEqual(config_after, config_path.read_text(encoding="utf-8"))
+        commands = self.command_log.read_text(encoding="utf-8")
+        self.assertIn(f"git -C {workspace} status", commands)
+        self.assertIn(f"git -C {workspace / 'repos' / 'service'} status", commands)
+        self.assertIn("Mgit: PASS", doctor.stdout)
+
+    def test_registration_rejects_conflicting_mgit_without_writes(self) -> None:
+        workspace = self.create_workspace()
+        primary = self.create_repository("primary")
+        service = self.create_repository("service")
+        self.run_cli("add-repo", str(primary), "--workspace", str(workspace))
+        self.create_mgit_skill()
+        self.run_cli("configure-mgit", "--workspace", str(workspace))
+        config_path = workspace / ".mgit.conf"
+        manifest_path = workspace / "workspace.json"
+        readme_path = workspace / "README.md"
+        config_path.write_text("services=user-managed\n", encoding="utf-8")
+        manifest_before = manifest_path.read_text(encoding="utf-8")
+        readme_before = readme_path.read_text(encoding="utf-8")
+
+        result = self.run_cli(
+            "add-repo", str(service), "--workspace", str(workspace), check=False
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("existing mgit configuration conflicts", result.stderr)
+        self.assertEqual("services=user-managed\n", config_path.read_text(encoding="utf-8"))
+        self.assertEqual(manifest_before, manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(readme_before, readme_path.read_text(encoding="utf-8"))
+        self.assertFalse((workspace / "repos" / "service").exists())
+
+    def test_registration_rolls_back_mgit_and_leaves_infrastructure_independent(
+        self,
+    ) -> None:
+        workspace = self.create_workspace()
+        primary = self.create_repository("primary")
+        service = self.create_repository("service")
+        infrastructure = self.root / "infrastructure-source"
+        infrastructure.mkdir()
+        self.run_cli("add-repo", str(primary), "--workspace", str(workspace))
+        self.create_mgit_skill()
+        self.run_cli("configure-mgit", "--workspace", str(workspace))
+        config_path = workspace / ".mgit.conf"
+        manifest_path = workspace / "workspace.json"
+        readme_path = workspace / "README.md"
+        config_before = config_path.read_text(encoding="utf-8")
+        manifest_before = manifest_path.read_text(encoding="utf-8")
+        readme_before = readme_path.read_text(encoding="utf-8")
+        self.environment["MGIT_FAIL"] = "1"
+
+        failed = self.run_cli(
+            "add-repo", str(service), "--workspace", str(workspace), check=False
+        )
+
+        self.assertNotEqual(0, failed.returncode)
+        self.assertEqual(config_before, config_path.read_text(encoding="utf-8"))
+        self.assertEqual(manifest_before, manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(readme_before, readme_path.read_text(encoding="utf-8"))
+        self.assertFalse((workspace / "repos" / "service").exists())
+
+        infrastructure_result = self.run_cli(
+            "add-infrastructure",
+            str(infrastructure),
+            "--workspace",
+            str(workspace),
+        )
+
+        self.assertIn(
+            "Registered infrastructure/infrastructure-source",
+            infrastructure_result.stdout,
+        )
+        self.assertEqual(config_before, config_path.read_text(encoding="utf-8"))
+
     def test_configure_mgit_rolls_back_when_verification_fails(self) -> None:
         workspace = self.create_workspace()
         repository = self.create_repository("service")
