@@ -19,7 +19,7 @@ pi --list-models
 
 Choose one of the credential-free examples, then replace every placeholder with an exact `provider/model-id` from that output:
 
-- **Generic** (`model-tier-router.example.json`): the smallest portable baseline, with one candidate in each tier and the usage ledger disabled.
+- **Generic** (`model-tier-router.example.json`): the smallest portable baseline, with one candidate in each tier, the usage ledger disabled, and an exact-model `allow` example that must be reviewed before use.
 - **Opinionated** (`model-tier-router.opinionated.example.json`): a concrete July 2026 policy snapshot using OpenAI Codex, Anthropic Claude, and Google Gemini candidates, enabled bounded local usage telemetry, and `medium`/`medium`/`xhigh` default thinking. It is a starting point, not a claim that those models are available or have the same cost classification for you.
 
 For the generic baseline:
@@ -38,21 +38,23 @@ cp ./pi/model-tier-router/model-tier-router.opinionated.example.json \
 $EDITOR ~/.pi/agent/model-tier-router.json
 ```
 
-Candidate order is a bounded **pre-launch selection** preference: the router selects the first configured candidate that is currently available before it sends a provider request. It is not a post-launch retry list. Every candidate must explicitly declare a boolean `metered` value; candidates without one are rejected rather than assumed free. `metered` is the local spend authority, and the router never guesses from provider, authentication details, or portable skill metadata. Every `metered: true` candidate requested through an explicit `/skill:name` command requires interactive confirmation. Declining, or running without a confirmation UI, skips the switch and retains the prior model. `metered: false` is the user's explicit local classification that the candidate may route without a spend prompt.
+Candidate order is a bounded **pre-launch selection** preference: the router selects the first configured candidate that is currently available before it sends a provider request. It is not a post-launch retry list. Every candidate must explicitly declare a boolean `metered` value; candidates without one are rejected rather than assumed free. The router never guesses cost exposure from provider, authentication details, portable skill metadata, historical spend, or the usage ledger.
 
-Model-initiated skill reads never open a blocking spend prompt. An implicit read may route to `metered: false`, but it skips `metered: true` and retains the current route/model. In the copied example configuration, the premium placeholders are therefore confirmation-only for explicit skill commands even though `routeImplicitSkillReads` is enabled.
+Metered candidates default to `ask`: explicit `/skill:name` commands require interactive confirmation, while decline or a missing confirmation UI retains the prior model. Optional global-only `modelPolicies` can authorize an exact model with `consent: "allow"`, avoiding repeated prompts. `allow` also permits an enabled implicit skill read to use that exact metered model without blocking. An effectively unmetered candidate routes without a prompt regardless of consent. Project `modelPolicies` are ignored, and project candidates cannot lower a global metered classification; a project-only candidate claiming `metered: false` is treated as unknown-cost, prompts explicitly, and skips implicitly.
+
+The generic example deliberately illustrates `allow` for a placeholder premium model. Replace the placeholder and reassess both `metered` and `consent`, or remove `modelPolicies` to retain per-run confirmation. The opinionated example pre-authorizes no metered model.
 
 ### Opinionated policy choices
 
 The opinionated example deliberately chooses:
 
 - `enabled: true` so the copied file is active once the extension is installed.
-- `routeImplicitSkillReads: true` so loaded skills can use an available locally unmetered candidate; a metered candidate is still skipped rather than prompting during an implicit read.
+- `routeImplicitSkillReads: true` so loaded skills can use an available locally unmetered candidate; a metered candidate is skipped unless its exact global policy is `allow`.
 - `economy` (rank 10) and `standard` (rank 20) at `medium` thinking, and `premium` (rank 40) at `xhigh`, allowing nested work to upgrade but never silently downgrade a route.
 - An ordered candidate list in every tier: an OpenAI Codex candidate classified as locally unmetered in this policy, followed by metered Anthropic and, for economy, Google alternatives. Candidate order is only a pre-launch availability preference, not runtime fallback.
 - `usageLedger.enabled: true`, with a 30-day/10 MiB retention bound, for local Pi-normalized response counters. This is global-only telemetry; it records no prompts, responses, credentials, account identifiers, repository paths, or session-file paths.
 
-The provider/model IDs and classifications reflect one local setup as of July 2026. They may be unavailable, renamed, separately billed, included in a subscription, or unsuitable in another setup. `metered: false` is never inferred from a provider, model name, or subscription: keep it only when your own authentication and cost policy make that classification correct. If an explicit skill selects a `metered: true` candidate, Pi asks for confirmation immediately before routing; decline or a missing confirmation UI leaves the current route unchanged. Run `pi --list-models`, remove unavailable candidates, and reassess every `metered` value before using the opinionated example.
+The provider/model IDs and classifications reflect one local setup as of July 2026. They may be unavailable, renamed, separately billed, included in a subscription, or unsuitable in another setup. `metered: false` is never inferred from a provider, model name, or subscription: keep it only when your own authentication and cost policy make that classification correct. The opinionated example has no `modelPolicies`, so every explicit metered selection asks immediately before routing; decline or a missing confirmation UI leaves the current route unchanged. Run `pi --list-models`, remove unavailable candidates, and reassess every `metered` value before using it.
 
 ## Runtime fallback safety
 
@@ -74,7 +76,7 @@ A trusted project can override top-level options and complete tier entries in:
 <project>/.pi/model-tier-router.json
 ```
 
-Project configuration is ignored unless Pi trusts the project. A project tier replaces the global tier with the same name; other global tiers remain available.
+Project configuration is ignored unless Pi trusts the project. A project tier replaces the global tier with the same name; other global tiers remain available. Spend authority remains global: project `modelPolicies` and `usageLedger` are ignored. Global candidate classifications provide an exact-model floor, so project candidates can make handling stricter but cannot silently make a globally metered model unmetered.
 
 Supported options:
 
@@ -82,7 +84,9 @@ Supported options:
 - `routeImplicitSkillReads`: route model-initiated `read` calls for skills loaded into that turn's Pi system prompt.
 - `tiers.<name>.rank`: nested skills may move to a higher rank, but never to an equal or lower rank.
 - `tiers.<name>.thinking`: default Pi thinking level when the skill does not declare `effort`.
-- `tiers.<name>.candidates`: exact, ordered model candidates and their local `metered` flag.
+- `tiers.<name>.candidates`: exact, ordered model candidates and their required inline `metered` flag.
+- `modelPolicies.<provider/model>.metered`: optional global exact-model classification. It wins over conflicting global inline classifications; project candidates can only make the effective classification stricter.
+- `modelPolicies.<provider/model>.consent`: optional global `ask` (default) or `allow`. `allow` authorizes explicit and enabled implicit routing for an effectively metered exact model.
 - `usageLedger`: optional global-only local telemetry. It defaults to disabled; when enabled it writes Pi-normalized assistant-response token counters under `~/.pi/agent/model-tier-router/usage/v1/`. `retentionDays` and `maxBytes` bound retention. Project configuration cannot enable it.
 
 The shared portable taxonomy uses `economy` for low-risk deterministic work,
@@ -105,7 +109,7 @@ model-tier: premium
 effort: xhigh
 ```
 
-The local candidate's `metered` flag alone controls the confirmation gate. Skill metadata cannot waive that gate. A valid `effort` value (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`) overrides the tier's default thinking level. Nested skills may raise thinking but never lower it. The router deliberately ignores Claude-specific `model: haiku` metadata.
+Effective exact-model metering plus the global consent policy controls the confirmation gate. Skill metadata and project policy cannot waive it. A valid `effort` value (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`) overrides the tier's default thinking level. Nested skills may raise thinking but never lower it, including when a model switch is declined or skipped. The router deliberately ignores Claude-specific `model: haiku` metadata.
 
 Explicit `/skill:name` commands are detected during Pi's `input` event and routed from `before_agent_start` only after Pi has accepted and expanded that skill. This prevents a later input handler from leaving behind a premature model switch. Skill commands queued while an agent is already streaming continue on the active model because Pi 0.80.6 has no final-expanded, message-scoped boundary where that route can be applied safely; switching during `input` could also affect intervening tool or steering continuations, so the router warns instead of switching too early. Model-initiated reads route only when the canonical read path exactly matches a skill file Pi loaded for that turn. This includes `SKILL.md` and registered root skill Markdown files without scanning or reimplementing Pi's discovery rules; metered matches fail closed without prompting, while unmetered matches may route normally.
 
@@ -141,7 +145,7 @@ Restart Pi or run `/reload`.
 
 `reload` rereads router JSON configuration. `on` and `off` are in-memory overrides for the current extension instance; they do not edit local files.
 
-Status reports the active tier and skills, selected/original models, pending restoration, loaded configuration paths, route warnings, ledger health, and the last normalized route-decision record. The record consistently carries the requested and effective tiers, selected configured candidate, effective provider/model, thinking level, metered classification, consent basis, route reason/warnings, and restoration result. Usage ledger attribution derives its effective tier and thinking level from the active decision while preserving the assistant message's observed provider/model; a retained nested request therefore remains attributable to the configured route that actually served it.
+Status reports the active tier and skills, selected/original models, pending restoration, loaded configuration paths, route warnings, ledger health, and the last normalized route-decision record. The record consistently carries the requested and effective tiers, selected configured candidate, effective provider/model, thinking level, effective metered classification, consent policy and basis, route reason/warnings, and restoration result. Usage ledger attribution derives its effective tier and thinking level from the active decision while preserving the assistant message's observed provider/model; a retained nested request therefore remains attributable to the configured route that actually served it.
 
 `/model-tier usage` summarizes local records by tier and exact provider/model in a compact table. It labels them **Pi-normalized observed responses**: they are not subscription quota, provider billing, or cross-provider cost. Pi's `usage.cost` is calculated from configured local model prices, so it is intentionally not persisted as provider-reported cost. Cache reads, cache writes (including optional one-hour writes), output, and optional reasoning counters remain separate; numeric zero values are recorded as known zeroes, while unavailable fields are reported as unknown. Summaries read only canonical `YYYY-MM-DD.jsonl` regular files managed by the ledger.
 

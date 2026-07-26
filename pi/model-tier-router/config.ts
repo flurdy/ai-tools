@@ -1,6 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { TierRoute, ThinkingLevel } from "./routing.ts";
+import type {
+	ConfiguredConsentPolicy,
+	ModelPolicy,
+	TierConfigurationSource,
+	TierRoute,
+	ThinkingLevel,
+} from "./routing.ts";
 
 const THINKING_LEVELS = new Set<ThinkingLevel>(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
@@ -15,6 +21,8 @@ export interface RouterConfig {
 	routeImplicitSkillReads: boolean;
 	usageLedger: UsageLedgerConfig;
 	tiers: Record<string, TierRoute>;
+	tierSources: Record<string, TierConfigurationSource>;
+	modelPolicies: Record<string, ModelPolicy>;
 }
 
 export interface LoadedRouterConfig {
@@ -32,8 +40,12 @@ export interface LoadConfigOptions {
 	configDirName?: string;
 }
 
+function emptyRecord<T>(): Record<string, T> {
+	return Object.create(null) as Record<string, T>;
+}
+
 function emptyTiers(): Record<string, TierRoute> {
-	return Object.create(null) as Record<string, TierRoute>;
+	return emptyRecord<TierRoute>();
 }
 
 const DEFAULT_CONFIG: RouterConfig = {
@@ -41,6 +53,8 @@ const DEFAULT_CONFIG: RouterConfig = {
 	routeImplicitSkillReads: true,
 	usageLedger: { enabled: false, retentionDays: 30, maxBytes: 10 * 1024 * 1024 },
 	tiers: emptyTiers(),
+	tierSources: emptyRecord<TierConfigurationSource>(),
+	modelPolicies: emptyRecord<ModelPolicy>(),
 };
 
 function readJson(path: string, warnings: string[]): unknown | undefined {
@@ -51,6 +65,10 @@ function readJson(path: string, warnings: string[]): unknown | undefined {
 		warnings.push(`${path}: ${error instanceof Error ? error.message : String(error)}`);
 		return undefined;
 	}
+}
+
+function isExactModelId(value: unknown): value is string {
+	return typeof value === "string" && value.includes("/") && !value.startsWith("/") && !value.endsWith("/");
 }
 
 function parseTier(name: string, value: unknown, path: string, warnings: string[]): TierRoute | undefined {
@@ -79,7 +97,7 @@ function parseTier(name: string, value: unknown, path: string, warnings: string[
 			continue;
 		}
 		const item = candidate as Record<string, unknown>;
-		if (typeof item.model !== "string" || !item.model.includes("/") || item.model.startsWith("/") || item.model.endsWith("/")) {
+		if (!isExactModelId(item.model)) {
 			warnings.push(`${path}: tier ${name} candidate ${index + 1} must use provider/model`);
 			continue;
 		}
@@ -97,11 +115,42 @@ function parseTier(name: string, value: unknown, path: string, warnings: string[
 	};
 }
 
+function parseModelPolicies(value: unknown, path: string, warnings: string[]): Record<string, ModelPolicy> | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		warnings.push(`${path}: modelPolicies must be an object`);
+		return undefined;
+	}
+	const policies = emptyRecord<ModelPolicy>();
+	for (const [model, policy] of Object.entries(value)) {
+		if (!isExactModelId(model)) {
+			warnings.push(`${path}: modelPolicies key ${JSON.stringify(model)} must use provider/model`);
+			continue;
+		}
+		if (!policy || typeof policy !== "object" || Array.isArray(policy)) {
+			warnings.push(`${path}: model policy ${model} must be an object`);
+			continue;
+		}
+		const input = policy as Record<string, unknown>;
+		if (typeof input.metered !== "boolean") {
+			warnings.push(`${path}: model policy ${model} must declare a boolean metered flag`);
+			continue;
+		}
+		let consent: ConfiguredConsentPolicy = "ask";
+		if (input.consent !== undefined) {
+			if (input.consent === "ask" || input.consent === "allow") consent = input.consent;
+			else warnings.push(`${path}: model policy ${model} has invalid consent; defaulted to ask`);
+		}
+		policies[model] = { metered: input.metered, consent };
+	}
+	return policies;
+}
+
 interface PartialRouterConfig {
 	enabled?: boolean;
 	routeImplicitSkillReads?: boolean;
 	usageLedger?: UsageLedgerConfig;
 	tiers: Record<string, TierRoute>;
+	modelPolicies?: Record<string, ModelPolicy>;
 }
 
 function parseConfig(value: unknown, path: string, warnings: string[]): PartialRouterConfig | undefined {
@@ -127,6 +176,7 @@ function parseConfig(value: unknown, path: string, warnings: string[]): PartialR
 			else parsed.usageLedger = { enabled: ledger.enabled, retentionDays: ledger.retentionDays as number, maxBytes: ledger.maxBytes as number };
 		}
 	}
+	if (input.modelPolicies !== undefined) parsed.modelPolicies = parseModelPolicies(input.modelPolicies, path, warnings);
 	if (input.tiers !== undefined) {
 		if (!input.tiers || typeof input.tiers !== "object" || Array.isArray(input.tiers)) {
 			warnings.push(`${path}: tiers must be an object`);
@@ -140,13 +190,63 @@ function parseConfig(value: unknown, path: string, warnings: string[]): PartialR
 	return parsed;
 }
 
-function mergeConfig(base: RouterConfig, override: PartialRouterConfig): RouterConfig {
+function deriveGlobalModelPolicies(
+	tiers: Record<string, TierRoute>,
+	explicit: Record<string, ModelPolicy> | undefined,
+	path: string,
+	warnings: string[],
+): Record<string, ModelPolicy> {
+	const inline = emptyRecord<boolean>();
+	for (const tier of Object.values(tiers)) {
+		for (const candidate of tier.candidates) {
+			const previous = inline[candidate.model];
+			if (previous !== undefined && previous !== candidate.metered) {
+				warnings.push(`${path}: model ${candidate.model} has conflicting global candidate classifications; treated as metered`);
+				inline[candidate.model] = true;
+			} else if (previous === undefined) {
+				inline[candidate.model] = candidate.metered;
+			}
+		}
+	}
+
+	const policies = emptyRecord<ModelPolicy>();
+	for (const [model, metered] of Object.entries(inline)) {
+		policies[model] = { metered, consent: "ask" };
+	}
+	for (const [model, policy] of Object.entries(explicit ?? {})) {
+		if (inline[model] !== undefined && inline[model] !== policy.metered) {
+			warnings.push(`${path}: model policy ${model} conflicts with global candidate classification; explicit policy wins`);
+		}
+		policies[model] = policy;
+	}
+	return policies;
+}
+
+function mergeConfig(base: RouterConfig, override: PartialRouterConfig, source: TierConfigurationSource): RouterConfig {
+	const tierSources = Object.assign(emptyRecord<TierConfigurationSource>(), base.tierSources);
+	for (const name of Object.keys(override.tiers)) tierSources[name] = source;
 	return {
 		enabled: override.enabled ?? base.enabled,
 		routeImplicitSkillReads: override.routeImplicitSkillReads ?? base.routeImplicitSkillReads,
 		usageLedger: override.usageLedger ?? base.usageLedger,
 		tiers: Object.assign(emptyTiers(), base.tiers, override.tiers),
+		tierSources,
+		modelPolicies: override.modelPolicies ?? base.modelPolicies,
 	};
+}
+
+function warnForProjectClassificationGaps(config: RouterConfig, projectPath: string, warnings: string[]): void {
+	for (const [tierName, tier] of Object.entries(config.tiers)) {
+		if (config.tierSources[tierName] !== "project") continue;
+		for (const candidate of tier.candidates) {
+			const globalPolicy = config.modelPolicies[candidate.model];
+			if (!globalPolicy && !candidate.metered) {
+				warnings.push(`${projectPath}: tier ${tierName} candidate ${candidate.model} has no global model policy; treated as unknown-cost`);
+			} else if (globalPolicy?.metered && !candidate.metered) {
+				warnings.push(`${projectPath}: tier ${tierName} candidate ${candidate.model} cannot lower its global metered classification`);
+			}
+		}
+	}
 }
 
 export function loadRouterConfig(options: LoadConfigOptions): LoadedRouterConfig {
@@ -160,7 +260,8 @@ export function loadRouterConfig(options: LoadConfigOptions): LoadedRouterConfig
 	if (globalValue !== undefined) {
 		const parsed = parseConfig(globalValue, globalPath, warnings);
 		if (parsed) {
-			config = mergeConfig(config, parsed);
+			parsed.modelPolicies = deriveGlobalModelPolicies(parsed.tiers, parsed.modelPolicies, globalPath, warnings);
+			config = mergeConfig(config, parsed, "global");
 			loadedPaths.push(globalPath);
 		}
 	}
@@ -174,7 +275,12 @@ export function loadRouterConfig(options: LoadConfigOptions): LoadedRouterConfig
 					warnings.push(`${projectPath}: usageLedger is global-only and was ignored`);
 					parsed.usageLedger = undefined;
 				}
-				config = mergeConfig(config, parsed);
+				if (parsed.modelPolicies) {
+					warnings.push(`${projectPath}: modelPolicies is global-only and was ignored`);
+					parsed.modelPolicies = undefined;
+				}
+				config = mergeConfig(config, parsed, "project");
+				warnForProjectClassificationGaps(config, projectPath, warnings);
 				loadedPaths.push(projectPath);
 			}
 		}

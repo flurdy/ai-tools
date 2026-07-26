@@ -1,6 +1,6 @@
 # Per-model metered consent for the Pi model-tier router
 
-**Status:** Approved design; implementation tracked by `ai-tools-jk2`
+**Status:** Implemented by `ai-tools-jk2`
 
 **Date:** 2026-07-26
 

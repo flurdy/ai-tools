@@ -11,6 +11,20 @@ export interface ModelCandidate {
 	metered: boolean;
 }
 
+export type ConfiguredConsentPolicy = "ask" | "allow";
+export type EffectiveConsentPolicy = "not-applicable" | "not-needed" | ConfiguredConsentPolicy;
+export type TierConfigurationSource = "global" | "project";
+
+export interface ModelPolicy {
+	metered: boolean;
+	consent: ConfiguredConsentPolicy;
+}
+
+export interface ResolvedCandidatePolicy {
+	meteredClassification: MeteredClassification;
+	consentPolicy: Exclude<EffectiveConsentPolicy, "not-applicable">;
+}
+
 export interface TierRoute {
 	rank: number;
 	thinking: ThinkingLevel;
@@ -35,7 +49,7 @@ export interface ModelIdentity {
 }
 
 export type MeteredClassification = boolean | "unknown";
-export type ConsentBasis = "not-needed" | "confirmed" | "declined" | "unavailable-ui" | "not-requested-implicit" | "not-applicable";
+export type ConsentBasis = "not-needed" | "configured" | "confirmed" | "declined" | "unavailable-ui" | "not-requested-implicit" | "not-applicable";
 export type RestorationResult = "not-applicable" | "pending" | "deferred" | "restored" | "failed" | "cancelled-by-manual-override";
 
 /** One consistent account of a model-routing decision, including outcomes that retain the current route. */
@@ -46,6 +60,7 @@ export interface RouteDecisionRecord {
 	effectiveModel: ModelIdentity | null;
 	thinkingLevel: ThinkingLevel;
 	meteredClassification: MeteredClassification;
+	consentPolicy: EffectiveConsentPolicy;
 	consentBasis: ConsentBasis;
 	reason: string;
 	warnings: string[];
@@ -59,6 +74,7 @@ export interface RouteDecisionInput {
 	effectiveModel?: ModelIdentity;
 	thinkingLevel: ThinkingLevel;
 	meteredClassification?: MeteredClassification;
+	consentPolicy?: EffectiveConsentPolicy;
 	consentBasis: ConsentBasis;
 	reason: string;
 	warnings?: string[];
@@ -73,6 +89,7 @@ export function createRouteDecision(input: RouteDecisionInput): RouteDecisionRec
 		effectiveModel: input.effectiveModel ? { ...input.effectiveModel } : null,
 		thinkingLevel: input.thinkingLevel,
 		meteredClassification: input.meteredClassification ?? input.candidate?.metered ?? "unknown",
+		consentPolicy: input.consentPolicy ?? (input.candidate ? (input.candidate.metered ? "ask" : "not-needed") : "not-applicable"),
 		consentBasis: input.consentBasis,
 		reason: input.reason,
 		warnings: [...(input.warnings ?? [])],
@@ -142,8 +159,41 @@ export function findExactModel(candidate: ModelCandidate, available: Model<Api>[
 	return available.find((model) => `${model.provider}/${model.id}` === candidate.model);
 }
 
-export function requiresMeteredConfirmation(candidate: ModelCandidate): boolean {
-	return candidate.metered;
+export function resolveCandidatePolicy(
+	candidate: ModelCandidate,
+	tierSource: TierConfigurationSource,
+	globalPolicy?: ModelPolicy,
+): ResolvedCandidatePolicy {
+	if (tierSource === "global") {
+		const metered = globalPolicy?.metered ?? candidate.metered;
+		return {
+			meteredClassification: metered,
+			consentPolicy: metered ? (globalPolicy?.consent ?? "ask") : "not-needed",
+		};
+	}
+
+	if (!globalPolicy) {
+		return candidate.metered
+			? { meteredClassification: true, consentPolicy: "ask" }
+			: { meteredClassification: "unknown", consentPolicy: "ask" };
+	}
+	if (globalPolicy.metered) {
+		return { meteredClassification: true, consentPolicy: globalPolicy.consent };
+	}
+	if (candidate.metered) {
+		return { meteredClassification: true, consentPolicy: "ask" };
+	}
+	return { meteredClassification: false, consentPolicy: "not-needed" };
+}
+
+export function requiresConsentConfirmation(policy: ResolvedCandidatePolicy): boolean {
+	return policy.meteredClassification === "unknown"
+		|| (policy.meteredClassification && policy.consentPolicy === "ask");
+}
+
+export function permitsImplicitRouting(policy: ResolvedCandidatePolicy): boolean {
+	return policy.meteredClassification === false
+		|| (policy.meteredClassification === true && policy.consentPolicy === "allow");
 }
 
 export async function canonicalPath(path: string, cwd: string): Promise<string | undefined> {

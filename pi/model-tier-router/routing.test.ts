@@ -13,7 +13,9 @@ import {
 	decideTier,
 	maxThinkingLevel,
 	parseSkillRouting,
-	requiresMeteredConfirmation,
+	permitsImplicitRouting,
+	requiresConsentConfirmation,
+	resolveCandidatePolicy,
 	selectCandidate,
 	type RouteDecisionRecord,
 	type TierRoute,
@@ -146,10 +148,35 @@ describe("tier decisions", () => {
 });
 
 describe("candidate selection", () => {
-	it("requires confirmation for every metered candidate regardless of skill metadata", () => {
-		const metered = { model: "provider/premium", metered: true };
-		assert.equal(requiresMeteredConfirmation(metered), true);
-		assert.equal(requiresMeteredConfirmation({ ...metered, metered: false }), false);
+	it("requires confirmation only for unresolved metered or unknown-cost consent", () => {
+		assert.equal(requiresConsentConfirmation({ meteredClassification: true, consentPolicy: "ask" }), true);
+		assert.equal(requiresConsentConfirmation({ meteredClassification: "unknown", consentPolicy: "ask" }), true);
+		assert.equal(requiresConsentConfirmation({ meteredClassification: true, consentPolicy: "allow" }), false);
+		assert.equal(requiresConsentConfirmation({ meteredClassification: "unknown", consentPolicy: "allow" }), true);
+		assert.equal(requiresConsentConfirmation({ meteredClassification: false, consentPolicy: "not-needed" }), false);
+		assert.equal(permitsImplicitRouting({ meteredClassification: "unknown", consentPolicy: "allow" }), false);
+		assert.equal(permitsImplicitRouting({ meteredClassification: true, consentPolicy: "allow" }), true);
+	});
+
+	it("resolves global and project candidate policy without allowing project downgrades", () => {
+		const metered = { metered: true, consent: "allow" as const };
+		const unmetered = { metered: false, consent: "ask" as const };
+		assert.deepEqual(resolveCandidatePolicy({ model: "provider/model", metered: true }, "global", metered), {
+			meteredClassification: true,
+			consentPolicy: "allow",
+		});
+		assert.deepEqual(resolveCandidatePolicy({ model: "provider/model", metered: false }, "project", metered), {
+			meteredClassification: true,
+			consentPolicy: "allow",
+		});
+		assert.deepEqual(resolveCandidatePolicy({ model: "provider/model", metered: true }, "project", unmetered), {
+			meteredClassification: true,
+			consentPolicy: "ask",
+		});
+		assert.deepEqual(resolveCandidatePolicy({ model: "provider/model", metered: false }, "project"), {
+			meteredClassification: "unknown",
+			consentPolicy: "ask",
+		});
 	});
 
 	it("uses only exact configured candidates for pre-launch selection", () => {
@@ -166,8 +193,11 @@ describe("configuration", () => {
 	it("ships only the portable three-tier taxonomy", () => {
 		const example = JSON.parse(
 			readFileSync(new URL("./model-tier-router.example.json", import.meta.url), "utf8"),
-		) as { tiers: Record<string, TierRoute> };
+		) as { modelPolicies: Record<string, { metered: boolean; consent: string }>; tiers: Record<string, TierRoute> };
 		const { tiers } = example;
+		assert.deepEqual(example.modelPolicies, {
+			"provider/premium-model-id": { metered: true, consent: "allow" },
+		});
 		assert.deepEqual(Object.keys(tiers), ["economy", "standard", "premium"]);
 		assert.deepEqual(tiers.economy.candidates, [{ model: "provider/cheap-model-id", metered: false }]);
 		assert.deepEqual(tiers.standard.candidates, [{ model: "provider/workflow-model-id", metered: false }]);
@@ -288,6 +318,87 @@ describe("configuration", () => {
 		assert.match(result.warnings.join("\n"), /usageLedger is global-only and was ignored/);
 	});
 
+	it("loads global exact-model consent and derives conservative classification floors", () => {
+		const root = mkdtempSync(join(tmpdir(), "model-tier-router-"));
+		const agentDir = join(root, "agent");
+		const cwd = join(root, "project");
+		mkdirSync(agentDir, { recursive: true });
+		writeFileSync(
+			join(agentDir, "model-tier-router.json"),
+			JSON.stringify({
+				modelPolicies: {
+					"provider/allowed": { metered: true, consent: "allow" },
+					"provider/conflict": { metered: false, consent: "allow" },
+					"provider/invalid-consent": { metered: true, consent: "forever" },
+					"provider/missing-metered": { consent: "allow" },
+					invalid: { metered: true, consent: "allow" },
+				},
+				tiers: {
+					first: { rank: 10, thinking: "low", candidates: [
+						{ model: "provider/allowed", metered: true },
+						{ model: "provider/conflict", metered: true },
+						{ model: "provider/shared", metered: false },
+					] },
+					second: { rank: 20, thinking: "high", candidates: [
+						{ model: "provider/shared", metered: true },
+						{ model: "provider/invalid-consent", metered: true },
+					] },
+				},
+			}),
+		);
+
+		const result = loadRouterConfig({ agentDir, cwd, projectTrusted: false });
+		assert.deepEqual(result.config.modelPolicies["provider/allowed"], { metered: true, consent: "allow" });
+		assert.deepEqual(result.config.modelPolicies["provider/conflict"], { metered: false, consent: "allow" });
+		assert.deepEqual(result.config.modelPolicies["provider/shared"], { metered: true, consent: "ask" });
+		assert.deepEqual(result.config.modelPolicies["provider/invalid-consent"], { metered: true, consent: "ask" });
+		assert.equal(result.config.modelPolicies["provider/missing-metered"], undefined);
+		assert.equal(result.config.modelPolicies.invalid, undefined);
+		assert.match(result.warnings.join("\n"), /provider\/conflict.*conflicts with global candidate classification/);
+		assert.match(result.warnings.join("\n"), /provider\/shared.*conflicting global candidate classifications/);
+		assert.match(result.warnings.join("\n"), /provider\/invalid-consent.*invalid consent/);
+		assert.match(result.warnings.join("\n"), /provider\/missing-metered.*boolean metered flag/);
+		assert.match(result.warnings.join("\n"), /modelPolicies key "invalid" must use provider\/model/);
+	});
+
+	it("ignores project model policies and treats project-only unmetered candidates as unknown-cost", () => {
+		const root = mkdtempSync(join(tmpdir(), "model-tier-router-"));
+		const agentDir = join(root, "agent");
+		const cwd = join(root, "project");
+		mkdirSync(join(cwd, ".pi"), { recursive: true });
+		mkdirSync(agentDir, { recursive: true });
+		writeFileSync(join(agentDir, "model-tier-router.json"), JSON.stringify({
+			modelPolicies: { "provider/known": { metered: true, consent: "allow" } },
+			tiers: { standard: { rank: 20, thinking: "high", candidates: [{ model: "provider/known", metered: true }] } },
+		}));
+		writeFileSync(join(cwd, ".pi", "model-tier-router.json"), JSON.stringify({
+			modelPolicies: {
+				"provider/known": { metered: false, consent: "allow" },
+				"provider/project-only": { metered: false, consent: "allow" },
+			},
+			tiers: {
+				standard: { rank: 25, thinking: "medium", candidates: [{ model: "provider/known", metered: false }] },
+				private: { rank: 30, thinking: "high", candidates: [{ model: "provider/project-only", metered: false }] },
+			},
+		}));
+
+		const result = loadRouterConfig({ agentDir, cwd, projectTrusted: true });
+		assert.deepEqual(result.config.modelPolicies["provider/known"], { metered: true, consent: "allow" });
+		assert.equal(result.config.modelPolicies["provider/project-only"], undefined);
+		assert.equal(result.config.tierSources.standard, "project");
+		assert.equal(result.config.tierSources.private, "project");
+		assert.deepEqual(
+			resolveCandidatePolicy(result.config.tiers.standard.candidates[0]!, result.config.tierSources.standard!, result.config.modelPolicies["provider/known"]),
+			{ meteredClassification: true, consentPolicy: "allow" },
+		);
+		assert.deepEqual(
+			resolveCandidatePolicy(result.config.tiers.private.candidates[0]!, result.config.tierSources.private!, result.config.modelPolicies["provider/project-only"]),
+			{ meteredClassification: "unknown", consentPolicy: "ask" },
+		);
+		assert.match(result.warnings.join("\n"), /modelPolicies is global-only and was ignored/);
+		assert.match(result.warnings.join("\n"), /provider\/project-only.*unknown-cost/);
+	});
+
 	it("rejects candidates without an explicit metered classification", () => {
 		const root = mkdtempSync(join(tmpdir(), "model-tier-router-"));
 		const agentDir = join(root, "agent");
@@ -365,8 +476,10 @@ interface HarnessSkill {
 	costPolicy?: string;
 	meteredPolicy?: string;
 	metered?: boolean;
+	candidates?: Array<{ model: string; metered: boolean }>;
 	configure?: boolean;
 	available?: boolean;
+	project?: boolean;
 }
 
 interface RouterHarnessOptions {
@@ -375,6 +488,8 @@ interface RouterHarnessOptions {
 	hasUI?: boolean;
 	idle?: boolean;
 	legacyRestoreAfterRun?: boolean;
+	modelPolicies?: Record<string, { metered: boolean; consent?: string }>;
+	routeImplicitSkillReads?: boolean;
 	setModelResults?: Record<string, boolean[]>;
 }
 
@@ -389,6 +504,7 @@ interface RouterHarness {
 	invokeCommand(name: string, args?: string): Promise<void>;
 	selectManually(next: Model<Api>): Promise<void>;
 	setIdle(next: boolean): void;
+	setModelPolicies(policies: Record<string, { metered: boolean; consent?: string }>): void;
 	confirmations: Array<{ title: string; message: string }>;
 	modelSelectionAttempts: string[];
 	modelSelections: string[];
@@ -402,14 +518,17 @@ async function createRouterHarness(
 	options: RouterHarnessOptions = {},
 ): Promise<RouterHarness> {
 	const root = mkdtempSync(join(tmpdir(), "model-tier-router-events-"));
+	const agentDir = join(root, "agent");
 	const cwd = join(root, "project");
 	const skillDir = join(root, "skills");
+	mkdirSync(agentDir, { recursive: true });
 	mkdirSync(join(cwd, ".pi"), { recursive: true });
 	mkdirSync(skillDir, { recursive: true });
 
 	const commands: Array<Record<string, any>> = [];
 	const skillsByName = new Map<string, Skill>();
-	const tiers: Record<string, unknown> = {};
+	const globalTiers: Record<string, unknown> = {};
+	const projectTiers: Record<string, unknown> = {};
 	for (const [name, skill] of Object.entries(skills)) {
 		const path = join(skillDir, `${name}.md`);
 		const routingMetadata = [
@@ -440,22 +559,29 @@ async function createRouterHarness(
 			disableModelInvocation: false,
 		});
 		if (skill.configure !== false) {
+			const tiers = skill.project ? projectTiers : globalTiers;
 			tiers[skill.tier] = {
 				rank: skill.rank,
 				thinking: "high",
-				candidates: [{ model: `provider/${skill.tier}`, metered: skill.metered ?? false }],
+				candidates: skill.candidates ?? [{ model: `provider/${skill.tier}`, metered: skill.metered ?? false }],
 			};
 		}
 	}
-	writeFileSync(
-		join(cwd, ".pi", "model-tier-router.json"),
+	const globalConfigPath = join(agentDir, "model-tier-router.json");
+	const writeGlobalConfig = (modelPolicies = options.modelPolicies ?? {}) => writeFileSync(
+		globalConfigPath,
 		JSON.stringify({
 			enabled: true,
-			routeImplicitSkillReads: true,
+			routeImplicitSkillReads: options.routeImplicitSkillReads ?? true,
+			modelPolicies,
 			...(options.legacyRestoreAfterRun === undefined ? {} : { restoreAfterRun: options.legacyRestoreAfterRun }),
-			tiers,
+			tiers: globalTiers,
 		}),
 	);
+	writeGlobalConfig();
+	if (Object.keys(projectTiers).length > 0) {
+		writeFileSync(join(cwd, ".pi", "model-tier-router.json"), JSON.stringify({ tiers: projectTiers }));
+	}
 
 	const original = model("provider", "original");
 	let currentModel = original;
@@ -465,7 +591,11 @@ async function createRouterHarness(
 		model("provider", "manual"),
 		...Object.values(skills)
 			.filter((skill) => skill.available !== false)
-			.map((skill) => model("provider", skill.tier)),
+			.flatMap((skill) => (skill.candidates ?? [{ model: `provider/${skill.tier}`, metered: skill.metered ?? false }])
+				.map((candidate) => {
+					const separator = candidate.model.indexOf("/");
+					return model(candidate.model.slice(0, separator), candidate.model.slice(separator + 1));
+				})),
 	];
 	const handlers = new Map<string, EventHandler[]>();
 	const registeredCommands = new Map<string, { handler: (args: string, ctx: any) => unknown }>();
@@ -534,6 +664,7 @@ async function createRouterHarness(
 	} as unknown as ExtensionAPI;
 
 	modelTierRouter(pi, {
+		agentDir,
 		usageLedger: {
 			start() {},
 			health: () => ({ pending: 0, dropped: 0, writeErrors: 0 }),
@@ -597,6 +728,9 @@ async function createRouterHarness(
 		setIdle(next) {
 			idle = next;
 		},
+		setModelPolicies(policies) {
+			writeGlobalConfig(policies);
+		},
 		confirmations,
 		modelSelectionAttempts,
 		modelSelections,
@@ -648,6 +782,7 @@ describe("extension lifecycle", () => {
 			effectiveModel: { provider: "provider", model: "standard" },
 			thinkingLevel: "medium",
 			meteredClassification: false,
+			consentPolicy: "not-needed",
 			consentBasis: "not-needed",
 			reason: "routed",
 			warnings: [],
@@ -779,6 +914,108 @@ describe("extension lifecycle", () => {
 		assert.deepEqual(harness.modelSelections, ["provider/premium"]);
 	});
 
+	it("does not fall through to another candidate after metered consent is declined", async () => {
+		const harness = await createRouterHarness(
+			{
+				review: {
+					tier: "premium",
+					rank: 40,
+					candidates: [
+						{ model: "provider/paid", metered: true },
+						{ model: "provider/free", metered: false },
+					],
+				},
+			},
+			{ confirm: false },
+		);
+		await harness.invokeSkill("review");
+		assert.equal(harness.confirmations.length, 1);
+		assert.match(harness.confirmations[0]?.message ?? "", /provider\/paid/);
+		assert.deepEqual(harness.modelSelectionAttempts, []);
+		assert.equal(harness.ctx.model.id, "original");
+	});
+
+	it("honors global allow for explicit and implicit metered routes", async () => {
+		const skills = { review: { tier: "premium", rank: 40, metered: true } };
+		const options = { modelPolicies: { "provider/premium": { metered: true, consent: "allow" } } };
+		const explicit = await createRouterHarness(skills, options);
+		await explicit.invokeSkill("review");
+		assert.deepEqual(explicit.confirmations, []);
+		assert.deepEqual(explicit.modelSelections, ["provider/premium"]);
+		await explicit.invokeCommand("model-tier", "status");
+		assert.equal(lastRouteDecision(explicit).consentPolicy, "allow");
+		assert.equal(lastRouteDecision(explicit).consentBasis, "configured");
+
+		const implicit = await createRouterHarness(skills, options);
+		await implicit.loadSkillsForTurn("review");
+		await implicit.readSkill("review");
+		assert.deepEqual(implicit.confirmations, []);
+		assert.deepEqual(implicit.modelSelections, ["provider/premium"]);
+
+		const headless = await createRouterHarness(skills, { ...options, hasUI: false });
+		await headless.invokeSkill("review");
+		assert.deepEqual(headless.confirmations, []);
+		assert.deepEqual(headless.modelSelections, ["provider/premium"]);
+	});
+
+	it("keeps globally allowed metered models disabled when implicit routing is off", async () => {
+		const harness = await createRouterHarness(
+			{ review: { tier: "premium", rank: 40, metered: true } },
+			{
+				modelPolicies: { "provider/premium": { metered: true, consent: "allow" } },
+				routeImplicitSkillReads: false,
+			},
+		);
+		await harness.loadSkillsForTurn("review");
+		await harness.readSkill("review");
+		assert.deepEqual(harness.modelSelectionAttempts, []);
+	});
+
+	it("applies reloaded consent only to later routes without changing the active route", async () => {
+		const harness = await createRouterHarness(
+			{
+				build: { tier: "standard", rank: 20 },
+				review: { tier: "premium", rank: 40, metered: true },
+			},
+			{ confirm: false },
+		);
+		await harness.invokeSkill("build");
+		assert.equal(harness.ctx.model.id, "standard");
+
+		harness.setModelPolicies({ "provider/premium": { metered: true, consent: "allow" } });
+		await harness.invokeCommand("model-tier", "reload");
+		assert.equal(harness.ctx.model.id, "standard");
+		assert.deepEqual(harness.modelSelectionAttempts, ["provider/standard"]);
+
+		await harness.invokeSkill("review");
+		assert.equal(harness.confirmations.length, 0);
+		assert.deepEqual(harness.modelSelections, ["provider/standard", "provider/premium"]);
+	});
+
+	it("fails closed for a project-only candidate claiming to be unmetered", async () => {
+		const harness = await createRouterHarness(
+			{ review: { tier: "private", rank: 30, metered: false, project: true } },
+			{ confirm: true },
+		);
+		await harness.invokeSkill("review");
+		assert.equal(harness.confirmations.length, 1);
+		assert.match(harness.confirmations[0]?.message ?? "", /cost: unknown/);
+		assert.deepEqual(harness.modelSelections, ["provider/private"]);
+		await harness.invokeCommand("model-tier", "status");
+		assert.equal(lastRouteDecision(harness).meteredClassification, "unknown");
+		assert.equal(lastRouteDecision(harness).consentPolicy, "ask");
+		assert.equal(lastRouteDecision(harness).consentBasis, "confirmed");
+
+		const implicit = await createRouterHarness(
+			{ review: { tier: "private", rank: 30, metered: false, project: true } },
+		);
+		await implicit.loadSkillsForTurn("review");
+		await implicit.readSkill("review");
+		assert.deepEqual(implicit.confirmations, []);
+		assert.deepEqual(implicit.modelSelectionAttempts, []);
+		assert.match(implicit.notifications.join("\n"), /skipped unknown-cost provider\/private/);
+	});
+
 	it("simulates declined and unavailable metered confirmation", async () => {
 		const skill = { review: { tier: "premium", rank: 40, metered: true, meteredPolicy: "unrecognised-policy" } };
 		const declined = await createRouterHarness(skill, { confirm: false });
@@ -795,6 +1032,7 @@ describe("extension lifecycle", () => {
 			effectiveModel: { provider: "provider", model: "original" },
 			thinkingLevel: "low",
 			meteredClassification: true,
+			consentPolicy: "ask",
 			consentBasis: "declined",
 			reason: "metered-declined",
 			warnings: ["declined metered provider/premium for premium"],
@@ -828,6 +1066,7 @@ describe("extension lifecycle", () => {
 
 		assert.deepEqual(harness.confirmations, []);
 		assert.deepEqual(harness.modelSelectionAttempts, []);
+		assert.deepEqual(harness.thinkingSelections, []);
 		assert.equal(harness.ctx.model.id, "original");
 		assert.match(harness.notifications.join("\n"), /implicit skill reads do not prompt/);
 	});
@@ -835,7 +1074,8 @@ describe("extension lifecycle", () => {
 	it("skips a nested metered implicit skill read without prompting or changing the active route", async () => {
 		const harness = await createRouterHarness({
 			build: { tier: "standard", rank: 20 },
-			audit: { tier: "premium", rank: 40, metered: true, meteredPolicy: "ask-above-standard" },
+			audit: { tier: "premium", rank: 40, effort: "xhigh", metered: true, meteredPolicy: "ask-above-standard" },
+			quick: { tier: "economy", rank: 10 },
 		});
 		await harness.invokeSkill("build");
 		await harness.loadSkillsForTurn("audit");
@@ -844,8 +1084,15 @@ describe("extension lifecycle", () => {
 
 		assert.deepEqual(harness.confirmations, []);
 		assert.deepEqual(harness.modelSelectionAttempts, ["provider/standard"]);
+		assert.deepEqual(harness.thinkingSelections, ["high", "xhigh"]);
 		assert.equal(harness.ctx.model.id, "standard");
 		assert.match(harness.notifications.join("\n"), /implicit skill reads do not prompt/);
+
+		await harness.invokeSkill("quick");
+		await harness.invokeCommand("model-tier", "status");
+		assert.deepEqual(lastRouteDecision(harness).candidate, { model: "provider/standard", metered: false });
+		assert.equal(lastRouteDecision(harness).meteredClassification, false);
+		assert.equal(lastRouteDecision(harness).consentPolicy, "not-needed");
 	});
 
 	it("discards stale routes when a later input handler changes the request", async () => {
@@ -895,6 +1142,7 @@ describe("extension lifecycle", () => {
 			effectiveModel: { provider: "provider", model: "standard" },
 			thinkingLevel: "xhigh",
 			meteredClassification: false,
+			consentPolicy: "not-needed",
 			consentBasis: "not-applicable",
 			reason: "retain-lower",
 			warnings: [],
@@ -953,6 +1201,7 @@ describe("extension lifecycle", () => {
 			effectiveModel: { provider: "provider", model: "standard" },
 			thinkingLevel: "high",
 			meteredClassification: false,
+			consentPolicy: "not-needed",
 			consentBasis: "not-needed",
 			reason: "model-switch-failed",
 			warnings: ["could not select provider/premium; retained provider/standard"],
@@ -1031,5 +1280,8 @@ describe("extension lifecycle", () => {
 
 		assert.deepEqual(harness.modelSelections, []);
 		assert.match(harness.notifications.join("\n"), /unknown or unconfigured tier toString/);
+		await harness.invokeCommand("model-tier", "status");
+		assert.equal(lastRouteDecision(harness).consentPolicy, "not-applicable");
+		assert.equal(lastRouteDecision(harness).consentBasis, "not-applicable");
 	});
 });
