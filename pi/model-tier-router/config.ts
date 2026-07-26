@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type {
 	ConfiguredConsentPolicy,
 	ModelPolicy,
+	SelectionPolicy,
 	TierConfigurationSource,
 	TierRoute,
 	ThinkingLevel,
@@ -89,28 +90,49 @@ function parseTier(name: string, value: unknown, path: string, warnings: string[
 		warnings.push(`${path}: tier ${name} candidates must be an array`);
 		return undefined;
 	}
+	let selection: SelectionPolicy = "first-available";
+	if (input.selection !== undefined) {
+		if (input.selection === "first-available" || input.selection === "weighted-random") selection = input.selection;
+		else warnings.push(`${path}: tier ${name} has an invalid selection policy; defaulted to first-available`);
+	}
 
 	const candidates: TierRoute["candidates"] = [];
+	let invalidWeightedCandidate = false;
 	for (const [index, candidate] of input.candidates.entries()) {
 		if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
 			warnings.push(`${path}: tier ${name} candidate ${index + 1} must be an object`);
+			if (selection === "weighted-random") invalidWeightedCandidate = true;
 			continue;
 		}
 		const item = candidate as Record<string, unknown>;
+		let weight: number | undefined;
+		if (selection === "weighted-random") {
+			if (!Number.isInteger(item.weight) || (item.weight as number) < 1 || (item.weight as number) > 100) {
+				warnings.push(`${path}: tier ${name} candidate ${index + 1} weight must be an integer from 1 to 100; tier routing disabled`);
+				invalidWeightedCandidate = true;
+			} else {
+				weight = item.weight as number;
+			}
+		} else if (item.weight !== undefined) {
+			warnings.push(`${path}: tier ${name} candidate ${index + 1} weight is ignored by first-available selection`);
+		}
 		if (!isExactModelId(item.model)) {
 			warnings.push(`${path}: tier ${name} candidate ${index + 1} must use provider/model`);
+			if (selection === "weighted-random") invalidWeightedCandidate = true;
 			continue;
 		}
 		if (typeof item.metered !== "boolean") {
 			warnings.push(`${path}: tier ${name} candidate ${index + 1} must declare a boolean metered flag`);
+			if (selection === "weighted-random") invalidWeightedCandidate = true;
 			continue;
 		}
-		candidates.push({ model: item.model, metered: item.metered });
+		candidates.push({ model: item.model, metered: item.metered, ...(weight === undefined ? {} : { weight }) });
 	}
-
 	return {
 		rank: input.rank,
 		thinking: input.thinking as ThinkingLevel,
+		selection,
+		routingDisabled: invalidWeightedCandidate || undefined,
 		candidates,
 	};
 }

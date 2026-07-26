@@ -17,6 +17,7 @@ import {
 	requiresConsentConfirmation,
 	resolveCandidatePolicy,
 	selectCandidate,
+	selectRouteCandidate,
 	type RouteDecisionRecord,
 	type TierRoute,
 } from "./routing.ts";
@@ -187,6 +188,28 @@ describe("candidate selection", () => {
 	it("does not broaden to arbitrary available models when configured candidates are exhausted", () => {
 		assert.equal(selectCandidate(standard, [model("provider", "different")]), undefined);
 	});
+
+	it("draws weighted candidates at cumulative boundaries after eligibility filtering", () => {
+		const route: TierRoute = {
+			rank: 20,
+			thinking: "high",
+			selection: "weighted-random",
+			candidates: [
+				{ model: "provider/a", metered: false, weight: 3 },
+				{ model: "provider/b", metered: true, weight: 1 },
+			],
+		};
+		const available = [model("provider", "a"), model("provider", "b")];
+		assert.equal(selectRouteCandidate(route, available, () => true, () => 0).candidate?.model, "provider/a");
+		assert.equal(selectRouteCandidate(route, available, () => true, () => 0.749).candidate?.model, "provider/a");
+		assert.equal(selectRouteCandidate(route, available, () => true, () => 0.75).candidate?.model, "provider/b");
+		const filtered = selectRouteCandidate(route, available, (candidate) => !candidate.metered, () => 0.99);
+		assert.equal(filtered.candidate?.model, "provider/a");
+		assert.deepEqual(filtered.pool, [{ model: "provider/a", weight: 3 }]);
+		const availableFallback = selectRouteCandidate(route, [model("provider", "b")], () => true, () => 0);
+		assert.equal(availableFallback.candidate?.model, "provider/b");
+		assert.deepEqual(availableFallback.pool, [{ model: "provider/b", weight: 1 }]);
+	});
 });
 
 describe("configuration", () => {
@@ -221,19 +244,22 @@ describe("configuration", () => {
 		assert.deepEqual(Object.keys(result.config.tiers), ["economy", "standard", "premium"]);
 		assert.deepEqual(result.config.usageLedger, { enabled: true, retentionDays: 30, maxBytes: 10 * 1024 * 1024 });
 		assert.deepEqual(result.config.tiers.economy.candidates, [
-			{ model: "openai-codex/gpt-5.6-luna", metered: false },
-			{ model: "anthropic/claude-haiku-4-5", metered: true },
-			{ model: "google/gemini-3.5-flash", metered: true },
+			{ model: "openai-codex/gpt-5.6-luna", metered: false, weight: 6 },
+			{ model: "anthropic/claude-haiku-4-5", metered: true, weight: 1 },
+			{ model: "google/gemini-3.5-flash", metered: true, weight: 1 },
 		]);
 		assert.deepEqual(result.config.tiers.standard.candidates, [
-			{ model: "openai-codex/gpt-5.6-terra", metered: false },
-			{ model: "anthropic/claude-sonnet-5", metered: true },
+			{ model: "openai-codex/gpt-5.6-terra", metered: false, weight: 3 },
+			{ model: "anthropic/claude-sonnet-5", metered: true, weight: 1 },
 		]);
 		assert.deepEqual(result.config.tiers.premium.candidates, [
-			{ model: "openai-codex/gpt-5.6-sol", metered: false },
-			{ model: "anthropic/claude-fable-5", metered: true },
-			{ model: "anthropic/claude-opus-4-8", metered: true },
+			{ model: "openai-codex/gpt-5.6-sol", metered: false, weight: 3 },
+			{ model: "anthropic/claude-fable-5", metered: true, weight: 1 },
+			{ model: "anthropic/claude-opus-4-8", metered: true, weight: 1 },
 		]);
+		assert.equal(result.config.tiers.economy.selection, "weighted-random");
+		assert.equal(result.config.tiers.standard.selection, "weighted-random");
+		assert.equal(result.config.tiers.premium.selection, "weighted-random");
 		assert.ok(result.config.tiers.economy.rank < result.config.tiers.standard.rank);
 		assert.ok(result.config.tiers.standard.rank < result.config.tiers.premium.rank);
 	});
@@ -399,6 +425,57 @@ describe("configuration", () => {
 		assert.match(result.warnings.join("\n"), /provider\/project-only.*unknown-cost/);
 	});
 
+	it("validates weighted-random tiers and disables malformed weighted routing", () => {
+		const root = mkdtempSync(join(tmpdir(), "model-tier-router-"));
+		const agentDir = join(root, "agent");
+		const cwd = join(root, "project");
+		mkdirSync(agentDir, { recursive: true });
+		writeFileSync(join(agentDir, "model-tier-router.json"), JSON.stringify({ tiers: {
+			weighted: {
+				rank: 20,
+				thinking: "high",
+				selection: "weighted-random",
+				candidates: [
+					{ model: "provider/a", metered: false, weight: 3 },
+					{ model: "provider/b", metered: true, weight: 1 },
+				],
+			},
+			invalid: {
+				rank: 30,
+				thinking: "high",
+				selection: "weighted-random",
+				candidates: [{ model: "provider/c", metered: false, weight: 0 }],
+			},
+			ordered: {
+				rank: 40,
+				thinking: "high",
+				candidates: [{ model: "provider/d", metered: false, weight: 2 }],
+			},
+			malformed: {
+				rank: 50,
+				thinking: "high",
+				selection: "weighted-random",
+				candidates: [
+					{ model: "provider/paid", metered: true, weight: 1 },
+					{ model: "provider/broken" },
+				],
+			},
+		} }));
+
+		const result = loadRouterConfig({ agentDir, cwd, projectTrusted: false });
+		assert.equal(result.config.tiers.weighted.selection, "weighted-random");
+		assert.deepEqual(result.config.tiers.weighted.candidates.map((candidate) => candidate.weight), [3, 1]);
+		assert.equal(result.config.tiers.invalid.selection, "weighted-random");
+		assert.equal(result.config.tiers.invalid.routingDisabled, true);
+		assert.equal(selectRouteCandidate(result.config.tiers.invalid, [model("provider", "c")]).candidate, undefined);
+		assert.equal(result.config.tiers.ordered.selection, "first-available");
+		assert.equal(result.config.tiers.ordered.candidates[0]?.weight, undefined);
+		assert.equal(result.config.tiers.malformed.routingDisabled, true);
+		assert.equal(selectRouteCandidate(result.config.tiers.malformed, [model("provider", "paid")]).candidate, undefined);
+		assert.match(result.warnings.join("\n"), /weight must be an integer from 1 to 100; tier routing disabled/);
+		assert.match(result.warnings.join("\n"), /weight is ignored by first-available selection/);
+	});
+
 	it("rejects candidates without an explicit metered classification", () => {
 		const root = mkdtempSync(join(tmpdir(), "model-tier-router-"));
 		const agentDir = join(root, "agent");
@@ -476,7 +553,8 @@ interface HarnessSkill {
 	costPolicy?: string;
 	meteredPolicy?: string;
 	metered?: boolean;
-	candidates?: Array<{ model: string; metered: boolean }>;
+	candidates?: Array<{ model: string; metered: boolean; weight?: number }>;
+	selection?: "first-available" | "weighted-random";
 	configure?: boolean;
 	available?: boolean;
 	project?: boolean;
@@ -489,6 +567,7 @@ interface RouterHarnessOptions {
 	idle?: boolean;
 	legacyRestoreAfterRun?: boolean;
 	modelPolicies?: Record<string, { metered: boolean; consent?: string }>;
+	random?: () => number;
 	routeImplicitSkillReads?: boolean;
 	setModelResults?: Record<string, boolean[]>;
 }
@@ -505,6 +584,7 @@ interface RouterHarness {
 	selectManually(next: Model<Api>): Promise<void>;
 	setIdle(next: boolean): void;
 	setModelPolicies(policies: Record<string, { metered: boolean; consent?: string }>): void;
+	setTierRoute(tier: string, route: unknown): void;
 	confirmations: Array<{ title: string; message: string }>;
 	modelSelectionAttempts: string[];
 	modelSelections: string[];
@@ -563,6 +643,7 @@ async function createRouterHarness(
 			tiers[skill.tier] = {
 				rank: skill.rank,
 				thinking: "high",
+				selection: skill.selection,
 				candidates: skill.candidates ?? [{ model: `provider/${skill.tier}`, metered: skill.metered ?? false }],
 			};
 		}
@@ -665,6 +746,7 @@ async function createRouterHarness(
 
 	modelTierRouter(pi, {
 		agentDir,
+		random: options.random,
 		usageLedger: {
 			start() {},
 			health: () => ({ pending: 0, dropped: 0, writeErrors: 0 }),
@@ -731,6 +813,10 @@ async function createRouterHarness(
 		setModelPolicies(policies) {
 			writeGlobalConfig(policies);
 		},
+		setTierRoute(tier, route) {
+			globalTiers[tier] = route;
+			writeGlobalConfig();
+		},
 		confirmations,
 		modelSelectionAttempts,
 		modelSelections,
@@ -784,6 +870,8 @@ describe("extension lifecycle", () => {
 			meteredClassification: false,
 			consentPolicy: "not-needed",
 			consentBasis: "not-needed",
+			selectionPolicy: "first-available",
+			selectionPool: [{ model: "provider/standard", weight: 1 }],
 			reason: "routed",
 			warnings: [],
 			restoration: "pending",
@@ -920,19 +1008,91 @@ describe("extension lifecycle", () => {
 				review: {
 					tier: "premium",
 					rank: 40,
+					selection: "weighted-random",
 					candidates: [
-						{ model: "provider/paid", metered: true },
-						{ model: "provider/free", metered: false },
+						{ model: "provider/paid", metered: true, weight: 1 },
+						{ model: "provider/free", metered: false, weight: 3 },
 					],
 				},
 			},
-			{ confirm: false },
+			{ confirm: false, random: () => 0 },
 		);
 		await harness.invokeSkill("review");
 		assert.equal(harness.confirmations.length, 1);
 		assert.match(harness.confirmations[0]?.message ?? "", /provider\/paid/);
 		assert.deepEqual(harness.modelSelectionAttempts, []);
 		assert.equal(harness.ctx.model.id, "original");
+		await harness.invokeCommand("model-tier", "status");
+		assert.equal(lastRouteDecision(harness).selectionPolicy, "weighted-random");
+		assert.deepEqual(lastRouteDecision(harness).selectionPool, [
+			{ model: "provider/paid", weight: 1 },
+			{ model: "provider/free", weight: 3 },
+		]);
+	});
+
+	it("does not fall through after a weighted model switch fails", async () => {
+		const harness = await createRouterHarness(
+			{
+				review: {
+					tier: "premium",
+					rank: 40,
+					selection: "weighted-random",
+					candidates: [
+						{ model: "provider/paid", metered: true, weight: 1 },
+						{ model: "provider/free", metered: false, weight: 3 },
+					],
+				},
+			},
+			{ random: () => 0, setModelResults: { "provider/paid": [false] } },
+		);
+		await harness.invokeSkill("review");
+		assert.deepEqual(harness.modelSelectionAttempts, ["provider/paid"]);
+		assert.deepEqual(harness.modelSelections, []);
+		assert.equal(harness.ctx.model.id, "original");
+	});
+
+	it("filters metered ask candidates from implicit and headless weighted pools", async () => {
+		const skill = {
+			review: {
+				tier: "premium",
+				rank: 40,
+				selection: "weighted-random" as const,
+				candidates: [
+					{ model: "provider/paid", metered: true, weight: 3 },
+					{ model: "provider/free", metered: false, weight: 1 },
+				],
+			},
+		};
+		const implicit = await createRouterHarness(skill, { random: () => 0 });
+		await implicit.loadSkillsForTurn("review");
+		await implicit.readSkill("review");
+		assert.deepEqual(implicit.confirmations, []);
+		assert.deepEqual(implicit.modelSelections, ["provider/free"]);
+
+		const headless = await createRouterHarness(skill, { hasUI: false, random: () => 0 });
+		await headless.invokeSkill("review");
+		assert.deepEqual(headless.confirmations, []);
+		assert.deepEqual(headless.modelSelections, ["provider/free"]);
+
+		let draws = 0;
+		const empty = await createRouterHarness(
+			{
+				review: {
+					tier: "premium",
+					rank: 40,
+					selection: "weighted-random",
+					candidates: [{ model: "provider/paid", metered: true, weight: 1 }],
+				},
+			},
+			{ hasUI: false, random: () => { draws++; return 0; } },
+		);
+		await empty.invokeSkill("review");
+		assert.equal(draws, 0);
+		assert.deepEqual(empty.modelSelectionAttempts, []);
+		empty.ctx.hasUI = true;
+		await empty.invokeCommand("model-tier", "status");
+		assert.equal(lastRouteDecision(empty).reason, "no-eligible-candidate");
+		assert.deepEqual(lastRouteDecision(empty).selectionPool, []);
 	});
 
 	it("honors global allow for explicit and implicit metered routes", async () => {
@@ -992,6 +1152,39 @@ describe("extension lifecycle", () => {
 		assert.deepEqual(harness.modelSelections, ["provider/standard", "provider/premium"]);
 	});
 
+	it("uses reloaded weighted configuration for later independent draws", async () => {
+		const harness = await createRouterHarness(
+			{
+				review: {
+					tier: "standard",
+					rank: 20,
+					selection: "weighted-random",
+					candidates: [
+						{ model: "provider/a", metered: false, weight: 9 },
+						{ model: "provider/b", metered: false, weight: 1 },
+					],
+				},
+			},
+			{ random: () => 0.5 },
+		);
+		await harness.invokeSkill("review");
+		assert.equal(harness.ctx.model.id, "a");
+		await harness.emit("agent_settled");
+
+		harness.setTierRoute("standard", {
+			rank: 20,
+			thinking: "high",
+			selection: "weighted-random",
+			candidates: [
+				{ model: "provider/a", metered: false, weight: 1 },
+				{ model: "provider/b", metered: false, weight: 9 },
+			],
+		});
+		await harness.invokeCommand("model-tier", "reload");
+		await harness.invokeSkill("review");
+		assert.equal(harness.ctx.model.id, "b");
+	});
+
 	it("fails closed for a project-only candidate claiming to be unmetered", async () => {
 		const harness = await createRouterHarness(
 			{ review: { tier: "private", rank: 30, metered: false, project: true } },
@@ -1034,6 +1227,8 @@ describe("extension lifecycle", () => {
 			meteredClassification: true,
 			consentPolicy: "ask",
 			consentBasis: "declined",
+			selectionPolicy: "first-available",
+			selectionPool: [{ model: "provider/premium", weight: 1 }],
 			reason: "metered-declined",
 			warnings: ["declined metered provider/premium for premium"],
 			restoration: "not-applicable",
@@ -1119,6 +1314,54 @@ describe("extension lifecycle", () => {
 		assert.equal(harness.ctx.model.id, "original");
 	});
 
+	it("draws once for each successful higher-tier weighted upgrade", async () => {
+		let draws = 0;
+		const harness = await createRouterHarness(
+			{
+				build: {
+					tier: "standard",
+					rank: 20,
+					selection: "weighted-random",
+					candidates: [{ model: "provider/a", metered: false, weight: 1 }],
+				},
+				audit: {
+					tier: "premium",
+					rank: 40,
+					selection: "weighted-random",
+					candidates: [{ model: "provider/b", metered: false, weight: 1 }],
+				},
+			},
+			{ random: () => { draws++; return 0; } },
+		);
+		await harness.invokeSkill("build");
+		await harness.invokeSkill("audit");
+		assert.equal(draws, 2);
+		assert.deepEqual(harness.modelSelections, ["provider/a", "provider/b"]);
+	});
+
+	it("does not redraw weighted candidates for retained nested tiers", async () => {
+		let draws = 0;
+		const harness = await createRouterHarness(
+			{
+				build: {
+					tier: "standard",
+					rank: 20,
+					selection: "weighted-random",
+					candidates: [
+						{ model: "provider/a", metered: false, weight: 1 },
+						{ model: "provider/b", metered: false, weight: 1 },
+					],
+				},
+				quick: { tier: "economy", rank: 10 },
+			},
+			{ random: () => { draws++; return 0; } },
+		);
+		await harness.invokeSkill("build");
+		await harness.invokeSkill("quick");
+		assert.equal(draws, 1);
+		assert.equal(harness.ctx.model.id, "a");
+	});
+
 	it("raises nested effort without downgrading the active model or thinking", async () => {
 		const harness = await createRouterHarness({
 			build: { tier: "standard", rank: 20, effort: "medium" },
@@ -1144,6 +1387,8 @@ describe("extension lifecycle", () => {
 			meteredClassification: false,
 			consentPolicy: "not-needed",
 			consentBasis: "not-applicable",
+			selectionPolicy: "first-available",
+			selectionPool: [{ model: "provider/standard", weight: 1 }],
 			reason: "retain-lower",
 			warnings: [],
 			restoration: "pending",
@@ -1203,6 +1448,8 @@ describe("extension lifecycle", () => {
 			meteredClassification: false,
 			consentPolicy: "not-needed",
 			consentBasis: "not-needed",
+			selectionPolicy: "first-available",
+			selectionPool: [{ model: "provider/premium", weight: 1 }],
 			reason: "model-switch-failed",
 			warnings: ["could not select provider/premium; retained provider/standard"],
 			restoration: "pending",

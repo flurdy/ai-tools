@@ -9,6 +9,20 @@ export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhi
 export interface ModelCandidate {
 	model: string;
 	metered: boolean;
+	weight?: number;
+}
+
+export type SelectionPolicy = "first-available" | "weighted-random";
+
+export interface SelectionPoolEntry {
+	model: string;
+	weight: number;
+}
+
+export interface CandidateSelection {
+	candidate: ModelCandidate | undefined;
+	policy: SelectionPolicy;
+	pool: SelectionPoolEntry[];
 }
 
 export type ConfiguredConsentPolicy = "ask" | "allow";
@@ -28,6 +42,8 @@ export interface ResolvedCandidatePolicy {
 export interface TierRoute {
 	rank: number;
 	thinking: ThinkingLevel;
+	selection?: SelectionPolicy;
+	routingDisabled?: boolean;
 	candidates: ModelCandidate[];
 }
 
@@ -62,6 +78,8 @@ export interface RouteDecisionRecord {
 	meteredClassification: MeteredClassification;
 	consentPolicy: EffectiveConsentPolicy;
 	consentBasis: ConsentBasis;
+	selectionPolicy: SelectionPolicy;
+	selectionPool: SelectionPoolEntry[];
 	reason: string;
 	warnings: string[];
 	restoration: RestorationResult;
@@ -76,6 +94,8 @@ export interface RouteDecisionInput {
 	meteredClassification?: MeteredClassification;
 	consentPolicy?: EffectiveConsentPolicy;
 	consentBasis: ConsentBasis;
+	selectionPolicy?: SelectionPolicy;
+	selectionPool?: SelectionPoolEntry[];
 	reason: string;
 	warnings?: string[];
 	restoration?: RestorationResult;
@@ -91,6 +111,8 @@ export function createRouteDecision(input: RouteDecisionInput): RouteDecisionRec
 		meteredClassification: input.meteredClassification ?? input.candidate?.metered ?? "unknown",
 		consentPolicy: input.consentPolicy ?? (input.candidate ? (input.candidate.metered ? "ask" : "not-needed") : "not-applicable"),
 		consentBasis: input.consentBasis,
+		selectionPolicy: input.selectionPolicy ?? "first-available",
+		selectionPool: (input.selectionPool ?? []).map((entry) => ({ ...entry })),
 		reason: input.reason,
 		warnings: [...(input.warnings ?? [])],
 		restoration: input.restoration ?? "not-applicable",
@@ -151,8 +173,37 @@ export function decideTier(active: ActiveTier | undefined, requested: ActiveTier
  * identity, metering, and consent checks documented in README.md.
  */
 export function selectCandidate(route: TierRoute, available: Model<Api>[]): ModelCandidate | undefined {
+	return selectRouteCandidate(route, available).candidate;
+}
+
+export function selectRouteCandidate(
+	route: TierRoute,
+	available: Model<Api>[],
+	isEligible: (candidate: ModelCandidate) => boolean = () => true,
+	random: () => number = Math.random,
+): CandidateSelection {
+	const policy = route.selection ?? "first-available";
+	if (route.routingDisabled) return { candidate: undefined, policy, pool: [] };
 	const availableIds = new Set(available.map((model) => `${model.provider}/${model.id}`));
-	return route.candidates.find((candidate) => availableIds.has(candidate.model));
+	const availableCandidates = route.candidates.filter((candidate) => availableIds.has(candidate.model));
+	if (policy === "first-available") {
+		return {
+			candidate: availableCandidates[0],
+			policy,
+			pool: availableCandidates.map((candidate) => ({ model: candidate.model, weight: 1 })),
+		};
+	}
+
+	const eligible = availableCandidates.filter(isEligible);
+	const pool = eligible.map((candidate) => ({ model: candidate.model, weight: candidate.weight ?? 1 }));
+	const totalWeight = pool.reduce((total, entry) => total + entry.weight, 0);
+	if (totalWeight === 0) return { candidate: undefined, policy, pool };
+	let draw = Math.min(Math.max(random(), 0), 1 - Number.EPSILON) * totalWeight;
+	for (const candidate of eligible) {
+		draw -= candidate.weight ?? 1;
+		if (draw < 0) return { candidate, policy, pool };
+	}
+	return { candidate: eligible.at(-1), policy, pool };
 }
 
 export function findExactModel(candidate: ModelCandidate, available: Model<Api>[]): Model<Api> | undefined {

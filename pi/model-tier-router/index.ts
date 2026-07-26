@@ -17,7 +17,7 @@ import {
 	permitsImplicitRouting,
 	requiresConsentConfirmation,
 	resolveCandidatePolicy,
-	selectCandidate,
+	selectRouteCandidate,
 	type ConsentBasis,
 	type EffectiveConsentPolicy,
 	type MeteredClassification,
@@ -25,6 +25,8 @@ import {
 	type ResolvedCandidatePolicy,
 	type ModelIdentity,
 	type RouteDecisionRecord,
+	type SelectionPolicy,
+	type SelectionPoolEntry,
 	type SkillRoutingMetadata,
 	type ThinkingLevel,
 } from "./routing.ts";
@@ -39,6 +41,8 @@ interface RunState {
 	activeCandidate: ModelCandidate;
 	activeMeteredClassification: MeteredClassification;
 	activeConsentPolicy: EffectiveConsentPolicy;
+	activeSelectionPolicy: SelectionPolicy;
+	activeSelectionPool: SelectionPoolEntry[];
 	requestedThinking: ThinkingLevel;
 	activeThinking: ThinkingLevel;
 	routedSkills: string[];
@@ -103,6 +107,7 @@ export async function reconcileUsageLedger(
 
 export interface ModelTierRouterOptions {
 	agentDir?: string;
+	random?: () => number;
 	usageLedger?: UsageLedgerPort;
 }
 
@@ -152,6 +157,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 		restoration: RouteDecisionRecord["restoration"] = "not-applicable",
 		effectiveTier = requestedTier,
 		policy?: { meteredClassification: MeteredClassification; consentPolicy: EffectiveConsentPolicy },
+		selection?: { policy: SelectionPolicy; pool: SelectionPoolEntry[] },
 	): RouteDecisionRecord {
 		const record = createRouteDecision({
 			requestedTier,
@@ -162,6 +168,8 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 			meteredClassification: policy?.meteredClassification,
 			consentPolicy: policy?.consentPolicy,
 			consentBasis,
+			selectionPolicy: selection?.policy,
+			selectionPool: selection?.pool,
 			reason,
 			warnings,
 			restoration,
@@ -269,6 +277,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 		ctx: ExtensionContext,
 	): Promise<void> {
 		if (!isEnabled() || !loaded) return;
+		const config = loaded.config;
 		if (run?.restoreOwed) {
 			warnOnce(ctx, "restore-owed", `skipped ${skillName} while restoration of ${modelId(run.originalModel)} is owed`);
 			return;
@@ -282,8 +291,8 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 
 		const currentEffectiveTier = run?.activeDecision.effectiveTier ?? metadata.tier;
 		const activeRestoration: RouteDecisionRecord["restoration"] = run ? "pending" : "not-applicable";
-		const route = Object.hasOwn(loaded.config.tiers, metadata.tier)
-			? loaded.config.tiers[metadata.tier]
+		const route = Object.hasOwn(config.tiers, metadata.tier)
+			? config.tiers[metadata.tier]
 			: undefined;
 		if (!route) {
 			const warning = `unknown or unconfigured tier ${metadata.tier}; retained ${modelId(ctx.model)}`;
@@ -315,6 +324,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 					meteredClassification: run.activeMeteredClassification,
 					consentPolicy: run.activeConsentPolicy,
 				},
+				{ policy: run.activeSelectionPolicy, pool: run.activeSelectionPool },
 			);
 			activateDecision(run, routeDecision, skillName);
 			if (decision === "retain-lower") {
@@ -324,28 +334,43 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 		}
 
 		const available = ctx.modelRegistry.getAvailable();
-		const candidate = selectCandidate(route, available);
+		const tierSource = config.tierSources[metadata.tier] ?? "global";
+		const resolvePolicy = (candidate: ModelCandidate): ResolvedCandidatePolicy => resolveCandidatePolicy(
+			candidate,
+			tierSource,
+			config.modelPolicies[candidate.model],
+		);
+		const selection = selectRouteCandidate(
+			route,
+			available,
+			(candidate) => {
+				const policy = resolvePolicy(candidate);
+				if (source === "implicit-read") return permitsImplicitRouting(policy);
+				return ctx.hasUI || !requiresConsentConfirmation(policy);
+			},
+			options.random,
+		);
+		const candidate = selection.candidate;
 		const target = candidate ? findExactModel(candidate, available) : undefined;
 		if (!candidate || !target) {
 			if (run) raiseRunThinking(run, requestedThinking, skillName, ctx);
-			const warning = `no available candidate for ${metadata.tier}; retained ${modelId(ctx.model)}`;
-			warnOnce(ctx, `unavailable:${metadata.tier}`, warning);
-			const routeDecision = recordRouteDecision(ctx, metadata.tier, undefined, "not-applicable", "no-available-candidate", [warning], activeRestoration, currentEffectiveTier);
+			const reason = selection.policy === "weighted-random" && selection.pool.length === 0
+				? "no-eligible-candidate"
+				: "no-available-candidate";
+			const warning = `${reason === "no-eligible-candidate" ? "no eligible" : "no available"} candidate for ${metadata.tier}; retained ${modelId(ctx.model)}`;
+			warnOnce(ctx, `${reason}:${metadata.tier}`, warning);
+			const routeDecision = recordRouteDecision(ctx, metadata.tier, undefined, "not-applicable", reason, [warning], activeRestoration, currentEffectiveTier, undefined, selection);
 			if (run) activateDecision(run, routeDecision, skillName);
 			return;
 		}
 
-		const candidatePolicy: ResolvedCandidatePolicy = resolveCandidatePolicy(
-			candidate,
-			loaded.config.tierSources[metadata.tier] ?? "global",
-			loaded.config.modelPolicies[candidate.model],
-		);
+		const candidatePolicy = resolvePolicy(candidate);
 		const exposure = candidatePolicy.meteredClassification === "unknown" ? "unknown-cost" : "metered";
 		if (source === "implicit-read" && !permitsImplicitRouting(candidatePolicy)) {
 			if (run) raiseRunThinking(run, requestedThinking, skillName, ctx);
 			const warning = `skipped ${exposure} ${candidate.model} for ${metadata.tier} because implicit skill reads do not prompt`;
 			warnOnce(ctx, `${exposure}:implicit:${metadata.tier}`, warning);
-			const routeDecision = recordRouteDecision(ctx, metadata.tier, candidate, "not-requested-implicit", `${exposure}-implicit-skip`, [warning], activeRestoration, currentEffectiveTier, candidatePolicy);
+			const routeDecision = recordRouteDecision(ctx, metadata.tier, candidate, "not-requested-implicit", `${exposure}-implicit-skip`, [warning], activeRestoration, currentEffectiveTier, candidatePolicy, selection);
 			if (run) activateDecision(run, routeDecision, skillName);
 			return;
 		}
@@ -355,7 +380,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 				if (run) raiseRunThinking(run, requestedThinking, skillName, ctx);
 				const warning = `skipped ${exposure} ${candidate.model} for ${metadata.tier} because no confirmation UI is available`;
 				warnOnce(ctx, `${exposure}:no-ui:${metadata.tier}`, warning);
-				const routeDecision = recordRouteDecision(ctx, metadata.tier, candidate, "unavailable-ui", `${exposure}-no-ui-skip`, [warning], activeRestoration, currentEffectiveTier, candidatePolicy);
+				const routeDecision = recordRouteDecision(ctx, metadata.tier, candidate, "unavailable-ui", `${exposure}-no-ui-skip`, [warning], activeRestoration, currentEffectiveTier, candidatePolicy, selection);
 				if (run) activateDecision(run, routeDecision, skillName);
 				return;
 			}
@@ -372,7 +397,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 				if (run) raiseRunThinking(run, requestedThinking, skillName, ctx);
 				const warning = `declined ${exposure} ${candidate.model} for ${metadata.tier}`;
 				warnOnce(ctx, `${exposure}:declined:${metadata.tier}`, warning);
-				const routeDecision = recordRouteDecision(ctx, metadata.tier, candidate, "declined", `${exposure}-declined`, [warning], activeRestoration, currentEffectiveTier, candidatePolicy);
+				const routeDecision = recordRouteDecision(ctx, metadata.tier, candidate, "declined", `${exposure}-declined`, [warning], activeRestoration, currentEffectiveTier, candidatePolicy, selection);
 				if (run) activateDecision(run, routeDecision, skillName);
 				return;
 			}
@@ -398,12 +423,12 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 			if (run) raiseRunThinking(run, requestedThinking, skillName, ctx);
 			const warning = `could not select ${candidate.model}; retained ${modelId(ctx.model)}`;
 			warnOnce(ctx, `switch:${candidate.model}`, warning);
-			const routeDecision = recordRouteDecision(ctx, metadata.tier, candidate, consentBasis, "model-switch-failed", [warning], activeRestoration, currentEffectiveTier, candidatePolicy);
+			const routeDecision = recordRouteDecision(ctx, metadata.tier, candidate, consentBasis, "model-switch-failed", [warning], activeRestoration, currentEffectiveTier, candidatePolicy, selection);
 			if (run) activateDecision(run, routeDecision, skillName);
 			return;
 		}
 
-		const activeDecision = recordRouteDecision(ctx, metadata.tier, candidate, consentBasis, "routed", [], "pending", metadata.tier, candidatePolicy);
+		const activeDecision = recordRouteDecision(ctx, metadata.tier, candidate, consentBasis, "routed", [], "pending", metadata.tier, candidatePolicy, selection);
 		if (!run) {
 			run = {
 				originalModel,
@@ -413,6 +438,8 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 				activeCandidate: candidate,
 				activeMeteredClassification: candidatePolicy.meteredClassification,
 				activeConsentPolicy: candidatePolicy.consentPolicy,
+				activeSelectionPolicy: selection.policy,
+				activeSelectionPool: selection.pool,
 				requestedThinking,
 				activeThinking: pi.getThinkingLevel(),
 				routedSkills: [skillName],
@@ -430,6 +457,8 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 			run.activeCandidate = candidate;
 			run.activeMeteredClassification = candidatePolicy.meteredClassification;
 			run.activeConsentPolicy = candidatePolicy.consentPolicy;
+			run.activeSelectionPolicy = selection.policy;
+			run.activeSelectionPool = selection.pool;
 			run.requestedThinking = selectedThinking;
 			run.activeThinking = pi.getThinkingLevel();
 			activateDecision(run, activeDecision, skillName);
