@@ -461,6 +461,18 @@ describe("configuration", () => {
 				selection: "weighted-random",
 				candidates: [{ model: "provider/c", metered: false, weight: 0 }],
 			},
+			overMaximum: {
+				rank: 31,
+				thinking: "high",
+				selection: "weighted-random",
+				candidates: [{ model: "provider/large", metered: false, weight: 101 }],
+			},
+			fractional: {
+				rank: 32,
+				thinking: "high",
+				selection: "weighted-random",
+				candidates: [{ model: "provider/fractional", metered: false, weight: 1.5 }],
+			},
 			ordered: {
 				rank: 40,
 				thinking: "high",
@@ -483,6 +495,10 @@ describe("configuration", () => {
 		assert.equal(result.config.tiers.invalid.selection, "weighted-random");
 		assert.equal(result.config.tiers.invalid.routingDisabled, true);
 		assert.equal(selectRouteCandidate(result.config.tiers.invalid, [model("provider", "c")]).candidate, undefined);
+		assert.equal(result.config.tiers.overMaximum.routingDisabled, true);
+		assert.equal(selectRouteCandidate(result.config.tiers.overMaximum, [model("provider", "large")]).candidate, undefined);
+		assert.equal(result.config.tiers.fractional.routingDisabled, true);
+		assert.equal(selectRouteCandidate(result.config.tiers.fractional, [model("provider", "fractional")]).candidate, undefined);
 		assert.equal(result.config.tiers.ordered.selection, "first-available");
 		assert.equal(result.config.tiers.ordered.candidates[0]?.weight, undefined);
 		assert.equal(result.config.tiers.malformed.routingDisabled, true);
@@ -1082,6 +1098,35 @@ describe("extension lifecycle", () => {
 		]);
 	});
 
+	it("does not fall through a first-available tier after the first candidate is declined", async () => {
+		const harness = await createRouterHarness(
+			{
+				review: {
+					tier: "premium",
+					rank: 40,
+					candidates: [
+						{ model: "provider/paid", metered: true },
+						{ model: "provider/free", metered: false },
+					],
+				},
+			},
+			{ confirm: false },
+		);
+
+		await harness.invokeSkill("review");
+		assert.equal(harness.confirmations.length, 1);
+		assert.match(harness.confirmations[0]?.message ?? "", /provider\/paid/);
+		assert.deepEqual(harness.modelSelectionAttempts, []);
+		assert.equal(harness.ctx.model.id, "original");
+		await harness.invokeCommand("model-tier", "status");
+		assert.equal(lastRouteDecision(harness).reason, "metered-declined");
+		assert.equal(lastRouteDecision(harness).selectionPolicy, "first-available");
+		assert.deepEqual(lastRouteDecision(harness).selectionPool, [
+			{ model: "provider/paid", weight: 1 },
+			{ model: "provider/free", weight: 1 },
+		]);
+	});
+
 	it("does not fall through after a weighted model switch fails", async () => {
 		const harness = await createRouterHarness(
 			{
@@ -1125,6 +1170,33 @@ describe("extension lifecycle", () => {
 		await headless.invokeSkill("review");
 		assert.deepEqual(headless.confirmations, []);
 		assert.deepEqual(headless.modelSelections, ["provider/free"]);
+
+		const unknownCost = await createRouterHarness(
+			{
+				review: {
+					tier: "project-weighted",
+					rank: 40,
+					project: true,
+					selection: "weighted-random",
+					candidates: [
+						{ model: "provider/unknown", metered: false, weight: 3 },
+						{ model: "provider/free", metered: false, weight: 1 },
+					],
+				},
+			},
+			{
+				modelPolicies: { "provider/free": { metered: false } },
+				random: () => 0,
+			},
+		);
+		await unknownCost.loadSkillsForTurn("review");
+		await unknownCost.readSkill("review");
+		assert.deepEqual(unknownCost.confirmations, []);
+		assert.deepEqual(unknownCost.modelSelections, ["provider/free"]);
+		await unknownCost.invokeCommand("model-tier", "status");
+		assert.deepEqual(lastRouteDecision(unknownCost).selectionPool, [{ model: "provider/free", weight: 1 }]);
+		assert.equal(lastRouteDecision(unknownCost).meteredClassification, false);
+		assert.equal(lastRouteDecision(unknownCost).consentPolicy, "not-needed");
 
 		let draws = 0;
 		const empty = await createRouterHarness(
@@ -1203,6 +1275,29 @@ describe("extension lifecycle", () => {
 		await headless.invokeSkill("review");
 		assert.deepEqual(headless.confirmations, []);
 		assert.deepEqual(headless.modelSelections, ["provider/premium"]);
+	});
+
+	it("applies one exact global model policy consistently across tiers", async () => {
+		const harness = await createRouterHarness(
+			{
+				build: { tier: "standard", rank: 20, candidates: [{ model: "provider/shared" }] },
+				audit: { tier: "premium", rank: 40, candidates: [{ model: "provider/shared" }] },
+			},
+			{ modelPolicies: { "provider/shared": { metered: true, consent: "allow" } } },
+		);
+
+		await harness.invokeSkill("build");
+		await harness.invokeSkill("audit");
+		assert.deepEqual(harness.confirmations, []);
+		assert.deepEqual(harness.modelSelectionAttempts, ["provider/shared", "provider/shared"]);
+		await harness.invokeCommand("model-tier", "status");
+		const decision = lastRouteDecision(harness);
+		assert.equal(decision.requestedTier, "premium");
+		assert.deepEqual(decision.candidate, { model: "provider/shared" });
+		assert.equal(decision.meteredClassification, true);
+		assert.equal(decision.consentPolicy, "allow");
+		assert.equal(decision.consentBasis, "configured");
+		assert.equal(decision.reason, "routed");
 	});
 
 	it("keeps globally allowed metered models disabled when implicit routing is off", async () => {
@@ -1377,6 +1472,33 @@ describe("extension lifecycle", () => {
 		assert.equal(lastRouteDecision(harness).consentPolicy, "not-needed");
 	});
 
+	it("retains the active model and raises thinking after a nested explicit route is declined", async () => {
+		const harness = await createRouterHarness(
+			{
+				build: { tier: "standard", rank: 20, effort: "medium" },
+				audit: { tier: "premium", rank: 40, effort: "xhigh", metered: true },
+			},
+			{ confirm: false },
+		);
+
+		await harness.invokeSkill("build");
+		await harness.invokeSkill("audit");
+		assert.equal(harness.confirmations.length, 1);
+		assert.deepEqual(harness.modelSelectionAttempts, ["provider/standard"]);
+		assert.deepEqual(harness.modelSelections, ["provider/standard"]);
+		assert.deepEqual(harness.thinkingSelections, ["medium", "xhigh"]);
+		assert.equal(harness.ctx.model.id, "standard");
+
+		await harness.invokeCommand("model-tier", "status");
+		const decision = lastRouteDecision(harness);
+		assert.equal(decision.requestedTier, "premium");
+		assert.equal(decision.effectiveTier, "standard");
+		assert.equal(decision.thinkingLevel, "xhigh");
+		assert.equal(decision.consentBasis, "declined");
+		assert.equal(decision.reason, "metered-declined");
+		assert.equal(decision.restoration, "pending");
+	});
+
 	it("discards stale routes when a later input handler changes the request", async () => {
 		const harness = await createRouterHarness({ review: { tier: "standard", rank: 20 } });
 		await harness.stageSkill("review");
@@ -1439,11 +1561,24 @@ describe("extension lifecycle", () => {
 						{ model: "provider/b", metered: false, weight: 1 },
 					],
 				},
+				peer: { tier: "standard-peer", rank: 20 },
 				quick: { tier: "economy", rank: 10 },
 			},
 			{ random: () => { draws++; return 0; } },
 		);
 		await harness.invokeSkill("build");
+		await harness.invokeSkill("peer");
+		assert.equal(draws, 1);
+		await harness.invokeCommand("model-tier", "status");
+		assert.equal(lastRouteDecision(harness).requestedTier, "standard-peer");
+		assert.equal(lastRouteDecision(harness).effectiveTier, "standard");
+		assert.equal(lastRouteDecision(harness).reason, "retain-equal");
+		assert.deepEqual(lastRouteDecision(harness).candidate, { model: "provider/a", metered: false, weight: 1 });
+		assert.deepEqual(lastRouteDecision(harness).selectionPool, [
+			{ model: "provider/a", weight: 1 },
+			{ model: "provider/b", weight: 1 },
+		]);
+
 		await harness.invokeSkill("quick");
 		assert.equal(draws, 1);
 		assert.equal(harness.ctx.model.id, "a");
