@@ -48,27 +48,27 @@ wait_for_cache() {
   exit 1
 }
 
-git_behind_cache_path() {
+git_divergence_cache_path() {
   local root=$1 branch=$2 key
   key=$(printf '%s' "$root|$branch" | cksum | tr -cd '0-9' | cut -c1-12)
-  printf '/tmp/statusline-git-behind-%s' "$key"
+  printf '/tmp/statusline-git-divergence-%s' "$key"
 }
 
-clear_git_behind_cache() {
+clear_git_divergence_cache() {
   local root=$1 branch=$2 cache
-  cache=$(git_behind_cache_path "$root" "$branch")
+  cache=$(git_divergence_cache_path "$root" "$branch")
   rm -f "$cache" "$cache.lock" "$cache.tmp."*
   rm -rf "$cache.lock.d"
 }
 
-wait_for_git_behind_cache() {
+wait_for_git_divergence_cache() {
   local root=$1 branch=$2 cache
-  cache=$(git_behind_cache_path "$root" "$branch")
+  cache=$(git_divergence_cache_path "$root" "$branch")
   for _ in {1..100}; do
     [ -f "$cache" ] && [ ! -e "$cache.lock.d" ] && return
     sleep 0.05
   done
-  printf 'Timed out waiting for Git behind cache\n' >&2
+  printf 'Timed out waiting for Git divergence cache\n' >&2
   exit 1
 }
 
@@ -218,20 +218,21 @@ git -C "$GIT_SEED" commit -am "remote commit" >/dev/null
 git -C "$GIT_SEED" push >/dev/null
 git -C "$GIT_WORKSPACE" fetch origin >/dev/null
 clear_git_status_cache
-clear_git_behind_cache "$GIT_WORKSPACE" main
+clear_git_divergence_cache "$GIT_WORKSPACE" main
 output=$(render "$GIT_WORKSPACE")
 assert_not_contains "$output" "⇣1"
-wait_for_git_behind_cache "$GIT_WORKSPACE" main
+wait_for_git_divergence_cache "$GIT_WORKSPACE" main
 output=$(render "$GIT_WORKSPACE")
 assert_contains "$output" "⇣1"
+assert_not_contains "$output" "⇡"
 
 # A checkout during a stale branch-status window must query the cache-keyed
 # branch, not process-time HEAD.
 git -C "$GIT_WORKSPACE" switch -c feature --track origin/main >/dev/null
 printf 'main|0|0|0|0|\n' > /tmp/statusline-git-cache-beads-statusline-test
-clear_git_behind_cache "$GIT_WORKSPACE" main
+clear_git_divergence_cache "$GIT_WORKSPACE" main
 render "$GIT_WORKSPACE" >/dev/null
-wait_for_git_behind_cache "$GIT_WORKSPACE" main
+wait_for_git_divergence_cache "$GIT_WORKSPACE" main
 output=$(render "$GIT_WORKSPACE")
 assert_contains "$output" "⇣1"
 git -C "$GIT_WORKSPACE" switch main >/dev/null
@@ -240,11 +241,37 @@ clear_git_status_cache
 # A zero count stays hidden after the local branch catches up.
 git -C "$GIT_WORKSPACE" merge --ff-only '@{upstream}' >/dev/null
 clear_git_status_cache
-clear_git_behind_cache "$GIT_WORKSPACE" main
+clear_git_divergence_cache "$GIT_WORKSPACE" main
 render "$GIT_WORKSPACE" >/dev/null
-wait_for_git_behind_cache "$GIT_WORKSPACE" main
+wait_for_git_divergence_cache "$GIT_WORKSPACE" main
 output=$(render "$GIT_WORKSPACE")
+assert_not_contains "$output" "⇡"
 assert_not_contains "$output" "⇣"
+
+# A local-only commit renders ahead without behind.
+git -C "$GIT_WORKSPACE" config user.name "Statusline Test"
+git -C "$GIT_WORKSPACE" config user.email "statusline@example.invalid"
+printf 'local\n' >> "$GIT_WORKSPACE/file.txt"
+git -C "$GIT_WORKSPACE" commit -am "local commit" >/dev/null
+clear_git_status_cache
+clear_git_divergence_cache "$GIT_WORKSPACE" main
+render "$GIT_WORKSPACE" >/dev/null
+wait_for_git_divergence_cache "$GIT_WORKSPACE" main
+output=$(render "$GIT_WORKSPACE")
+assert_contains "$output" "⇡1"
+assert_not_contains "$output" "⇣"
+
+# Independent local and remote commits render both directions.
+printf 'three\n' >> "$GIT_SEED/file.txt"
+git -C "$GIT_SEED" commit -am "second remote commit" >/dev/null
+git -C "$GIT_SEED" push >/dev/null
+git -C "$GIT_WORKSPACE" fetch origin >/dev/null
+clear_git_status_cache
+clear_git_divergence_cache "$GIT_WORKSPACE" main
+render "$GIT_WORKSPACE" >/dev/null
+wait_for_git_divergence_cache "$GIT_WORKSPACE" main
+output=$(render "$GIT_WORKSPACE")
+assert_contains "$output" "⇡1 ⇣1"
 
 # A branch without a configured upstream also stays hidden.
 GIT_LOCAL="$TEST_ROOT/git-local"
@@ -255,13 +282,14 @@ printf 'local\n' > "$GIT_LOCAL/file.txt"
 git -C "$GIT_LOCAL" add file.txt
 git -C "$GIT_LOCAL" commit -m "local" >/dev/null
 clear_git_status_cache
-clear_git_behind_cache "$GIT_LOCAL" main
+clear_git_divergence_cache "$GIT_LOCAL" main
 render "$GIT_LOCAL" >/dev/null
-wait_for_git_behind_cache "$GIT_LOCAL" main
+wait_for_git_divergence_cache "$GIT_LOCAL" main
 output=$(render "$GIT_LOCAL")
+assert_not_contains "$output" "⇡"
 assert_not_contains "$output" "⇣"
 
-clear_git_behind_cache "$GIT_WORKSPACE" main
-clear_git_behind_cache "$GIT_LOCAL" main
+clear_git_divergence_cache "$GIT_WORKSPACE" main
+clear_git_divergence_cache "$GIT_LOCAL" main
 clear_git_status_cache
-printf 'Claude statusline Beads and Git-behind tests passed\n'
+printf 'Claude statusline Beads and Git-divergence tests passed\n'

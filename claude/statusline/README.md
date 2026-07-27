@@ -33,16 +33,16 @@ Useful environment variables:
 - `CLAUDE_STATUSLINE_MIN_ROWS=50`
 - `CLAUDE_STATUSLINE_PR=0`
 - `CLAUDE_STATUSLINE_PR_TTL=120`
-- `CLAUDE_STATUSLINE_GIT_BEHIND=0`
-- `CLAUDE_STATUSLINE_GIT_BEHIND_TTL=30`
-- `CLAUDE_STATUSLINE_GIT_BEHIND_TIMEOUT=1`
+- `CLAUDE_STATUSLINE_GIT_DIVERGENCE=0`
+- `CLAUDE_STATUSLINE_GIT_DIVERGENCE_TTL=30`
+- `CLAUDE_STATUSLINE_GIT_DIVERGENCE_TIMEOUT=1`
 - `CLAUDE_STATUSLINE_BEADS=0`
 - `CLAUDE_STATUSLINE_BEADS_TTL=30`
 - `CLAUDE_STATUSLINE_BEADS_TIMEOUT=2`
 
 ## Git upstream status
 
-A warning-coloured `⇣N` cell appears after the branch when it is a positive number of commits behind its configured upstream. The detached lookup runs `git rev-list --count <branch>..<branch>@{upstream}` with a hard timeout and caches the result, so rendering never waits for Git. It never runs `git fetch`; the count reflects the locally available tracking ref from the most recent fetch performed elsewhere. Zero, missing upstreams, unavailable commands, timeouts, and other failures stay hidden. The timeout is measured in seconds and clamped to 1–10 seconds.
+A warning-coloured divergence cell appears after the branch and shows only non-zero directions: `⇡N` for local commits absent upstream and `⇣N` for upstream commits absent locally. The detached lookup runs `git rev-list --left-right --count <branch>@{upstream}...<branch>` with a hard timeout and caches the result, so rendering never waits for Git. It never runs `git fetch`; the counts reflect the locally available tracking ref from the most recent fetch performed elsewhere. Zero directions are omitted, while missing upstreams, unavailable commands, timeouts, and other failures hide the whole cell. The timeout is measured in seconds and clamped to 1–10 seconds.
 
 ## Beads work
 
