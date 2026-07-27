@@ -22,7 +22,7 @@ Choose one of the credential-free examples, then replace every placeholder with 
 - **Generic** (`model-tier-router.example.json`): the smallest portable baseline, with one candidate in each tier, the usage ledger disabled, and an exact-model `allow` example that must be reviewed before use.
 - **Opinionated** (`model-tier-router.opinionated.example.json`): a concrete July 2026 policy snapshot using OpenAI Codex, Anthropic Claude, and Google Gemini candidates, enabled bounded local usage telemetry, and `medium`/`medium`/`xhigh` default thinking. It is a starting point, not a claim that those models are available or have the same cost classification for you.
 
-For the generic baseline:
+From a source checkout, copy the generic baseline:
 
 ```bash
 cp ./pi/model-tier-router/model-tier-router.example.json \
@@ -30,7 +30,7 @@ cp ./pi/model-tier-router/model-tier-router.example.json \
 $EDITOR ~/.pi/agent/model-tier-router.json
 ```
 
-For the opinionated policy:
+Or copy the opinionated policy:
 
 ```bash
 cp ./pi/model-tier-router/model-tier-router.opinionated.example.json \
@@ -125,17 +125,23 @@ Plain prompts do not select a tier at prompt start. Absent an owed restoration, 
 pi -e ./pi/model-tier-router/index.ts
 ```
 
-## Install globally
+## Install globally from Git
 
-From this repository:
+Pin an immutable commit or tag so future package updates cannot silently move the router:
 
 ```bash
-mkdir -p ~/.pi/agent/extensions
-ln -sfn "$PWD/pi/model-tier-router" \
-  ~/.pi/agent/extensions/model-tier-router
+pi install git:github.com/flurdy/ai-tools@<commit-or-tag>
 ```
 
-Restart Pi or run `/reload`.
+The Git package loads only `pi/model-tier-router/index.ts`. It does not install or modify router policy. Copy and review a credential-free example separately:
+
+```bash
+cp ~/.pi/agent/git/github.com/flurdy/ai-tools/pi/model-tier-router/model-tier-router.example.json \
+  ~/.pi/agent/model-tier-router.json
+$EDITOR ~/.pi/agent/model-tier-router.json
+```
+
+For local development from this checkout, keep using `pi -e`; no symlink is required. Restart Pi or run `/reload` after changing installed package or configuration files.
 
 ## Commands
 
@@ -157,17 +163,15 @@ The ledger records neither prompts nor responses, repository/session-file paths,
 
 ## Development
 
-Install the Node version pinned in `.nvmrc`, then run the focused tests and typechecking through that runtime. These commands remain reliable when the shell's default `node` is older:
+Install the Node version pinned in the repository-root `.nvmrc`, then install from the committed lockfile and run the package checks:
 
 ```bash
-cd pi/model-tier-router
 fnm install
-fnm exec --using=.nvmrc npm install
-fnm exec --using=.nvmrc npm test
-fnm exec --using=.nvmrc npm run typecheck
+fnm exec --using=.nvmrc npm ci
+fnm exec --using=.nvmrc npm run check
 ```
 
-With `nvm`, run `nvm install && nvm use` before the same `npm` commands. Pi loads `index.ts` directly; no build output is required.
+With `nvm`, run `nvm install && nvm use` before the same `npm` commands. `npm run check` runs the focused tests, typechecking, and the publishable-files allowlist check. After committing package changes, `npm run verify:git-install` performs an isolated install from the immutable local `HEAD`, confirms `/model-tier` discovery through Pi RPC, and verifies that router JSON configuration stays in the external agent directory. Pi loads `index.ts` directly; no build output is required.
 
 ## Lifecycle notes
 
