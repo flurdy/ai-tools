@@ -87,7 +87,7 @@ Supported options:
 - `routeImplicitSkillReads`: route model-initiated `read` calls for skills loaded into that turn's Pi system prompt.
 - `tiers.<name>.rank`: nested skills may move to a higher rank, but never to an equal or lower rank.
 - `tiers.<name>.thinking`: default Pi thinking level when the skill does not declare `effort`.
-- `tiers.<name>.selection`: optional `first-available` (default) or `weighted-random`.
+- `tiers.<name>.selection`: optional `first-available` (default) or `weighted-random`. Any other value disables routing for the whole tier until fixed rather than silently falling back to `first-available`.
 - `tiers.<name>.candidates`: exact model candidates, optional legacy/project-local `metered` classification, and (for weighted tiers) required integer `weight` values from 1 to 100. An invalid weight disables routing for the whole tier until fixed rather than silently changing paid share. A candidate without inline classification needs an exact global model policy to route without the unknown-cost consent boundary.
 - `modelPolicies.<provider/model>.metered`: preferred global exact-model classification. It wins over conflicting global inline classifications; project candidates can only make the effective classification stricter.
 - `modelPolicies.<provider/model>.consent`: optional global `ask` (default) or `allow`. `allow` authorizes explicit and enabled implicit routing for an effectively metered exact model.

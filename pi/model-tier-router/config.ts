@@ -91,9 +91,13 @@ function parseTier(name: string, value: unknown, path: string, warnings: string[
 		return undefined;
 	}
 	let selection: SelectionPolicy = "first-available";
+	let invalidSelectionPolicy = false;
 	if (input.selection !== undefined) {
 		if (input.selection === "first-available" || input.selection === "weighted-random") selection = input.selection;
-		else warnings.push(`${path}: tier ${name} has an invalid selection policy; defaulted to first-available`);
+		else {
+			warnings.push(`${path}: tier ${name} has an invalid selection policy; tier routing disabled`);
+			invalidSelectionPolicy = true;
+		}
 	}
 
 	const candidates: TierRoute["candidates"] = [];
@@ -113,7 +117,7 @@ function parseTier(name: string, value: unknown, path: string, warnings: string[
 			} else {
 				weight = item.weight as number;
 			}
-		} else if (item.weight !== undefined) {
+		} else if (item.weight !== undefined && !invalidSelectionPolicy) {
 			warnings.push(`${path}: tier ${name} candidate ${index + 1} weight is ignored by first-available selection`);
 		}
 		if (!isExactModelId(item.model)) {
@@ -132,7 +136,7 @@ function parseTier(name: string, value: unknown, path: string, warnings: string[
 		rank: input.rank,
 		thinking: input.thinking as ThinkingLevel,
 		selection,
-		routingDisabled: invalidWeightedCandidate || undefined,
+		routingDisabled: invalidWeightedCandidate || invalidSelectionPolicy || undefined,
 		candidates,
 	};
 }

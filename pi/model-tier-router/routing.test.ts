@@ -491,6 +491,34 @@ describe("configuration", () => {
 		assert.match(result.warnings.join("\n"), /weight is ignored by first-available selection/);
 	});
 
+	it("fails closed on an invalid explicit selection policy instead of defaulting to first-available", () => {
+		const root = mkdtempSync(join(tmpdir(), "model-tier-router-"));
+		const agentDir = join(root, "agent");
+		const cwd = join(root, "project");
+		mkdirSync(agentDir, { recursive: true });
+		writeFileSync(join(agentDir, "model-tier-router.json"), JSON.stringify({ tiers: {
+			typo: {
+				rank: 60,
+				thinking: "high",
+				selection: "weighted_random",
+				candidates: [
+					{ model: "provider/paid", metered: true, weight: 3 },
+					{ model: "provider/free", metered: false, weight: 1 },
+				],
+			},
+		} }));
+
+		const result = loadRouterConfig({ agentDir, cwd, projectTrusted: false });
+		assert.equal(result.config.tiers.typo.selection, "first-available");
+		assert.equal(result.config.tiers.typo.routingDisabled, true);
+		assert.equal(
+			selectRouteCandidate(result.config.tiers.typo, [model("provider", "paid"), model("provider", "free")]).candidate,
+			undefined,
+		);
+		assert.match(result.warnings.join("\n"), /has an invalid selection policy; tier routing disabled/);
+		assert.doesNotMatch(result.warnings.join("\n"), /weight is ignored by first-available selection/);
+	});
+
 	it("allows policy-first candidates and fails closed when classification is unresolved", () => {
 		const root = mkdtempSync(join(tmpdir(), "model-tier-router-"));
 		const agentDir = join(root, "agent");
