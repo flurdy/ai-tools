@@ -32,9 +32,9 @@ Supported consent values are:
 
 An absent, malformed, or unknown consent value resolves to `ask`. Exact `provider/model` identity is required. `metered` remains the cost-exposure classification; `consent` only controls how consent is obtained. For an effectively unmetered model, consent resolves to `not-needed` regardless of a redundant configured value. The router must not infer either value from provider, authentication, historical spend, skill metadata, or the usage ledger.
 
-The `modelPolicies` map is read only from `~/.pi/agent/model-tier-router.json`. Project `modelPolicies` entries are ignored with a warning. Tier candidates retain their required inline `metered` value for compatibility and local readability; the loader also derives a global exact-model classification floor from every global candidate.
+The `modelPolicies` map is read only from `~/.pi/agent/model-tier-router.json`. Project `modelPolicies` entries are ignored with a warning. It is the preferred exact-model source for both classification and consent, so global candidates may omit inline `metered`. Inline `metered` remains supported for legacy files and for project candidates that need to make handling stricter.
 
-An explicit global `modelPolicies` entry supplies consent and may clarify the model's metered classification. It wins over conflicting global inline values and emits a warning. Without an explicit entry, consistent global inline classifications form the exact-model policy with consent `ask`; conflicting global inline classifications resolve conservatively to `metered: true` and warn.
+An explicit global `modelPolicies` entry supplies classification and consent. It wins over conflicting global inline values and emits a warning. Without an explicit entry, consistent global inline classifications form the exact-model policy with consent `ask`; conflicting global inline classifications resolve conservatively to `metered: true` and warn. A global candidate with neither an inline classification nor an exact policy is unknown-cost: explicit routing asks and implicit routing skips.
 
 A trusted project may reorder or replace tier candidates, but it cannot weaken global spend policy:
 
@@ -136,7 +136,7 @@ Rejected. That would erase the distinction between “this route may incur usage
 
 ## Rollout and rollback
 
-Ship `modelPolicies` as optional and retain required inline candidate `metered` values, so existing global files require no migration and continue to default to `ask`. Add an `allow` policy only to the generic documentation example as an opt-in illustration; do not pre-authorize paid models in the opinionated example. Document the fail-closed change for project-only unmetered candidates.
+Ship `modelPolicies` as optional and retain supported inline candidate `metered` values, so existing global files require no migration and continue to default to `ask`. Prefer one exact policy entry per global model and omit redundant candidate classifications. Add an `allow` policy only to the generic documentation example as an opt-in illustration; do not pre-authorize paid models in the opinionated example. Document the fail-closed change for project-only or unclassified candidates.
 
 Rollback is changing an exact model's consent to `ask` or removing its `modelPolicies` entry. Existing inline candidate classifications then restore per-route prompts after `/model-tier reload` or restart. Removing implementation support later causes the unknown top-level map to be ignored while existing `metered: true` candidates continue to prompt.
 
@@ -149,4 +149,4 @@ Rollback is changing an exact model's consent to `ask` or removing its `modelPol
 
 ## Recommendation
 
-Implement this decision before weighted candidate selection. Keep the first release narrow: optional global exact-model policies with `ask`/`allow`, required inline candidate compatibility, a fail-closed project classification floor, no temporary approvals, implicit metered routing only for globally allowed exact models, and no ledger-derived budget logic.
+Implement this decision before weighted candidate selection. Keep the first release narrow: optional global exact-model policies with `ask`/`allow`, legacy inline candidate compatibility, a fail-closed project classification floor, no temporary approvals, implicit metered routing only for globally allowed exact models, and no ledger-derived budget logic.

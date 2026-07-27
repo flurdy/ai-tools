@@ -121,12 +121,12 @@ function parseTier(name: string, value: unknown, path: string, warnings: string[
 			if (selection === "weighted-random") invalidWeightedCandidate = true;
 			continue;
 		}
-		if (typeof item.metered !== "boolean") {
-			warnings.push(`${path}: tier ${name} candidate ${index + 1} must declare a boolean metered flag`);
+		if (item.metered !== undefined && typeof item.metered !== "boolean") {
+			warnings.push(`${path}: tier ${name} candidate ${index + 1} metered must be boolean when provided`);
 			if (selection === "weighted-random") invalidWeightedCandidate = true;
 			continue;
 		}
-		candidates.push({ model: item.model, metered: item.metered, ...(weight === undefined ? {} : { weight }) });
+		candidates.push({ model: item.model, ...(item.metered === undefined ? {} : { metered: item.metered }), ...(weight === undefined ? {} : { weight }) });
 	}
 	return {
 		rank: input.rank,
@@ -221,6 +221,7 @@ function deriveGlobalModelPolicies(
 	const inline = emptyRecord<boolean>();
 	for (const tier of Object.values(tiers)) {
 		for (const candidate of tier.candidates) {
+			if (candidate.metered === undefined) continue;
 			const previous = inline[candidate.model];
 			if (previous !== undefined && previous !== candidate.metered) {
 				warnings.push(`${path}: model ${candidate.model} has conflicting global candidate classifications; treated as metered`);
@@ -262,9 +263,9 @@ function warnForProjectClassificationGaps(config: RouterConfig, projectPath: str
 		if (config.tierSources[tierName] !== "project") continue;
 		for (const candidate of tier.candidates) {
 			const globalPolicy = config.modelPolicies[candidate.model];
-			if (!globalPolicy && !candidate.metered) {
+			if (!globalPolicy && candidate.metered !== true) {
 				warnings.push(`${projectPath}: tier ${tierName} candidate ${candidate.model} has no global model policy; treated as unknown-cost`);
-			} else if (globalPolicy?.metered && !candidate.metered) {
+			} else if (globalPolicy?.metered && candidate.metered === false) {
 				warnings.push(`${projectPath}: tier ${tierName} candidate ${candidate.model} cannot lower its global metered classification`);
 			}
 		}

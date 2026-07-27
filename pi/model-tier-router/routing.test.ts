@@ -178,6 +178,18 @@ describe("candidate selection", () => {
 			meteredClassification: "unknown",
 			consentPolicy: "ask",
 		});
+		assert.deepEqual(resolveCandidatePolicy({ model: "provider/model" }, "global", metered), {
+			meteredClassification: true,
+			consentPolicy: "allow",
+		});
+		assert.deepEqual(resolveCandidatePolicy({ model: "provider/model" }, "global"), {
+			meteredClassification: "unknown",
+			consentPolicy: "ask",
+		});
+		assert.deepEqual(resolveCandidatePolicy({ model: "provider/model" }, "project", unmetered), {
+			meteredClassification: false,
+			consentPolicy: "not-needed",
+		});
 	});
 
 	it("uses only exact configured candidates for pre-launch selection", () => {
@@ -219,12 +231,14 @@ describe("configuration", () => {
 		) as { modelPolicies: Record<string, { metered: boolean; consent: string }>; tiers: Record<string, TierRoute> };
 		const { tiers } = example;
 		assert.deepEqual(example.modelPolicies, {
+			"provider/cheap-model-id": { metered: false },
+			"provider/workflow-model-id": { metered: false },
 			"provider/premium-model-id": { metered: true, consent: "allow" },
 		});
 		assert.deepEqual(Object.keys(tiers), ["economy", "standard", "premium"]);
-		assert.deepEqual(tiers.economy.candidates, [{ model: "provider/cheap-model-id", metered: false }]);
-		assert.deepEqual(tiers.standard.candidates, [{ model: "provider/workflow-model-id", metered: false }]);
-		assert.deepEqual(tiers.premium.candidates, [{ model: "provider/premium-model-id", metered: true }]);
+		assert.deepEqual(tiers.economy.candidates, [{ model: "provider/cheap-model-id" }]);
+		assert.deepEqual(tiers.standard.candidates, [{ model: "provider/workflow-model-id" }]);
+		assert.deepEqual(tiers.premium.candidates, [{ model: "provider/premium-model-id" }]);
 		assert.ok(tiers.economy.rank < tiers.standard.rank);
 		assert.ok(tiers.standard.rank < tiers.premium.rank);
 	});
@@ -244,18 +258,18 @@ describe("configuration", () => {
 		assert.deepEqual(Object.keys(result.config.tiers), ["economy", "standard", "premium"]);
 		assert.deepEqual(result.config.usageLedger, { enabled: true, retentionDays: 30, maxBytes: 10 * 1024 * 1024 });
 		assert.deepEqual(result.config.tiers.economy.candidates, [
-			{ model: "openai-codex/gpt-5.6-luna", metered: false, weight: 6 },
-			{ model: "anthropic/claude-haiku-4-5", metered: true, weight: 1 },
-			{ model: "google/gemini-3.5-flash", metered: true, weight: 1 },
+			{ model: "openai-codex/gpt-5.6-luna", weight: 6 },
+			{ model: "anthropic/claude-haiku-4-5", weight: 1 },
+			{ model: "google/gemini-3.5-flash", weight: 1 },
 		]);
 		assert.deepEqual(result.config.tiers.standard.candidates, [
-			{ model: "openai-codex/gpt-5.6-terra", metered: false, weight: 3 },
-			{ model: "anthropic/claude-sonnet-5", metered: true, weight: 1 },
+			{ model: "openai-codex/gpt-5.6-terra", weight: 3 },
+			{ model: "anthropic/claude-sonnet-5", weight: 1 },
 		]);
 		assert.deepEqual(result.config.tiers.premium.candidates, [
-			{ model: "openai-codex/gpt-5.6-sol", metered: false, weight: 3 },
-			{ model: "anthropic/claude-fable-5", metered: true, weight: 1 },
-			{ model: "anthropic/claude-opus-4-8", metered: true, weight: 1 },
+			{ model: "openai-codex/gpt-5.6-sol", weight: 3 },
+			{ model: "anthropic/claude-fable-5", weight: 1 },
+			{ model: "anthropic/claude-opus-4-8", weight: 1 },
 		]);
 		assert.equal(result.config.tiers.economy.selection, "weighted-random");
 		assert.equal(result.config.tiers.standard.selection, "weighted-random");
@@ -378,6 +392,7 @@ describe("configuration", () => {
 		assert.deepEqual(result.config.modelPolicies["provider/conflict"], { metered: false, consent: "allow" });
 		assert.deepEqual(result.config.modelPolicies["provider/shared"], { metered: true, consent: "ask" });
 		assert.deepEqual(result.config.modelPolicies["provider/invalid-consent"], { metered: true, consent: "ask" });
+		assert.deepEqual(result.config.tiers.first.candidates[0], { model: "provider/allowed", metered: true });
 		assert.equal(result.config.modelPolicies["provider/missing-metered"], undefined);
 		assert.equal(result.config.modelPolicies.invalid, undefined);
 		assert.match(result.warnings.join("\n"), /provider\/conflict.*conflicts with global candidate classification/);
@@ -476,7 +491,7 @@ describe("configuration", () => {
 		assert.match(result.warnings.join("\n"), /weight is ignored by first-available selection/);
 	});
 
-	it("rejects candidates without an explicit metered classification", () => {
+	it("allows policy-first candidates and fails closed when classification is unresolved", () => {
 		const root = mkdtempSync(join(tmpdir(), "model-tier-router-"));
 		const agentDir = join(root, "agent");
 		const cwd = join(root, "project");
@@ -484,15 +499,24 @@ describe("configuration", () => {
 		writeFileSync(
 			join(agentDir, "model-tier-router.json"),
 			JSON.stringify({
+				modelPolicies: { "provider/policy": { metered: true, consent: "allow" } },
 				tiers: {
-					premium: { rank: 40, thinking: "high", candidates: [{ model: "provider/premium" }] },
+					premium: { rank: 40, thinking: "high", candidates: [{ model: "provider/policy" }, { model: "provider/unresolved" }, { model: "provider/invalid", metered: "false" }] },
 				},
 			}),
 		);
 
 		const result = loadRouterConfig({ agentDir, cwd, projectTrusted: false });
-		assert.deepEqual(result.config.tiers.premium.candidates, []);
-		assert.match(result.warnings.join("\n"), /must declare a boolean metered flag/);
+		assert.deepEqual(result.config.tiers.premium.candidates, [{ model: "provider/policy" }, { model: "provider/unresolved" }]);
+		assert.deepEqual(
+			resolveCandidatePolicy(result.config.tiers.premium.candidates[0]!, "global", result.config.modelPolicies["provider/policy"]),
+			{ meteredClassification: true, consentPolicy: "allow" },
+		);
+		assert.deepEqual(
+			resolveCandidatePolicy(result.config.tiers.premium.candidates[1]!, "global", result.config.modelPolicies["provider/unresolved"]),
+			{ meteredClassification: "unknown", consentPolicy: "ask" },
+		);
+		assert.match(result.warnings.join("\n"), /metered must be boolean when provided/);
 	});
 });
 
@@ -553,7 +577,7 @@ interface HarnessSkill {
 	costPolicy?: string;
 	meteredPolicy?: string;
 	metered?: boolean;
-	candidates?: Array<{ model: string; metered: boolean; weight?: number }>;
+	candidates?: Array<{ model: string; metered?: boolean; weight?: number }>;
 	selection?: "first-available" | "weighted-random";
 	configure?: boolean;
 	available?: boolean;
@@ -1096,7 +1120,7 @@ describe("extension lifecycle", () => {
 	});
 
 	it("honors global allow for explicit and implicit metered routes", async () => {
-		const skills = { review: { tier: "premium", rank: 40, metered: true } };
+		const skills = { review: { tier: "premium", rank: 40, candidates: [{ model: "provider/premium" }] } };
 		const options = { modelPolicies: { "provider/premium": { metered: true, consent: "allow" } } };
 		const explicit = await createRouterHarness(skills, options);
 		await explicit.invokeSkill("review");

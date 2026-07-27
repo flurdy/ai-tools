@@ -8,7 +8,8 @@ export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhi
 
 export interface ModelCandidate {
 	model: string;
-	metered: boolean;
+	/** Legacy or project-local classification. Prefer global modelPolicies for exact-model policy. */
+	metered?: boolean;
 	weight?: number;
 }
 
@@ -109,7 +110,7 @@ export function createRouteDecision(input: RouteDecisionInput): RouteDecisionRec
 		effectiveModel: input.effectiveModel ? { ...input.effectiveModel } : null,
 		thinkingLevel: input.thinkingLevel,
 		meteredClassification: input.meteredClassification ?? input.candidate?.metered ?? "unknown",
-		consentPolicy: input.consentPolicy ?? (input.candidate ? (input.candidate.metered ? "ask" : "not-needed") : "not-applicable"),
+		consentPolicy: input.consentPolicy ?? (input.candidate ? (input.candidate.metered === false ? "not-needed" : "ask") : "not-applicable"),
 		consentBasis: input.consentBasis,
 		selectionPolicy: input.selectionPolicy ?? "first-available",
 		selectionPool: (input.selectionPool ?? []).map((entry) => ({ ...entry })),
@@ -216,15 +217,19 @@ export function resolveCandidatePolicy(
 	globalPolicy?: ModelPolicy,
 ): ResolvedCandidatePolicy {
 	if (tierSource === "global") {
-		const metered = globalPolicy?.metered ?? candidate.metered;
-		return {
-			meteredClassification: metered,
-			consentPolicy: metered ? (globalPolicy?.consent ?? "ask") : "not-needed",
-		};
+		if (globalPolicy) {
+			return {
+				meteredClassification: globalPolicy.metered,
+				consentPolicy: globalPolicy.metered ? globalPolicy.consent : "not-needed",
+			};
+		}
+		return candidate.metered === undefined
+			? { meteredClassification: "unknown", consentPolicy: "ask" }
+			: { meteredClassification: candidate.metered, consentPolicy: candidate.metered ? "ask" : "not-needed" };
 	}
 
 	if (!globalPolicy) {
-		return candidate.metered
+		return candidate.metered === true
 			? { meteredClassification: true, consentPolicy: "ask" }
 			: { meteredClassification: "unknown", consentPolicy: "ask" };
 	}
