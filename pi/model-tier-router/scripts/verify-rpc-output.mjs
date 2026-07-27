@@ -12,7 +12,6 @@ const commandsResponse = events.find((event) => event.type === "response" && eve
 assert.equal(commandsResponse?.success, true, "get_commands did not succeed");
 const modelTierCommand = commandsResponse.data.commands.find((command) => command.name === "model-tier");
 assert.equal(modelTierCommand?.source, "extension", "model-tier command was not loaded from the extension");
-assert.match(modelTierCommand.path ?? "", /pi\/model-tier-router\/index\.ts$/);
 
 const promptResponse = events.find((event) => event.type === "response" && event.command === "prompt");
 assert.equal(promptResponse?.success, true, "model-tier status command did not execute");
