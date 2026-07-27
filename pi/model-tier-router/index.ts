@@ -354,10 +354,15 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 		const target = candidate ? findExactModel(candidate, available) : undefined;
 		if (!candidate || !target) {
 			if (run) raiseRunThinking(run, requestedThinking, skillName, ctx);
-			const reason = selection.policy === "weighted-random" && selection.pool.length === 0
-				? "no-eligible-candidate"
-				: "no-available-candidate";
-			const warning = `${reason === "no-eligible-candidate" ? "no eligible" : "no available"} candidate for ${metadata.tier}; retained ${modelId(ctx.model)}`;
+			const reason = route.routingDisabled
+				? "invalid-tier-configuration"
+				: selection.policy === "weighted-random" && selection.pool.length === 0
+					? "no-eligible-candidate"
+					: "no-available-candidate";
+			const detail = reason === "invalid-tier-configuration"
+				? `invalid configuration disabled routing for ${metadata.tier}; see /model-tier status config warnings`
+				: `${reason === "no-eligible-candidate" ? "no eligible" : "no available"} candidate for ${metadata.tier}`;
+			const warning = `${detail}; retained ${modelId(ctx.model)}`;
 			warnOnce(ctx, `${reason}:${metadata.tier}`, warning);
 			const routeDecision = recordRouteDecision(ctx, metadata.tier, undefined, "not-applicable", reason, [warning], activeRestoration, currentEffectiveTier, undefined, selection);
 			if (run) activateDecision(run, routeDecision, skillName);
@@ -644,6 +649,7 @@ export default function modelTierRouter(pi: ExtensionAPI, options: ModelTierRout
 				`restoration owed: ${run?.restoreOwed ?? false}`,
 				`manual model override: ${run?.manualModelOverride ?? false}`,
 				`config: ${loaded?.loadedPaths.join(", ") || "defaults"}`,
+				`config warnings: ${loaded?.warnings.join("; ") || "(none)"}`,
 				`last route decision: ${latestRouteDecision ? JSON.stringify(latestRouteDecision) : "(none)"}`,
 				`warnings: ${unavailableWarnings.join("; ") || "(none)"}`,
 				`usage ledger: ${usageLedger ? JSON.stringify(usageLedger.health()) : "disabled"}`,

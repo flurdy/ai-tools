@@ -1147,6 +1147,41 @@ describe("extension lifecycle", () => {
 		assert.deepEqual(lastRouteDecision(empty).selectionPool, []);
 	});
 
+	it("reports a disabled tier distinctly and keeps its config warning in status", async () => {
+		let draws = 0;
+		const harness = await createRouterHarness(
+			{
+				review: {
+					tier: "standard",
+					rank: 20,
+					selection: "weighted-random",
+					candidates: [{ model: "provider/free", metered: false, weight: 1 }],
+				},
+			},
+			{ random: () => { draws++; return 0; } },
+		);
+
+		harness.setTierRoute("standard", {
+			rank: 20,
+			thinking: "high",
+			selection: "weighted-random",
+			candidates: [{ model: "provider/free", metered: false, weight: 0 }],
+		});
+		await harness.invokeCommand("model-tier", "reload");
+		await harness.invokeSkill("review");
+
+		assert.equal(draws, 0);
+		assert.deepEqual(harness.modelSelectionAttempts, []);
+		assert.equal(harness.ctx.model.id, "original");
+		await harness.emit("agent_settled");
+
+		await harness.invokeCommand("model-tier", "status");
+		assert.equal(lastRouteDecision(harness).reason, "invalid-tier-configuration");
+		const status = harness.notifications.at(-1) ?? "";
+		assert.match(status, /config warnings:.*weight must be an integer from 1 to 100; tier routing disabled/);
+		assert.match(status, /warnings: \(none\)/);
+	});
+
 	it("honors global allow for explicit and implicit metered routes", async () => {
 		const skills = { review: { tier: "premium", rank: 40, candidates: [{ model: "provider/premium" }] } };
 		const options = { modelPolicies: { "provider/premium": { metered: true, consent: "allow" } } };
