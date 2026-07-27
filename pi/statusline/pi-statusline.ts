@@ -406,7 +406,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const s = segments();
 				const border = (text: string) => theme.fg("border", text);
 				let row1 = [s.host, s.k8s, s.path, s.repo, s.branch, s.pr, s.beads, s.session].filter(Boolean);
-				const row2 = [s.agent, s.model, s.effort, s.ctx, s.quotaTable, s.cost, s.openRouterBalance, s.duration, s.clock].filter(Boolean);
+				const row2 = [s.agent, s.model, s.effort, s.ctx, s.quotaTable, s.openRouterBalance, s.cost, s.duration, s.clock].filter(Boolean);
 
 				function widthsFor(cells: string[]): number[] {
 					return cells.map((cell) => visibleWidth(cell) + 2);

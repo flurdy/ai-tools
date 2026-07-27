@@ -62,7 +62,7 @@ Table mode uses two bordered rows: location/session information on top, then mod
 ┌──────────────┬───────────┬──────┬──────────────────────┬────────────────┐
 │ example-host │ ~/project │ main │ ◉ P4:4 ◐1            │ ◈ session      │
 ├───┬──────────┴──┬─────┬──┴──────┴──┬──────────┬────────┴──┬─────┬───────┤
-│ π │ GPT-5 Terra │ ⚡Hi │ ███░░░ ctx │ est $0.00 │ OR $74.75 │ 12m │ 12:34 │
+│ π │ GPT-5 Terra │ ⚡Hi │ ███░░░ ctx │ OR $74.75 │ est $0.00 │ 12m │ 12:34 │
 └───┴─────────────┴─────┴────────────┴──────────┴───────────┴─────┴───────┘
 ```
 
@@ -96,7 +96,7 @@ The latest prompt is taken from your submitted input, so it can expose task deta
 - `π` agent marker in its own cell; a compact model name (including variants such as Sol, Terra, and Luna), prefixed with `OR` only for OpenRouter; and thinking level
 - cautious context-capacity bar labelled `ctx` (green through 33%, yellow through 66%, then red)
 - cached Codex weekly used-capacity bar labelled `GPT`, plus its reset date in table mode
-- optional cached OpenRouter account credit balance labelled `OR`, next to the estimated session cost
+- optional cached OpenRouter account credit balance labelled `OR`, immediately before the estimated session cost
 - session duration
 - abbreviated cwd
 - worktree repo, branch, dirty/staged/untracked markers
