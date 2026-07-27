@@ -35,11 +35,12 @@ Before restarting Pi:
 
 ### Owned by this repository
 
+The optional [model tier router](https://github.com/flurdy/pi-model-tier-router) now lives in a standalone private Git package and is not installed by this starter.
+
 | Component | Location | Purpose | Installation note |
 | --- | --- | --- | --- |
 | Flurdy dark theme | [`pi/theme/`](../theme/) | High-contrast Pi theme used by the starter. | Install the theme before selecting `flurdy-dark`. |
 | Statusline | [`pi/statusline/`](../statusline/) | Custom footer with context, model, quota, Git, and session signals. | Optional local extension; review privacy-related display options. |
-| Model tier router | [`pi/model-tier-router/`](../model-tier-router/) | Maps portable skill tiers to exact local models. | Uses a separate local router config; it is not installed by this starter. |
 | Kitty tab title | [`pi/kitty-tab-title/`](../kitty-tab-title/) | Displays Pi session/repository state in Kitty tabs. | Kitty-specific and optional. |
 | `APPEND_SYSTEM.md` example | [`pi/append-system/`](../append-system/) | Adds concise response and Git remote-safety guidance. | Opt-in system instructions, separate from settings and prompt templates. |
 | Pi launcher | [`pi/launcher/`](../launcher/) | Selects checkouts, worktrees, and handoffs before launching Pi. | Contains local workflow assumptions; review before adopting. |

@@ -13,7 +13,7 @@ This repo is meant to be the shareable, curated version of tools that also live 
 | [Codex Kitty tab title](codex/kitty-tab-title/) | Codex | Codex hook script and `hooks.json` for the same Kitty tab title workflow. |
 | [Pi statusline](pi/statusline/) | Pi | Pi extension for a responsive Bobthefish/Claude-Code-inspired footer with model, context, git, PR, cost, token, and cache signals. |
 | [Pi Flurdy dark theme](pi/theme/) | Pi | High-contrast dark theme with clearly separated success green and warning amber. |
-| [Pi model tier router](pi/model-tier-router/) | Pi | Routes skill metadata to locally configured models, prevents nested downgrades, and restores the previous model after each run. |
+| [Pi model tier router](https://github.com/flurdy/pi-model-tier-router) | Pi | Standalone private Git package that routes skill metadata to locally configured models. |
 | [Pi `APPEND_SYSTEM.md` example](pi/append-system/) | Pi | Opt-in appended system instructions for concise next steps and safe remote Git operations. |
 | [Pi settings starter](pi/settings/) | Pi | Redacted global settings starter, component catalog, and explicit safe-MCP configuration boundary. |
 | [Pi Kitty tab title](pi/kitty-tab-title/) | Pi | Pi extension for showing repo/session state in Kitty tab titles, matching the Claude/Codex workflow. |
@@ -25,6 +25,7 @@ This repo is meant to be the shareable, curated version of tools that also live 
 
 ## Related Repos And Docs
 
+- The model tier router lives separately in [flurdy/pi-model-tier-router](https://github.com/flurdy/pi-model-tier-router); its pre-extraction history remains in this repository.
 - Skills live separately in [flurdy/agent-skills](https://github.com/flurdy/agent-skills), especially `shared/`. This repo links to skills rather than vendoring them.
 - Longer-form docs are published at <https://flurdy.com/docs>.
 - The Kitty tab title write-up is at <https://flurdy.com/docs/kitty-ai-tabs/>.
@@ -42,7 +43,6 @@ codex/
 pi/
   statusline/
   theme/
-  model-tier-router/
   append-system/
   settings/
   kitty-tab-title/
