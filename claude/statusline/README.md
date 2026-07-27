@@ -22,7 +22,7 @@ Then configure Claude Code to use it as the statusline command. Merge the permis
 ## Runtime Assumptions
 
 - Requires `bash` and `jq`.
-- Uses Git when the current workspace is a repo.
+- Uses Git when the current workspace is a repo, including a cached local comparison with its configured upstream.
 - Uses `gh` opportunistically to cache PR state. Disable with `CLAUDE_STATUSLINE_PR=0`.
 - Uses `bd`, `jq`, and GNU `timeout`/`gtimeout` opportunistically to cache Beads work counts.
 - Reads `~/.claude/settings.json` for effort display when available.
@@ -33,9 +33,16 @@ Useful environment variables:
 - `CLAUDE_STATUSLINE_MIN_ROWS=50`
 - `CLAUDE_STATUSLINE_PR=0`
 - `CLAUDE_STATUSLINE_PR_TTL=120`
+- `CLAUDE_STATUSLINE_GIT_BEHIND=0`
+- `CLAUDE_STATUSLINE_GIT_BEHIND_TTL=30`
+- `CLAUDE_STATUSLINE_GIT_BEHIND_TIMEOUT=1`
 - `CLAUDE_STATUSLINE_BEADS=0`
 - `CLAUDE_STATUSLINE_BEADS_TTL=30`
 - `CLAUDE_STATUSLINE_BEADS_TIMEOUT=2`
+
+## Git upstream status
+
+A warning-coloured `⇣N` cell appears after the branch when it is a positive number of commits behind its configured upstream. The detached lookup runs `git rev-list --count <branch>..<branch>@{upstream}` with a hard timeout and caches the result, so rendering never waits for Git. It never runs `git fetch`; the count reflects the locally available tracking ref from the most recent fetch performed elsewhere. Zero, missing upstreams, unavailable commands, timeouts, and other failures stay hidden. The timeout is measured in seconds and clamped to 1–10 seconds.
 
 ## Beads work
 

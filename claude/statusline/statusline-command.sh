@@ -75,6 +75,65 @@ cache_git_status() {
   cat "$cache_file"
 }
 
+# --- Non-blocking upstream-behind lookup (cached) ---
+# Prints the last-known positive count for the current branch's locally fetched
+# upstream tracking ref. It never fetches from the remote.
+cache_git_behind() {
+  local branch="$1"
+  [ -z "$branch" ] && return
+  [ "${CLAUDE_STATUSLINE_GIT_BEHIND:-1}" = "0" ] && return
+
+  local timeout_cmd
+  timeout_cmd=$(command -v gtimeout 2>/dev/null || command -v timeout 2>/dev/null) || return
+
+  local ttl="${CLAUDE_STATUSLINE_GIT_BEHIND_TTL:-30}"
+  local timeout_seconds="${CLAUDE_STATUSLINE_GIT_BEHIND_TIMEOUT:-1}"
+  case "$ttl" in ''|*[!0-9]*) ttl=30 ;; esac
+  case "$timeout_seconds" in ''|*[!0-9]*) timeout_seconds=1 ;; esac
+  [ "$ttl" -lt 1 ] && ttl=1
+  [ "$timeout_seconds" -lt 1 ] && timeout_seconds=1
+  [ "$timeout_seconds" -gt 10 ] && timeout_seconds=10
+
+  local key cache lock now age
+  key=$(printf '%s' "$cwd|$branch" | cksum | tr -cd '0-9' | cut -c1-12)
+  cache="/tmp/statusline-git-behind-$key"
+  lock="$cache.lock"
+  now=$(date +%s)
+
+  [ -f "$cache" ] && cat "$cache"
+
+  age=$ttl
+  [ -f "$cache" ] && age=$(( now - $(stat -c %Y "$cache" 2>/dev/null || stat -f %m "$cache" 2>/dev/null || echo 0) ))
+  if [ "$age" -ge "$ttl" ]; then
+    ( umask 077
+      local count tmp="$cache.tmp.$BASHPID" lock_dir=""
+      if command -v flock >/dev/null 2>&1; then
+        exec 9>"$lock"
+        flock -n 9 || exit 0
+      else
+        lock_dir="$lock.d"
+        mkdir "$lock_dir" 2>/dev/null || exit 0
+      fi
+      trap 'rm -f "$tmp"; [ -z "$lock_dir" ] || rm -rf "$lock_dir"' EXIT
+
+      local refresh_now refresh_age
+      refresh_now=$(date +%s)
+      refresh_age=$ttl
+      [ -f "$cache" ] && refresh_age=$(( refresh_now - $(stat -c %Y "$cache" 2>/dev/null || stat -f %m "$cache" 2>/dev/null || echo 0) ))
+      if [ "$refresh_age" -ge "$ttl" ]; then
+        count=$("$timeout_cmd" --kill-after=1 "$timeout_seconds" git -C "$cwd" rev-list --count "${branch}..${branch}@{upstream}" 2>/dev/null) || count=""
+        if [[ "$count" =~ ^[0-9]+$ ]] && [ "$count" -gt 0 ]; then
+          printf '%s\n' "$count" > "$tmp"
+        else
+          : > "$tmp"
+        fi
+        mv -f "$tmp" "$cache" 2>/dev/null
+      fi
+    ) </dev/null >/dev/null 2>&1 &
+    disown 2>/dev/null
+  fi
+}
+
 # --- Non-blocking PR lookup (cached) ---
 # Prints the last-known PR for $branch as "number|state|isDraft" (or nothing).
 # Never blocks: it echoes whatever is cached this instant and, only when that
@@ -238,6 +297,7 @@ C_PATH='\033[38;2;153;153;153m'
 C_DIR='\033[1;37m'
 C_GIT='\033[38;2;24;147;3m'
 C_GIT_DIRTY='\033[38;2;204;153;0m'
+C_GIT_BEHIND='\033[38;2;204;153;0m'
 C_SEP='\033[38;2;100;100;100m'
 C_MODEL='\033[38;2;0;200;170m'
 C_COST='\033[38;2;120;200;80m'
@@ -446,6 +506,15 @@ if [ -n "$branch" ]; then
   fi
 fi
 
+# Positive commit count behind the locally fetched upstream → its own cell.
+segment_git_behind=""
+if [ -n "$branch" ]; then
+  git_behind=$(cache_git_behind "$branch")
+  if [[ "$git_behind" =~ ^[0-9]+$ ]] && [ "$git_behind" -gt 0 ]; then
+    segment_git_behind="${C_GIT_BEHIND}⇣${git_behind}${RST}"
+  fi
+fi
+
 # Pull request for the current branch (cached, non-blocking) → its own cell.
 segment_pr=""
 if [ -n "$branch" ]; then
@@ -570,7 +639,7 @@ render_compact() {
   # Cell visibility (most-droppable first when narrow). The path is droppable
   # (shown when wide for on-disk context); the worktree repo is kept until the
   # very last resort.
-  local show_k8s=1 show_path=1 show_repo=1 show_dur=1 show_effort=1 show_clock=1 show_pr=1
+  local show_k8s=1 show_path=1 show_repo=1 show_dur=1 show_effort=1 show_clock=1 show_pr=1 show_behind=1
   [ -z "$segment_k8s" ] && show_k8s=0
   local bmax=""   # branch max length ("" = full)
 
@@ -591,6 +660,7 @@ render_compact() {
     [ "$show_repo" = 1 ] && [ -n "$segment_repo" ] && cells+=("$segment_repo")
     local bc; bc="$(branch_cell "$bmax")"
     [ -n "$bc" ] && cells+=("$bc")
+    [ "$show_behind" = 1 ] && [ -n "$segment_git_behind" ] && cells+=("$segment_git_behind")
     [ "$show_pr" = 1 ] && [ -n "$segment_pr" ] && cells+=("$segment_pr")
   }
   line_width() {
@@ -611,9 +681,9 @@ render_compact() {
   # Fit to width by shedding the least-important things first, so the branch
   # (worktree name), repo and PR stay intact as long as possible. The path is
   # bonus context shown only when there's room:
-  #   k8s → path → duration → effort → clock → PR → truncate branch → drop repo.
+  #   k8s → path → duration → effort → clock → PR → behind → truncate branch → drop repo.
   local f
-  for f in show_k8s show_path show_dur show_effort show_clock show_pr; do
+  for f in show_k8s show_path show_dur show_effort show_clock show_pr show_behind; do
     [ "$_LW" -le "$W" ] && break
     printf -v "$f" '%s' 0; assemble; line_width
   done
@@ -700,6 +770,7 @@ render_table() {
     [ -n "$segment_k8s" ] && probe+=("$segment_k8s")
     probe+=("$segment_path" "$segment_repo")
     [ -n "$segment_git" ] && probe+=("$segment_git")
+    [ -n "$segment_git_behind" ] && probe+=("$segment_git_behind")
     [ -n "$segment_pr" ] && probe+=("$segment_pr")
     local psum=2 s
     for s in "${probe[@]}"; do psum=$(( psum + $(visible_len "$s") + 2*PAD + 1 )); done
@@ -709,6 +780,7 @@ render_table() {
     r1_segs+=("$segment_path")
   fi
   [ -n "$segment_git" ] && r1_segs+=("$segment_git")
+  [ -n "$segment_git_behind" ] && r1_segs+=("$segment_git_behind")
   [ -n "$segment_pr" ] && r1_segs+=("$segment_pr")
 
   # Row 2: Claude session info

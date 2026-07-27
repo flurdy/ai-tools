@@ -48,6 +48,34 @@ wait_for_cache() {
   exit 1
 }
 
+git_behind_cache_path() {
+  local root=$1 branch=$2 key
+  key=$(printf '%s' "$root|$branch" | cksum | tr -cd '0-9' | cut -c1-12)
+  printf '/tmp/statusline-git-behind-%s' "$key"
+}
+
+clear_git_behind_cache() {
+  local root=$1 branch=$2 cache
+  cache=$(git_behind_cache_path "$root" "$branch")
+  rm -f "$cache" "$cache.lock" "$cache.tmp."*
+  rm -rf "$cache.lock.d"
+}
+
+wait_for_git_behind_cache() {
+  local root=$1 branch=$2 cache
+  cache=$(git_behind_cache_path "$root" "$branch")
+  for _ in {1..100}; do
+    [ -f "$cache" ] && [ ! -e "$cache.lock.d" ] && return
+    sleep 0.05
+  done
+  printf 'Timed out waiting for Git behind cache\n' >&2
+  exit 1
+}
+
+clear_git_status_cache() {
+  rm -f /tmp/statusline-git-cache-beads-statusline-test
+}
+
 render() {
   local cwd=$1 mode=${2:-table} command_path=${3:-$TEST_ROOT/bin:$PATH}
   jq -cn --arg cwd "$cwd" '{
@@ -171,4 +199,69 @@ wait_for_cache
 [ "$(wc -l < "$BD_FIXTURES/calls")" -eq 2 ] || { printf 'Concurrent renders started duplicate Beads refreshes\n' >&2; exit 1; }
 rm -f "$BD_FIXTURES/track-calls" "$BD_FIXTURES/delay"
 
-printf 'Claude statusline Beads tests passed\n'
+GIT_REMOTE="$TEST_ROOT/remote.git"
+GIT_SEED="$TEST_ROOT/seed"
+GIT_WORKSPACE="$TEST_ROOT/git-workspace"
+git init --bare --initial-branch=main "$GIT_REMOTE" >/dev/null
+git init --initial-branch=main "$GIT_SEED" >/dev/null
+git -C "$GIT_SEED" config user.name "Statusline Test"
+git -C "$GIT_SEED" config user.email "statusline@example.invalid"
+printf 'one\n' > "$GIT_SEED/file.txt"
+git -C "$GIT_SEED" add file.txt
+git -C "$GIT_SEED" commit -m "initial" >/dev/null
+git -C "$GIT_SEED" remote add origin "$GIT_REMOTE"
+git -C "$GIT_SEED" push -u origin main >/dev/null
+git clone "$GIT_REMOTE" "$GIT_WORKSPACE" >/dev/null
+
+printf 'two\n' >> "$GIT_SEED/file.txt"
+git -C "$GIT_SEED" commit -am "remote commit" >/dev/null
+git -C "$GIT_SEED" push >/dev/null
+git -C "$GIT_WORKSPACE" fetch origin >/dev/null
+clear_git_status_cache
+clear_git_behind_cache "$GIT_WORKSPACE" main
+output=$(render "$GIT_WORKSPACE")
+assert_not_contains "$output" "⇣1"
+wait_for_git_behind_cache "$GIT_WORKSPACE" main
+output=$(render "$GIT_WORKSPACE")
+assert_contains "$output" "⇣1"
+
+# A checkout during a stale branch-status window must query the cache-keyed
+# branch, not process-time HEAD.
+git -C "$GIT_WORKSPACE" switch -c feature --track origin/main >/dev/null
+printf 'main|0|0|0|0|\n' > /tmp/statusline-git-cache-beads-statusline-test
+clear_git_behind_cache "$GIT_WORKSPACE" main
+render "$GIT_WORKSPACE" >/dev/null
+wait_for_git_behind_cache "$GIT_WORKSPACE" main
+output=$(render "$GIT_WORKSPACE")
+assert_contains "$output" "⇣1"
+git -C "$GIT_WORKSPACE" switch main >/dev/null
+clear_git_status_cache
+
+# A zero count stays hidden after the local branch catches up.
+git -C "$GIT_WORKSPACE" merge --ff-only '@{upstream}' >/dev/null
+clear_git_status_cache
+clear_git_behind_cache "$GIT_WORKSPACE" main
+render "$GIT_WORKSPACE" >/dev/null
+wait_for_git_behind_cache "$GIT_WORKSPACE" main
+output=$(render "$GIT_WORKSPACE")
+assert_not_contains "$output" "⇣"
+
+# A branch without a configured upstream also stays hidden.
+GIT_LOCAL="$TEST_ROOT/git-local"
+git init --initial-branch=main "$GIT_LOCAL" >/dev/null
+git -C "$GIT_LOCAL" config user.name "Statusline Test"
+git -C "$GIT_LOCAL" config user.email "statusline@example.invalid"
+printf 'local\n' > "$GIT_LOCAL/file.txt"
+git -C "$GIT_LOCAL" add file.txt
+git -C "$GIT_LOCAL" commit -m "local" >/dev/null
+clear_git_status_cache
+clear_git_behind_cache "$GIT_LOCAL" main
+render "$GIT_LOCAL" >/dev/null
+wait_for_git_behind_cache "$GIT_LOCAL" main
+output=$(render "$GIT_LOCAL")
+assert_not_contains "$output" "⇣"
+
+clear_git_behind_cache "$GIT_WORKSPACE" main
+clear_git_behind_cache "$GIT_LOCAL" main
+clear_git_status_cache
+printf 'Claude statusline Beads and Git-behind tests passed\n'
