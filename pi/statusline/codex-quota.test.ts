@@ -171,12 +171,12 @@ test("aborting waits for child termination", async () => {
 		String.raw`
 import { writeFileSync } from "node:fs";
 const [ready, terminated] = process.argv.slice(2);
-writeFileSync(ready, String(process.pid));
-process.stdin.resume();
 process.on("SIGTERM", () => {
   writeFileSync(terminated, "terminated");
   process.exit(0);
 });
+process.stdin.resume();
+writeFileSync(ready, String(process.pid));
 `,
 		async (script, directory) => {
 			const ready = join(directory, "ready");
