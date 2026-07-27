@@ -36,6 +36,11 @@ Then restart Pi, or run `/reload` from an existing Pi session.
 - `PI_STATUSLINE_CODEX_QUOTA_STALE=900000` — age after which the last successful quota snapshot is marked stale (minimum one minute).
 - `PI_STATUSLINE_CODEX_QUOTA_TIMEOUT=10000` — timeout for one Codex quota lookup in milliseconds.
 - `PI_STATUSLINE_CODEX_BIN=codex` — Codex CLI executable to invoke.
+- `PI_STATUSLINE_OPENROUTER_MANAGEMENT_KEY=...` — enable the OpenRouter credit-balance cell with an explicit management key.
+- `PI_STATUSLINE_OPENROUTER_CREDITS=0` — disable the OpenRouter credit-balance lookup even when a key is configured.
+- `PI_STATUSLINE_OPENROUTER_CREDITS_TTL=300000` — OpenRouter balance refresh interval in milliseconds (minimum one minute).
+- `PI_STATUSLINE_OPENROUTER_CREDITS_STALE=900000` — age after which the last successful balance is rendered dim (minimum one minute).
+- `PI_STATUSLINE_OPENROUTER_CREDITS_TIMEOUT=5000` — timeout for one OpenRouter balance request in milliseconds (minimum 250 ms).
 
 ## Layout modes
 
@@ -46,7 +51,7 @@ The examples below are schematic: they use placeholder values and omit terminal 
 Compact mode is a single line. As space narrows, less-important cells are dropped before the line is truncated.
 
 ```text
-12:34 │ π │ GPT-5 Terra │ ⚡Hi │ ██░ ctx │ █░░ GPT │ 12m │ ~/project │ main │ ◈ session
+12:34 │ π │ GPT-5 Terra │ ⚡Hi │ ██░ ctx │ █░░ GPT │ OR $74.75 │ 12m │ ~/project │ main │ ◈ session
 ```
 
 ### Table footer
@@ -57,7 +62,7 @@ Table mode uses two bordered rows: location/session information on top, then mod
 ┌──────────────┬───────────┬──────┬──────────────────────┬────────────────┐
 │ example-host │ ~/project │ main │ ◉ P4:4 ◐1            │ ◈ session      │
 ├───┬──────────┴──┬─────┬──┴──────┴──┬──────────┬────────┴──┬─────┬───────┤
-│ π │ GPT-5 Terra │ ⚡Hi │ ███░░░ ctx │ ↑12k ↓2k │ est $0.00 │ 12m │ 12:34 │
+│ π │ GPT-5 Terra │ ⚡Hi │ ███░░░ ctx │ OR $74.75 │ ↑12k ↓2k │ est $0.00 │ 12m │ 12:34 │
 └───┴─────────────┴─────┴────────────┴──────────┴───────────┴─────┴───────┘
 ```
 
@@ -91,6 +96,7 @@ The latest prompt is taken from your submitted input, so it can expose task deta
 - `π` agent marker in its own cell; a compact model name (including variants such as Sol, Terra, and Luna), prefixed with `OR` only for OpenRouter; and thinking level
 - cautious context-capacity bar labelled `ctx` (green through 33%, yellow through 66%, then red)
 - cached Codex weekly used-capacity bar labelled `GPT`, plus its reset date in table mode
+- optional cached OpenRouter account credit balance labelled `OR`
 - cumulative input/output tokens and cache-hit percentage
 - session duration
 - abbreviated cwd
@@ -110,3 +116,9 @@ The quota segment queries the authenticated Codex CLI's machine-readable `codex 
 The weekly bucket is identified by its approximately seven-day duration rather than by assuming it is always the API's primary or secondary window. The segment stays hidden when Codex is missing, unauthenticated, too old to support the endpoint, or returns no weekly bucket.
 
 The displayed quota belongs to the account authenticated in the Codex CLI. It represents Pi's OpenAI-Codex allowance only when Pi and Codex are signed into the same ChatGPT account.
+
+## OpenRouter credit source
+
+The optional `OR` segment calls OpenRouter's `GET /api/v1/credits` endpoint and displays `total_credits - total_usage`. OpenRouter requires a management key for this account-level endpoint; normal inference keys receive HTTP 403. The lookup is asynchronous, cached, timeout-bounded, and disabled unless `PI_STATUSLINE_OPENROUTER_MANAGEMENT_KEY` is set. A transient refresh failure keeps the last successful balance and immediately renders it dim; age also dims a snapshot after the configured stale interval. Missing, rejected, and malformed responses stay hidden.
+
+The statusline intentionally does not read `OPENROUTER_API_KEY`, log credentials or response bodies, or render the management key. Management keys have broader account permissions than inference keys, so expose one to the Pi process only when this balance cell is worth that access.

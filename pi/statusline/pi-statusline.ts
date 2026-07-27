@@ -7,6 +7,7 @@ import { dirname } from "node:path";
 import { BeadsCountsCache, fetchBeadsCounts, findBeadsRoot, formatBeadsCounts } from "./beads-status.ts";
 import { fetchCodexWeeklyQuota, isCodexQuotaStale, type CodexWeeklyQuota } from "./codex-quota.ts";
 import { activeModelLabel, modelLabel } from "./model-label.ts";
+import { createOpenRouterCreditsCache, openRouterCreditsApiKey } from "./openrouter-credits.ts";
 import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT, codexQuotaTone } from "./quota-display.ts";
 
 type GitInfo = {
@@ -296,6 +297,15 @@ export default function piStatusline(pi: ExtensionAPI): void {
 			const quotaAbort = new AbortController();
 			let codexQuota: CodexWeeklyQuota | undefined;
 			let quotaRefreshing = false;
+			const openRouterRefreshMs = envMilliseconds("PI_STATUSLINE_OPENROUTER_CREDITS_TTL", 5 * 60_000, 60_000);
+			const openRouterStaleMs = envMilliseconds("PI_STATUSLINE_OPENROUTER_CREDITS_STALE", 15 * 60_000, 60_000);
+			const openRouterTimeoutMs = envMilliseconds("PI_STATUSLINE_OPENROUTER_CREDITS_TIMEOUT", 5000, 250);
+			const openRouterCreditsCache = createOpenRouterCreditsCache({
+				apiKey: openRouterCreditsApiKey(),
+				timeoutMs: openRouterTimeoutMs,
+				staleAfterMs: openRouterStaleMs,
+				onChange: () => tui.requestRender(),
+			});
 			const beadsRoot = process.env.PI_STATUSLINE_BEADS === "0" ? undefined : findBeadsRoot(ctx.cwd);
 			const beadsRefreshMs = envMilliseconds("PI_STATUSLINE_BEADS_TTL", 30_000, 5000);
 			const beadsTimeoutMs = envMilliseconds("PI_STATUSLINE_BEADS_TIMEOUT", 2000, 250);
@@ -325,8 +335,12 @@ export default function piStatusline(pi: ExtensionAPI): void {
 			}
 
 			void refreshCodexQuota();
+			void openRouterCreditsCache?.refresh();
 			void beadsCache?.refresh();
 			const quotaInterval = quotaEnabled ? setInterval(() => void refreshCodexQuota(), quotaRefreshMs) : undefined;
+			const openRouterInterval = openRouterCreditsCache
+				? setInterval(() => void openRouterCreditsCache.refresh(), openRouterRefreshMs)
+				: undefined;
 			const beadsInterval = beadsCache ? setInterval(() => void beadsCache.refresh(), beadsRefreshMs) : undefined;
 
 			const colors = {
@@ -365,6 +379,10 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					const reset = codexQuota.resetsAtMs === null ? "" : fmtQuotaReset(codexQuota.resetsAtMs);
 					quotaTable = `${bar(used, 6, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, quotaColors)} ${label}${reset ? theme.fg("dim", ` · ${reset}`) : ""}`;
 				}
+				const openRouterCredits = openRouterCreditsCache?.credits;
+				const openRouterBalance = openRouterCredits
+					? theme.fg(openRouterCreditsCache.isStale() ? "dim" : "success", `OR $${openRouterCredits.remainingCredits.toFixed(2)}`)
+					: "";
 				return {
 					clock: theme.fg("dim", fmtTime(new Date())),
 					host: theme.fg("accent", ` ${hostname().split(".")[0]}`),
@@ -377,6 +395,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					ctx: `${bar(usage.ctxPct, 6, 34, 67, colors)} ${theme.fg("dim", "ctx")}`,
 					quota,
 					quotaTable,
+					openRouterBalance,
 					tokens: theme.fg("dim", `↑${fmtNumber(usage.input)} ↓${fmtNumber(usage.output)}${cache ? ` · ${cache}` : ""}`),
 					cost: theme.fg("success", `est $${usage.cost.toFixed(2)}`),
 					duration: theme.fg("dim", fmtDuration(Date.now() - startedAt)),
@@ -394,10 +413,10 @@ export default function piStatusline(pi: ExtensionAPI): void {
 
 			function compact(width: number): string[] {
 				const s = segments();
-				let cells = [s.clock, joinCells([s.agent, s.model, s.effort]), s.bars, s.quota, s.k8s, s.duration, s.path, s.repo, s.branch, s.pr, s.session].filter(Boolean);
+				let cells = [s.clock, joinCells([s.agent, s.model, s.effort]), s.bars, s.quota, s.openRouterBalance, s.k8s, s.duration, s.path, s.repo, s.branch, s.pr, s.session].filter(Boolean);
 				let line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
-				cells = [joinCells([s.agent, s.model, s.effort]), s.bars, s.quota, s.k8s, s.duration, s.repo, s.branch, s.pr, s.session].filter(Boolean);
+				cells = [joinCells([s.agent, s.model, s.effort]), s.bars, s.quota, s.openRouterBalance, s.k8s, s.duration, s.repo, s.branch, s.pr, s.session].filter(Boolean);
 				line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
 				cells = [s.agent, s.model, s.bars, s.k8s, s.branch, s.session].filter(Boolean);
@@ -408,7 +427,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const s = segments();
 				const border = (text: string) => theme.fg("border", text);
 				let row1 = [s.host, s.k8s, s.path, s.repo, s.branch, s.pr, s.beads, s.session].filter(Boolean);
-				const row2 = [s.agent, s.model, s.effort, s.ctx, s.quotaTable, s.tokens, s.cost, s.duration, s.clock].filter(Boolean);
+				const row2 = [s.agent, s.model, s.effort, s.ctx, s.quotaTable, s.openRouterBalance, s.tokens, s.cost, s.duration, s.clock].filter(Boolean);
 
 				function widthsFor(cells: string[]): number[] {
 					return cells.map((cell) => visibleWidth(cell) + 2);
@@ -453,8 +472,10 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				dispose() {
 					clearInterval(interval);
 					if (quotaInterval) clearInterval(quotaInterval);
+					if (openRouterInterval) clearInterval(openRouterInterval);
 					if (beadsInterval) clearInterval(beadsInterval);
 					quotaAbort.abort();
+					openRouterCreditsCache?.dispose();
 					beadsCache?.dispose();
 					unsubBranch();
 				},
