@@ -6,7 +6,7 @@ import { hostname } from "node:os";
 import { dirname } from "node:path";
 import { BeadsCountsCache, fetchBeadsCounts, findBeadsRoot, formatBeadsCounts } from "./beads-status.ts";
 import { fetchCodexWeeklyQuota, isCodexQuotaStale, type CodexWeeklyQuota } from "./codex-quota.ts";
-import { fetchGitBehind, formatGitBehind, GitBehindCache } from "./git-behind.ts";
+import { fetchGitDivergence, formatGitDivergence, GitDivergenceCache } from "./git-divergence.ts";
 import { activeModelLabel, modelLabel } from "./model-label.ts";
 import { createOpenRouterCreditsCache, openRouterCreditsApiKey } from "./openrouter-credits.ts";
 import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT, codexQuotaTone } from "./quota-display.ts";
@@ -302,13 +302,13 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					onChange: () => tui.requestRender(),
 				})
 				: undefined;
-			const gitBehindRefreshMs = envMilliseconds("PI_STATUSLINE_GIT_BEHIND_TTL", 30_000, 1000);
-			const gitBehindTimeoutMs = envMilliseconds("PI_STATUSLINE_GIT_BEHIND_TIMEOUT", 500, 100);
-			const gitBehindCache = process.env.PI_STATUSLINE_GIT_BEHIND === "0"
+			const gitDivergenceRefreshMs = envMilliseconds("PI_STATUSLINE_GIT_DIVERGENCE_TTL", 30_000, 1000);
+			const gitDivergenceTimeoutMs = envMilliseconds("PI_STATUSLINE_GIT_DIVERGENCE_TIMEOUT", 500, 100);
+			const gitDivergenceCache = process.env.PI_STATUSLINE_GIT_DIVERGENCE === "0"
 				? undefined
-				: new GitBehindCache({
-					load: (branch, signal) => fetchGitBehind(ctx.cwd, branch, { timeoutMs: gitBehindTimeoutMs, signal }),
-					ttlMs: gitBehindRefreshMs,
+				: new GitDivergenceCache({
+					load: (branch, signal) => fetchGitDivergence(ctx.cwd, branch, { timeoutMs: gitDivergenceTimeoutMs, signal }),
+					ttlMs: gitDivergenceRefreshMs,
 					onChange: () => tui.requestRender(),
 				});
 
@@ -347,8 +347,8 @@ export default function piStatusline(pi: ExtensionAPI): void {
 
 			function segments() {
 				const git = getGitInfo(ctx.cwd, footerData.getGitBranch());
-				void gitBehindCache?.refresh(git.branch);
-				const behind = formatGitBehind(gitBehindCache?.countFor(git.branch));
+				void gitDivergenceCache?.refresh(git.branch);
+				const divergence = formatGitDivergence(gitDivergenceCache?.divergenceFor(git.branch));
 				const pr = getPr(ctx.cwd, git.branch);
 				const usage = getUsage(ctx);
 				const k8sContext = getK8sContext();
@@ -393,7 +393,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					path: theme.fg("muted", ` ${abbrevPath(ctx.cwd)}`),
 					repo: git.isWorktree ? theme.fg("success", `🌳 ${git.repo ?? "worktree"}`) : "",
 					branch: git.branch ? theme.fg(status ? "warning" : "success", ` ${git.branch}${status ? ` ${status}` : ""}`) : "",
-					behind: behind ? theme.fg("warning", behind) : "",
+					divergence: divergence ? theme.fg("warning", divergence) : "",
 					pr: pr ? theme.fg("success", ` ${pr}`) : "",
 					beads: beadsCounts ? theme.fg(beadsCounts.blocked > 0 ? "warning" : "accent", formatBeadsCounts(beadsCounts)) : "",
 				};
@@ -405,21 +405,21 @@ export default function piStatusline(pi: ExtensionAPI): void {
 
 			function compact(width: number): string[] {
 				const s = segments();
-				let cells = [s.clock, joinCells([s.agent, s.model, s.effort]), s.bars, s.quota, s.openRouterBalance, s.k8s, s.duration, s.path, s.repo, s.branch, s.behind, s.pr, s.session].filter(Boolean);
+				let cells = [s.clock, joinCells([s.agent, s.model, s.effort]), s.bars, s.quota, s.openRouterBalance, s.k8s, s.duration, s.path, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
 				let line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
-				cells = [joinCells([s.agent, s.model, s.effort]), s.bars, s.quota, s.openRouterBalance, s.k8s, s.duration, s.repo, s.branch, s.behind, s.pr, s.session].filter(Boolean);
+				cells = [joinCells([s.agent, s.model, s.effort]), s.bars, s.quota, s.openRouterBalance, s.k8s, s.duration, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
 				line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
-				cells = [s.agent, s.model, s.bars, s.k8s, s.branch, s.behind, s.session].filter(Boolean);
-				if (visibleWidth(joinCells(cells)) > width && s.behind) cells = cells.filter((cell) => cell !== s.behind);
+				cells = [s.agent, s.model, s.bars, s.k8s, s.branch, s.divergence, s.session].filter(Boolean);
+				if (visibleWidth(joinCells(cells)) > width && s.divergence) cells = cells.filter((cell) => cell !== s.divergence);
 				return [truncateToWidth(joinCells(cells), width)];
 			}
 
 			function table(width: number): string[] {
 				const s = segments();
 				const border = (text: string) => theme.fg("border", text);
-				let row1 = [s.host, s.k8s, s.path, s.repo, s.branch, s.behind, s.pr, s.beads, s.session].filter(Boolean);
+				let row1 = [s.host, s.k8s, s.path, s.repo, s.branch, s.divergence, s.pr, s.beads, s.session].filter(Boolean);
 				const row2 = [s.agent, s.model, s.effort, s.ctx, s.quotaTable, s.openRouterBalance, s.cost, s.duration, s.clock].filter(Boolean);
 
 				function widthsFor(cells: string[]): number[] {
@@ -441,7 +441,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				// If the on-disk path makes the table too wide, drop only that cell first;
 				// the worktree repo + branch usually carry the more useful context.
 				if (target > width && s.path) {
-					row1 = [s.host, s.k8s, s.repo, s.branch, s.behind, s.pr, s.beads, s.session].filter(Boolean);
+					row1 = [s.host, s.k8s, s.repo, s.branch, s.divergence, s.pr, s.beads, s.session].filter(Boolean);
 					row1Widths = widthsFor(row1);
 					target = Math.max(totalWidth(row1Widths), totalWidth(row2Widths));
 				}
@@ -470,7 +470,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					quotaAbort.abort();
 					openRouterCreditsCache?.dispose();
 					beadsCache?.dispose();
-					gitBehindCache?.dispose();
+					gitDivergenceCache?.dispose();
 					unsubBranch();
 				},
 				invalidate() {},

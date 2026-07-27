@@ -26,9 +26,9 @@ Then restart Pi, or run `/reload` from an existing Pi session.
 - `PI_STATUSLINE_MIN_ROWS=45` — minimum terminal height before `auto` uses table mode.
 - `PI_STATUSLINE_PR=0` — disable GitHub PR lookup.
 - `PI_STATUSLINE_PR_TTL=120000` — PR cache TTL in milliseconds.
-- `PI_STATUSLINE_GIT_BEHIND=0` — hide the upstream-behind commit count.
-- `PI_STATUSLINE_GIT_BEHIND_TTL=30000` — upstream-behind cache interval in milliseconds (minimum one second).
-- `PI_STATUSLINE_GIT_BEHIND_TIMEOUT=500` — timeout for one local upstream comparison in milliseconds (minimum 100 ms).
+- `PI_STATUSLINE_GIT_DIVERGENCE=0` — hide the upstream ahead/behind commit counts.
+- `PI_STATUSLINE_GIT_DIVERGENCE_TTL=30000` — upstream-divergence cache interval in milliseconds (minimum one second).
+- `PI_STATUSLINE_GIT_DIVERGENCE_TIMEOUT=500` — timeout for one local upstream comparison in milliseconds (minimum 100 ms).
 - `PI_STATUSLINE_LAST_PROMPT=0` — hide the active-run/latest-prompt widget above the editor (recommended when prompts may be visible to others).
 - `PI_STATUSLINE_K8S_CONTEXT=0` — hide the current `kubectl` context (shown by default when available).
 - `PI_STATUSLINE_BEADS=0` — hide Beads work counts in the table footer.
@@ -54,7 +54,7 @@ The examples below are schematic: they use placeholder values and omit terminal 
 Compact mode is a single line. As space narrows, less-important cells are dropped before the line is truncated.
 
 ```text
-12:34 │ π │ GPT-5 Terra │ ⚡Hi │ ██░ ctx │ █░░ GPT │ OR $74.75 │ 12m │ ~/project │ main │ ⇣2 │ ◈ session
+12:34 │ π │ GPT-5 Terra │ ⚡Hi │ ██░ ctx │ █░░ GPT │ OR $74.75 │ 12m │ ~/project │ main │ ⇡10 ⇣2 │ ◈ session
 ```
 
 ### Table footer
@@ -63,7 +63,7 @@ Table mode uses two bordered rows: location/session information on top, then mod
 
 ```text
 ┌──────────────┬───────────┬──────┬──────────────────────┬────────────────┐
-│ example-host │ ~/project │ main │ ⇣2 │ ◉ P4:4 ◐1         │ ◈ session      │
+│ example-host │ ~/project │ main │ ⇡10 ⇣2 │ ◉ P4:4 ◐1         │ ◈ session      │
 ├───┬──────────┴──┬─────┬──┴──────┴──┬──────────┬────────┴──┬─────┬───────┤
 │ π │ GPT-5 Terra │ ⚡Hi │ ███░░░ ctx │ OR $74.75 │ est $0.00 │ 12m │ 12:34 │
 └───┴─────────────┴─────┴────────────┴──────────┴───────────┴─────┴───────┘
@@ -103,14 +103,14 @@ The latest prompt is taken from your submitted input, so it can expose task deta
 - session duration
 - abbreviated cwd
 - worktree repo, branch, dirty/staged/untracked markers
-- cached non-zero commit count behind the configured upstream, shown as `⇣N`
+- cached divergence from the configured upstream, shown as `⇡N` for unpushed local commits and `⇣N` for upstream commits not present locally
 - cached GitHub PR number when available
 - open Beads grouped by priority plus compact active and blocked counts in table mode when the cwd is inside a Beads workspace
 - Pi-configured estimated cost, tokens, and cache stats in table mode (not provider billing or subscription usage)
 
 ## Git upstream source
 
-The optional `⇣N` cell asynchronously compares the cache-keyed branch with its locally available upstream tracking ref using `git rev-list --count <branch>..<branch>@{upstream}`. It never fetches from a remote, so its value reflects the most recent fetch performed elsewhere. The lookup is cached, timeout-bounded, and hidden for zero, missing upstreams, failures, or detached/non-repository sessions.
+The optional divergence cell asynchronously compares the cache-keyed branch with its locally available upstream tracking ref using `git rev-list --left-right --count <branch>@{upstream}...<branch>`. It shows only non-zero directions: `⇡N` for local commits absent upstream and `⇣N` for upstream commits absent locally. It never fetches from a remote, so its value reflects the most recent fetch performed elsewhere. The lookup is cached, timeout-bounded, and hidden when both counts are zero or data is unavailable.
 
 ## Beads count source
 
