@@ -25,7 +25,7 @@ trap cleanup EXIT
 http_root="$temporary_root/http-root"
 bare_repository="$http_root/$repository_path.git"
 mkdir -p "$(dirname "$bare_repository")"
-git clone --bare "$repository_root" "$bare_repository" >/dev/null
+git clone --bare --no-local "$repository_root" "$bare_repository" >/dev/null
 git --git-dir="$bare_repository" update-server-info
 
 port=$(node -e 'const net = require("node:net"); const server = net.createServer(); server.listen(0, "127.0.0.1", () => { console.log(server.address().port); server.close(); });')
