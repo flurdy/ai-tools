@@ -12,28 +12,30 @@ commit=$(git -C "$repository_root" rev-parse HEAD)
 base_path=$(dirname "$(dirname "$repository_root")")
 repository_path=$(realpath --relative-to="$base_path" "$repository_root")
 temporary_root=$(mktemp -d)
-daemon_pid=""
+server_pid=""
 cleanup() {
-	if [[ -n "$daemon_pid" ]]; then
-		kill "$daemon_pid" 2>/dev/null || true
-		wait "$daemon_pid" 2>/dev/null || true
+	if [[ -n "$server_pid" ]]; then
+		kill "$server_pid" 2>/dev/null || true
+		wait "$server_pid" 2>/dev/null || true
 	fi
 	rm -rf "$temporary_root"
 }
 trap cleanup EXIT
 
-port=$(node -e 'const net = require("node:net"); const server = net.createServer(); server.listen(0, "127.0.0.1", () => { console.log(server.address().port); server.close(); });')
-git daemon \
-	--reuseaddr \
-	--export-all \
-	--base-path="$base_path" \
-	--listen=127.0.0.1 \
-	--port="$port" \
-	"$repository_root" \
-	>"$temporary_root/git-daemon.log" 2>&1 &
-daemon_pid=$!
+http_root="$temporary_root/http-root"
+bare_repository="$http_root/$repository_path.git"
+mkdir -p "$(dirname "$bare_repository")"
+git clone --bare "$repository_root" "$bare_repository" >/dev/null
+git --git-dir="$bare_repository" update-server-info
 
-repository_url="git://localhost:$port/$repository_path"
+port=$(node -e 'const net = require("node:net"); const server = net.createServer(); server.listen(0, "127.0.0.1", () => { console.log(server.address().port); server.close(); });')
+python3 -m http.server "$port" \
+	--bind 127.0.0.1 \
+	--directory "$http_root" \
+	>"$temporary_root/http-server.log" 2>&1 &
+server_pid=$!
+
+repository_url="http://localhost:$port/$repository_path.git"
 for _ in $(seq 1 50); do
 	if git ls-remote "$repository_url" HEAD >/dev/null 2>&1; then
 		break
@@ -41,8 +43,8 @@ for _ in $(seq 1 50); do
 	sleep 0.1
 done
 if ! git ls-remote "$repository_url" HEAD >/dev/null 2>&1; then
-	cat "$temporary_root/git-daemon.log" >&2
-	echo "git daemon did not become ready" >&2
+	cat "$temporary_root/http-server.log" >&2
+	echo "temporary Git HTTP server did not become ready" >&2
 	exit 1
 fi
 
