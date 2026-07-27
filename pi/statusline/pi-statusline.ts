@@ -20,10 +20,6 @@ type GitInfo = {
 };
 
 type Usage = {
-	input: number;
-	output: number;
-	cacheRead: number;
-	cacheWrite: number;
 	cost: number;
 	ctxTokens: number;
 	ctxMax: number;
@@ -49,13 +45,6 @@ function abbrevPath(path: string): string {
 			return part.slice(0, 3);
 		})
 		.join("/");
-}
-
-function fmtNumber(n: number): string {
-	if (!Number.isFinite(n) || n <= 0) return "0";
-	if (n < 1000) return String(Math.round(n));
-	if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
-	return `${(n / 1_000_000).toFixed(1)}m`;
 }
 
 function fmtDuration(ms: number): string {
@@ -200,23 +189,19 @@ function renderCellRow(cells: string[], widths: number[], color: (s: string) => 
 function getUsage(ctx: ExtensionContext): Usage {
 	let input = 0;
 	let output = 0;
-	let cacheRead = 0;
-	let cacheWrite = 0;
 	let cost = 0;
 	for (const e of ctx.sessionManager.getBranch()) {
 		if (e.type !== "message" || e.message.role !== "assistant") continue;
 		const m = e.message as AssistantMessage;
 		input += m.usage?.input ?? 0;
 		output += m.usage?.output ?? 0;
-		cacheRead += m.usage?.cacheRead ?? 0;
-		cacheWrite += m.usage?.cacheWrite ?? 0;
 		cost += m.usage?.cost?.total ?? 0;
 	}
 	const context = ctx.getContextUsage();
 	const ctxTokens = context?.tokens ?? input + output;
 	const ctxMax = ctx.model?.contextWindow ?? 0;
 	const ctxPct = ctxMax > 0 ? (ctxTokens / ctxMax) * 100 : 0;
-	return { input, output, cacheRead, cacheWrite, cost, ctxTokens, ctxMax, ctxPct };
+	return { cost, ctxTokens, ctxMax, ctxPct };
 }
 
 export default function piStatusline(pi: ExtensionAPI): void {
@@ -360,11 +345,6 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const beadsCounts = beadsCache?.counts;
 				const effort = thinking ? `⚡${thinking === "high" ? "Hi" : thinking === "medium" ? "Md" : thinking.slice(0, 2)}` : "";
 				const status = `${git.dirty ? "●" : ""}${git.untracked ? "…" : ""}${git.staged ? "✚" : ""}`;
-				const cacheBase = usage.input + usage.cacheRead;
-				const cachePct = usage.cacheRead > 0 && cacheBase > 0 ? Math.round((usage.cacheRead / cacheBase) * 100) : null;
-				const cache = [cachePct === null ? "" : `cache ${cachePct}%`, usage.cacheWrite > 0 ? `W${fmtNumber(usage.cacheWrite)}` : ""]
-					.filter(Boolean)
-					.join(" ");
 				let quota = "";
 				let quotaTable = "";
 				if (codexQuota) {
@@ -396,7 +376,6 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					quota,
 					quotaTable,
 					openRouterBalance,
-					tokens: theme.fg("dim", `↑${fmtNumber(usage.input)} ↓${fmtNumber(usage.output)}${cache ? ` · ${cache}` : ""}`),
 					cost: theme.fg("success", `est $${usage.cost.toFixed(2)}`),
 					duration: theme.fg("dim", fmtDuration(Date.now() - startedAt)),
 					path: theme.fg("muted", ` ${abbrevPath(ctx.cwd)}`),
@@ -427,7 +406,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const s = segments();
 				const border = (text: string) => theme.fg("border", text);
 				let row1 = [s.host, s.k8s, s.path, s.repo, s.branch, s.pr, s.beads, s.session].filter(Boolean);
-				const row2 = [s.agent, s.model, s.effort, s.ctx, s.quotaTable, s.openRouterBalance, s.tokens, s.cost, s.duration, s.clock].filter(Boolean);
+				const row2 = [s.agent, s.model, s.effort, s.ctx, s.quotaTable, s.cost, s.openRouterBalance, s.duration, s.clock].filter(Boolean);
 
 				function widthsFor(cells: string[]): number[] {
 					return cells.map((cell) => visibleWidth(cell) + 2);
