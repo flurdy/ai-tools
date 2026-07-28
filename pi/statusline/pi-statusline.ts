@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { hostname } from "node:os";
 import { dirname } from "node:path";
 import { BeadsCountsCache, fetchBeadsCounts, findBeadsRoot, formatBeadsCounts } from "./beads-status.ts";
-import { fetchCodexWeeklyQuota, isCodexQuotaStale, type CodexWeeklyQuota } from "./codex-quota.ts";
+import { fetchCodexWeeklyQuota, isCodexQuotaStale, showsCodexQuota, type CodexWeeklyQuota } from "./codex-quota.ts";
 import { fetchGitDivergence, formatGitDivergence, GitDivergenceCache } from "./git-divergence.ts";
 import { activeModelLabel, modelLabel } from "./model-label.ts";
 import { createOpenRouterCreditsCache, openRouterCreditsApiKey } from "./openrouter-credits.ts";
@@ -208,6 +208,7 @@ function getUsage(ctx: ExtensionContext): Usage {
 export default function piStatusline(pi: ExtensionAPI): void {
 	let thinking = process.env.PI_STATUSLINE_THINKING ?? "";
 	let startedAt = Date.now();
+	let refreshCodexQuotaForModel: ((provider: string | undefined) => void) | undefined;
 	let lastPrompt: { text: string; submittedAt: Date } | undefined;
 	let activeRun = false;
 	let activeModel: { provider?: string; id?: string } | undefined;
@@ -247,6 +248,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 	});
 
 	pi.on("model_select", (event, ctx) => {
+		refreshCodexQuotaForModel?.(event.model.provider);
 		if (!activeRun) return;
 		activeModel = { provider: event.model.provider, id: event.model.id };
 		setLastPromptWidget(ctx);
@@ -312,8 +314,8 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					onChange: () => tui.requestRender(),
 				});
 
-			async function refreshCodexQuota(): Promise<void> {
-				if (!quotaEnabled || quotaRefreshing || quotaAbort.signal.aborted) return;
+			async function refreshCodexQuota(provider = ctx.model?.provider): Promise<void> {
+				if (!showsCodexQuota(provider, quotaEnabled) || quotaRefreshing || quotaAbort.signal.aborted) return;
 				quotaRefreshing = true;
 				try {
 					codexQuota = await fetchCodexWeeklyQuota({
@@ -329,6 +331,10 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				}
 			}
 
+			refreshCodexQuotaForModel = (provider) => {
+				void refreshCodexQuota(provider);
+				tui.requestRender();
+			};
 			void refreshCodexQuota();
 			void openRouterCreditsCache?.refresh();
 			void beadsCache?.refresh();
@@ -359,7 +365,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const status = `${git.dirty ? "●" : ""}${git.untracked ? "…" : ""}${git.staged ? "✚" : ""}`;
 				let quota = "";
 				let quotaTable = "";
-				if (codexQuota) {
+				if (codexQuota && showsCodexQuota(ctx.model?.provider, quotaEnabled)) {
 					const used = Math.round(codexQuota.usedPercent);
 					const stale = isCodexQuotaStale(codexQuota, Date.now(), quotaStaleMs);
 					const tone = codexQuotaTone(used);
@@ -463,6 +469,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 
 			return {
 				dispose() {
+					refreshCodexQuotaForModel = undefined;
 					clearInterval(interval);
 					if (quotaInterval) clearInterval(quotaInterval);
 					if (openRouterInterval) clearInterval(openRouterInterval);

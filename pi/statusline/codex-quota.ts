@@ -19,6 +19,10 @@ export interface FetchCodexQuotaOptions {
 
 type JsonObject = Record<string, unknown>;
 
+export function showsCodexQuota(provider: string | undefined, enabled = true): boolean {
+	return enabled && provider === "openai-codex";
+}
+
 function asObject(value: unknown): JsonObject | undefined {
 	return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as JsonObject) : undefined;
 }

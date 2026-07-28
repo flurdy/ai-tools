@@ -3,7 +3,7 @@ import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { fetchCodexWeeklyQuota, isCodexQuotaStale, selectCodexWeeklyQuota } from "./codex-quota.ts";
+import { fetchCodexWeeklyQuota, isCodexQuotaStale, selectCodexWeeklyQuota, showsCodexQuota } from "./codex-quota.ts";
 import { modelLabel, shortModel } from "./model-label.ts";
 import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT, codexQuotaTone } from "./quota-display.ts";
 
@@ -14,6 +14,14 @@ const colors = {
 	crit: (text: string) => `[crit:${text}]`,
 	empty: (text: string) => `[empty:${text}]`,
 };
+
+test("shows quota in compact and table footer data only for enabled Codex models", () => {
+	assert.equal(showsCodexQuota("openai-codex"), true);
+	assert.equal(showsCodexQuota("openai-codex", false), false);
+	assert.equal(showsCodexQuota("anthropic"), false);
+	assert.equal(showsCodexQuota("openrouter"), false);
+	assert.equal(showsCodexQuota(undefined), false);
+});
 
 test("renders quota bars without rounding usage upward", () => {
 	assert.equal(bar(67, 6, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, colors), "[warn:▮▮▮▮][empty:▯▯]");

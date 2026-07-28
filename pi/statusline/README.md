@@ -34,7 +34,7 @@ Then restart Pi, or run `/reload` from an existing Pi session.
 - `PI_STATUSLINE_BEADS=0` — hide Beads work counts in the table footer.
 - `PI_STATUSLINE_BEADS_TTL=30000` — Beads count refresh interval in milliseconds (minimum five seconds).
 - `PI_STATUSLINE_BEADS_TIMEOUT=2000` — timeout for one Beads count lookup in milliseconds (minimum 250 ms).
-- `PI_STATUSLINE_CODEX_QUOTA=0` — disable the Codex weekly-quota lookup.
+- `PI_STATUSLINE_CODEX_QUOTA=0` — disable the Codex weekly-quota lookup when using an OpenAI-Codex model.
 - `PI_STATUSLINE_CODEX_QUOTA_TTL=300000` — Codex quota refresh interval in milliseconds (minimum one minute).
 - `PI_STATUSLINE_CODEX_QUOTA_STALE=900000` — age after which the last successful quota snapshot is marked stale (minimum one minute).
 - `PI_STATUSLINE_CODEX_QUOTA_TIMEOUT=10000` — timeout for one Codex quota lookup in milliseconds.
@@ -98,7 +98,7 @@ The latest prompt is taken from your submitted input, so it can expose task deta
 - current session name (truncated when necessary)
 - `π` agent marker in its own cell; a compact model name (including variants such as Sol, Terra, and Luna), prefixed with `OR` only for OpenRouter; and thinking level
 - cautious context-capacity bar labelled `ctx` (green through 33%, yellow through 66%, then red)
-- cached Codex weekly used-capacity bar labelled `GPT`, plus its reset date in table mode
+- cached Codex weekly used-capacity bar labelled `GPT` for OpenAI-Codex models, plus its reset date in table mode
 - optional cached OpenRouter account credit balance labelled `OR`, immediately before the estimated session cost
 - session duration
 - abbreviated cwd
@@ -118,7 +118,7 @@ The table footer discovers the nearest parent `.beads` workspace and asynchronou
 
 ## Codex quota source
 
-The quota segment queries the authenticated Codex CLI's machine-readable `codex app-server` API (`account/rateLimits/read`). It does not scrape the interactive `/status` screen, read Codex credential files, or run a model turn. Lookup runs asynchronously outside footer rendering, refreshes at a bounded interval, and retains the last successful snapshot when a later refresh fails. Data older than the configured stale interval—or whose reset time has passed—is rendered dim.
+For OpenAI-Codex models, the quota segment queries the authenticated Codex CLI's machine-readable `codex app-server` API (`account/rateLimits/read`). It stays hidden and skips lookups for other providers. It does not scrape the interactive `/status` screen, read Codex credential files, or run a model turn. Lookup runs asynchronously outside footer rendering, refreshes at a bounded interval, and retains the last successful snapshot when a later refresh fails. Data older than the configured stale interval—or whose reset time has passed—is rendered dim.
 
 The weekly bucket is identified by its approximately seven-day duration rather than by assuming it is always the API's primary or secondary window. The segment stays hidden when Codex is missing, unauthenticated, too old to support the endpoint, or returns no weekly bucket.
 
