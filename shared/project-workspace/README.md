@@ -147,7 +147,25 @@ The generated Makefile provides:
 
 ```bash
 make status
+make git-status
+make beads-status
+make all-status
 make doctor
+```
+
+`make status` aliases `make all-status`, which composes the focused Git and Beads
+views with `doctor`. The status command reads validated `workspace.json` topology,
+works without optional mgit configuration, and reports partial repository failures
+before returning non-zero. Git status uses local tracking refs only and never fetches
+or changes configuration. Beads queries use `--readonly`, remain independent per
+repository, and show bounded in-progress and ready work without synchronizing stores.
+
+A workspace can add unowned, project-specific targets in `workspace.mk`. Extending
+`all-status` there composes CI, deployment, runtime, or other local checks without
+adding those domains to the generated core:
+
+```make
+all-status: ci-status deploy-status
 ```
 
 `make doctor` uses the installed `project-workspace` command as the authoritative

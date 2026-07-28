@@ -73,6 +73,20 @@ One synthetic second-path reconstruction is not repeated user evidence for a cor
 - Keep symlink-only CLI installation and defer package/version automation.
 - Require a supported Beads Dolt remote or backup for actual cross-machine tracker recovery; the pilot did not configure or push one.
 
+## Post-pilot status evidence — 2026-07-28
+
+The Coding Agent Workbench became a second real workspace consumer and needed one
+read-only view of Git and Beads state across its root and three registered repositories.
+A local prototype confirmed the topology-driven flow. Letterbox's established
+`git-status`, `ci-status`, `deploy-status`, and `all-status` targets supplied a second
+local precedent for focused status commands plus a combined dashboard.
+
+This evidence justifies a read-only `project-workspace status` command and generated
+Git/Beads/all-status Make targets. It does not justify tracker synchronization, automatic
+Git fetch/configuration, CI or deployment integrations, hard-coded service grouping, or a
+generic plugin system. An optional `workspace.mk` include is sufficient for workspaces to
+compose their own domain-specific checks.
+
 ## Revisit triggers
 
 Reconsider source identity or a dry-run-first repair command only after a real second-machine onboarding or another independent workspace repeatedly requires manual link reconstruction. Reconsider one topology lifecycle command only after repeated remove/rename friction. Reconsider role semantics only when a consumer needs behavior that differs between primary and service repositories.

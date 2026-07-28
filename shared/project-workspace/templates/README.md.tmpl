@@ -37,8 +37,21 @@ project-workspace add-repo /path/to/repository
 project-workspace add-infrastructure /path/to/infrastructure
 make help
 make status
+make git-status
+make beads-status
+make all-status
 make doctor
 ```
+
+`make status` and `make all-status` show Git state, active and ready Beads work,
+and workspace health across the root and every repository in `workspace.json`.
+The focused `git-status` and `beads-status` targets show one section only. Status
+commands are read-only: they do not fetch Git remotes or synchronize independent
+Beads stores.
+
+For workspace-specific checks, add an unowned `workspace.mk` file and extend the
+combined target, for example `all-status: ci-status deploy-status`. Keep CI,
+deployment, runtime, and release behavior outside the generated core.
 
 Both registration commands support `--dry-run`. Keep custom README content outside the
 `project-workspace` marker pairs surrounding the generated lists. Use `bd` from this root

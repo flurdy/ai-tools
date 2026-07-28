@@ -20,6 +20,8 @@ MGIT_CONFIG = ".mgit.conf"
 MGIT_SCRIPT = Path("scripts") / "mgit"
 MGIT_SKILL_NAME = "setup-multirepo-git"
 BEADS_HEALTH_TIMEOUT_SECONDS = 5
+STATUS_TIMEOUT_SECONDS = 5
+STATUS_ISSUE_LIMIT = 20
 DIAGNOSTIC_OUTPUT_LIMIT = 2_000
 
 MANAGED_DIRECTORIES = (
@@ -34,6 +36,15 @@ MANAGED_DIRECTORIES = (
 
 class WorkspaceError(RuntimeError):
     """A safe, user-facing workspace creation failure."""
+
+
+@dataclass(frozen=True)
+class GitStatus:
+    branch: str
+    upstream: str | None
+    ahead: int | None
+    behind: int | None
+    dirty: int
 
 
 @dataclass(frozen=True)
@@ -1098,6 +1109,166 @@ def register_source(arguments: argparse.Namespace) -> None:
     apply_registration(plan, arguments.dry_run)
 
 
+def status_targets(
+    root: Path, manifest: dict[str, object]
+) -> list[tuple[str, str, Path]]:
+    repositories = manifest["repositories"]
+    assert isinstance(repositories, list)
+    return [("workspace", ".", root)] + [
+        (
+            str(repository["name"]),
+            str(repository["path"]),
+            root / str(repository["path"]),
+        )
+        for repository in repositories
+    ]
+
+
+def run_status_command(
+    command: list[str], cwd: Path
+) -> tuple[subprocess.CompletedProcess[str] | None, str | None]:
+    try:
+        result = subprocess.run(
+            command,
+            cwd=cwd,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=STATUS_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return None, f"timed out after {STATUS_TIMEOUT_SECONDS} seconds"
+    except OSError as error:
+        return None, str(error)
+    if result.returncode != 0:
+        return None, diagnostic_output(
+            result.stderr or result.stdout, result.returncode
+        )
+    return result, None
+
+
+def parse_git_status(output: str) -> GitStatus:
+    branch = "?"
+    upstream: str | None = None
+    ahead: int | None = None
+    behind: int | None = None
+    dirty = 0
+    for line in output.splitlines():
+        if line.startswith("# branch.head "):
+            branch = line.removeprefix("# branch.head ")
+        elif line.startswith("# branch.upstream "):
+            upstream = line.removeprefix("# branch.upstream ")
+        elif line.startswith("# branch.ab "):
+            match = re.fullmatch(r"\+(\d+) -(\d+)", line.removeprefix("# branch.ab "))
+            if match is not None:
+                ahead, behind = (int(value) for value in match.groups())
+        elif not line.startswith("# "):
+            dirty += 1
+    return GitStatus(branch, upstream, ahead, behind, dirty)
+
+
+def display_count(value: int | None) -> str:
+    return "—" if value is None else str(value)
+
+
+def git_status(root: Path, manifest: dict[str, object]) -> bool:
+    print("=== GIT STATUS ===")
+    success = True
+    for name, relative_path, directory in status_targets(root, manifest):
+        print(f"{name} ({relative_path})")
+        result, error = run_status_command(
+            ["git", "status", "--porcelain=v2", "--branch"], directory
+        )
+        if error is not None:
+            print(f"  ERROR: {error}")
+            success = False
+            continue
+        assert result is not None
+        summary = parse_git_status(result.stdout)
+        print(
+            f"  branch {summary.branch} | upstream {summary.upstream or '—'} | "
+            f"ahead {display_count(summary.ahead)} | "
+            f"behind {display_count(summary.behind)} | dirty {summary.dirty}"
+        )
+    return success
+
+
+def load_status_issues(
+    directory: Path, arguments: list[str]
+) -> tuple[list[dict[str, object]], str | None]:
+    result, error = run_status_command(
+        [
+            "bd",
+            "list",
+            *arguments,
+            "--json",
+            "--limit",
+            str(STATUS_ISSUE_LIMIT + 1),
+            "--no-pager",
+            "--readonly",
+        ],
+        directory,
+    )
+    if error is not None:
+        return [], error
+    assert result is not None
+    try:
+        issues = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        return [], f"invalid bd JSON: {error}"
+    if not isinstance(issues, list) or not all(
+        isinstance(issue, dict) for issue in issues
+    ):
+        return [], "invalid bd JSON: expected an issue list"
+    return issues, None
+
+
+def print_status_issues(status: str, issues: list[dict[str, object]]) -> None:
+    for issue in issues[:STATUS_ISSUE_LIMIT]:
+        print(
+            f"  {status:<11} P{issue['priority']} {issue['id']} {issue['title']}"
+        )
+    if len(issues) > STATUS_ISSUE_LIMIT:
+        print(f"  … more {status} work omitted")
+
+
+def beads_status(root: Path, manifest: dict[str, object]) -> bool:
+    print("=== BEADS STATUS ===")
+    success = True
+    for name, relative_path, directory in status_targets(root, manifest):
+        print(f"{name} ({relative_path})")
+        if not (directory / ".beads").is_dir():
+            print("  not initialized")
+            continue
+        active, active_error = load_status_issues(
+            directory, ["--status=in_progress"]
+        )
+        ready, ready_error = load_status_issues(directory, ["--ready"])
+        if active_error is not None or ready_error is not None:
+            print(f"  ERROR: {active_error or ready_error}")
+            success = False
+            continue
+        if not active and not ready:
+            print("  no active or ready work")
+            continue
+        print_status_issues("in_progress", active)
+        print_status_issues("ready", ready)
+    return success
+
+
+def status_workspace(root: Path, section: str) -> bool:
+    workspace_root = Path(os.path.abspath(root.expanduser()))
+    manifest, _readme = load_workspace_manifest(workspace_root)
+    success = True
+    if section in ("all", "git"):
+        success = git_status(workspace_root, manifest) and success
+    if section in ("all", "beads"):
+        if section == "all":
+            print()
+        success = beads_status(workspace_root, manifest) and success
+    return success
+
+
 def beads_doctor(root: Path) -> None:
     if shutil.which("bd") is None:
         raise WorkspaceError("bd is required to validate workspace tracking")
@@ -1166,6 +1337,17 @@ def parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="preview without writing"
     )
 
+    status = subcommands.add_parser("status", help="show repository and work status")
+    status.add_argument(
+        "--workspace", type=Path, default=Path.cwd(), help="workspace root"
+    )
+    status.add_argument(
+        "--section",
+        choices=("all", "git", "beads"),
+        default="all",
+        help="status section to show",
+    )
+
     doctor = subcommands.add_parser("doctor", help="validate a project workspace")
     doctor.add_argument(
         "--workspace", type=Path, default=Path.cwd(), help="workspace root"
@@ -1181,6 +1363,9 @@ def main() -> int:
             create_workspace(workspace, arguments.dry_run)
         elif arguments.command == "doctor":
             doctor_workspace(arguments.workspace)
+        elif arguments.command == "status":
+            succeeded = status_workspace(arguments.workspace, arguments.section)
+            return 0 if succeeded else 1
         elif arguments.command == "configure-mgit":
             configure_mgit(arguments)
         else:

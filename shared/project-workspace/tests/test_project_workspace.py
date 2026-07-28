@@ -28,6 +28,19 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.write_command(
             "git",
             'echo "git $*" >> "$COMMAND_LOG"\n'
+            'if [[ "$1" == "status" ]]; then\n'
+            '  [[ -f .git/project-workspace-status-sleep ]] && sleep 6\n'
+            '  if [[ -f .git/project-workspace-status-fail ]]; then\n'
+            '    cat .git/project-workspace-status-fail >&2\n'
+            "    exit 2\n"
+            "  fi\n"
+            "  if [[ -f .git/project-workspace-status ]]; then\n"
+            "    cat .git/project-workspace-status\n"
+            "  else\n"
+            "    echo '# branch.head main'\n"
+            "  fi\n"
+            "  exit\n"
+            "fi\n"
             'if [[ "$1" == "-C" ]]; then\n'
             '  [[ -f "$2/.git/project-workspace-initialized" ]] && echo "$2"\n'
             "  exit\n"
@@ -43,6 +56,20 @@ class ProjectWorkspaceTest(unittest.TestCase):
             "bd",
             'echo "bd $*" >> "$COMMAND_LOG"\n'
             'if [[ "$1" == "list" ]]; then\n'
+            '  if [[ "$*" == *"--json"* ]]; then\n'
+            '    [[ -f .beads/project-workspace-status-sleep ]] && sleep 6\n'
+            '    if [[ -f .beads/project-workspace-status-fail ]]; then\n'
+            '      cat .beads/project-workspace-status-fail >&2\n'
+            "      exit 2\n"
+            "    fi\n"
+            '    if [[ "$*" == *"--ready"* ]]; then\n'
+            "      status_file=.beads/project-workspace-ready.json\n"
+            "    else\n"
+            "      status_file=.beads/project-workspace-active.json\n"
+            "    fi\n"
+            '    [[ -f "$status_file" ]] && cat "$status_file" || echo "[]"\n'
+            "    exit\n"
+            "  fi\n"
             '  if [[ "${BD_HEALTH_FAIL:-}" == "1" ]]; then\n'
             '    echo "${BD_HEALTH_ERROR:-store unavailable}" >&2\n'
             "    exit 2\n"
@@ -120,6 +147,26 @@ class ProjectWorkspaceTest(unittest.TestCase):
         (repository / ".git").mkdir(parents=True)
         (repository / ".git" / "project-workspace-initialized").touch()
         return repository
+
+    def set_git_status(self, repository: Path, output: str) -> None:
+        (repository / ".git" / "project-workspace-status").write_text(
+            output, encoding="utf-8"
+        )
+
+    def set_beads_status(
+        self,
+        repository: Path,
+        active: list[dict[str, object]],
+        ready: list[dict[str, object]],
+    ) -> None:
+        beads = repository / ".beads"
+        beads.mkdir(exist_ok=True)
+        (beads / "project-workspace-active.json").write_text(
+            json.dumps(active), encoding="utf-8"
+        )
+        (beads / "project-workspace-ready.json").write_text(
+            json.dumps(ready), encoding="utf-8"
+        )
 
     def use_real_git(self) -> str:
         real_git = shutil.which("git")
@@ -1128,6 +1175,150 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.assertIn("registered path is not a safe relative symlink", result.stderr)
         self.assertFalse((workspace / ".mgit.conf").exists())
         self.assertFalse((workspace / "scripts").exists())
+
+    def test_status_reports_git_and_beads_without_mgit(self) -> None:
+        workspace = self.create_workspace("status")
+        service = self.create_repository("service")
+        no_tracker = self.create_repository("no-tracker")
+        self.run_cli("add-repo", str(service), "--workspace", str(workspace))
+        self.run_cli("add-repo", str(no_tracker), "--workspace", str(workspace))
+        self.set_git_status(workspace, "# branch.head main\n? README.md\n")
+        self.set_git_status(
+            service,
+            "# branch.head feature\n"
+            "# branch.upstream origin/main\n"
+            "# branch.ab +2 -3\n"
+            "1 changed\n",
+        )
+        self.set_beads_status(
+            workspace,
+            [{"id": "workspace-1", "title": "Coordinate work", "priority": 2}],
+            [],
+        )
+        self.set_beads_status(
+            service,
+            [],
+            [{"id": "service-1", "title": "Ready work", "priority": 3}],
+        )
+
+        result = self.run_cli("status", "--workspace", str(workspace))
+
+        self.assertIn("=== GIT STATUS ===", result.stdout)
+        self.assertIn(
+            "branch main | upstream — | ahead — | behind — | dirty 1",
+            result.stdout,
+        )
+        self.assertIn(
+            "branch feature | upstream origin/main | ahead 2 | behind 3 | dirty 1",
+            result.stdout,
+        )
+        self.assertIn("in_progress P2 workspace-1 Coordinate work", result.stdout)
+        self.assertIn("ready       P3 service-1 Ready work", result.stdout)
+        self.assertIn("no-tracker (repos/no-tracker)\n  not initialized", result.stdout)
+        self.assertFalse((workspace / ".mgit.conf").exists())
+        commands = self.command_log.read_text(encoding="utf-8")
+        self.assertIn("--readonly", commands)
+        self.assertNotIn(" fetch ", commands)
+
+    def test_beads_status_limits_each_work_group(self) -> None:
+        workspace = self.create_workspace("bounded-status")
+        ready = [
+            {"id": f"workspace-{index}", "title": f"Ready {index}", "priority": 4}
+            for index in range(21)
+        ]
+        self.set_beads_status(workspace, [], ready)
+
+        result = self.run_cli(
+            "status", "--workspace", str(workspace), "--section", "beads"
+        )
+
+        self.assertIn("workspace-19 Ready 19", result.stdout)
+        self.assertNotIn("workspace-20 Ready 20", result.stdout)
+        self.assertIn("more ready work omitted", result.stdout)
+        commands = self.command_log.read_text(encoding="utf-8")
+        self.assertIn("--limit 21", commands)
+
+    def test_status_continues_after_git_and_beads_failures(self) -> None:
+        workspace = self.create_workspace("partial-status")
+        failing = self.create_repository("failing")
+        healthy = self.create_repository("healthy")
+        self.run_cli("add-repo", str(failing), "--workspace", str(workspace))
+        self.run_cli("add-repo", str(healthy), "--workspace", str(workspace))
+        (failing / ".git" / "project-workspace-status-fail").write_text(
+            "status unavailable\n", encoding="utf-8"
+        )
+        self.set_git_status(healthy, "# branch.head healthy\n")
+        self.set_beads_status(workspace, [], [])
+        self.set_beads_status(failing, [], [])
+        (failing / ".beads" / "project-workspace-status-fail").write_text(
+            "store unavailable\n", encoding="utf-8"
+        )
+        self.set_beads_status(
+            healthy,
+            [],
+            [{"id": "healthy-1", "title": "Still visible", "priority": 4}],
+        )
+
+        git_result = self.run_cli(
+            "status", "--workspace", str(workspace), "--section", "git", check=False
+        )
+        beads_result = self.run_cli(
+            "status", "--workspace", str(workspace), "--section", "beads", check=False
+        )
+
+        self.assertNotEqual(0, git_result.returncode)
+        self.assertIn("ERROR: status unavailable", git_result.stdout)
+        self.assertIn("branch healthy", git_result.stdout)
+        self.assertNotEqual(0, beads_result.returncode)
+        self.assertIn("ERROR: store unavailable", beads_result.stdout)
+        self.assertIn("healthy-1 Still visible", beads_result.stdout)
+
+    def test_status_times_out_without_blocking_forever(self) -> None:
+        workspace = self.create_workspace("status-timeout")
+        (workspace / ".git" / "project-workspace-status-sleep").touch()
+
+        result = self.run_cli(
+            "status", "--workspace", str(workspace), "--section", "git", check=False
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("timed out after 5 seconds", result.stdout)
+
+    def test_generated_make_status_supports_workspace_extensions(self) -> None:
+        workspace = self.create_workspace("make-status")
+        service = self.create_repository("service")
+        self.run_cli("add-repo", str(service), "--workspace", str(workspace))
+        extension = """.PHONY: custom-status
+custom-status:
+\t@echo "Custom: PASS"
+
+all-status: custom-status
+"""
+        (workspace / "workspace.mk").write_text(extension, encoding="utf-8")
+
+        result = subprocess.run(
+            ["make", "status"],
+            capture_output=True,
+            check=True,
+            cwd=workspace,
+            env=self.environment,
+            text=True,
+        )
+
+        self.assertIn("=== GIT STATUS ===", result.stdout)
+        self.assertIn("=== BEADS STATUS ===", result.stdout)
+        self.assertIn("Workspace: PASS", result.stdout)
+        self.assertIn("Custom: PASS", result.stdout)
+        makefile = (workspace / "Makefile").read_text(encoding="utf-8")
+        self.assertIn("git-status", makefile)
+        self.assertIn("beads-status", makefile)
+        self.assertIn("-include workspace.mk", makefile)
+
+        second = self.create_repository("second")
+        self.run_cli("add-repo", str(second), "--workspace", str(workspace))
+        self.assertEqual(
+            extension, (workspace / "workspace.mk").read_text(encoding="utf-8")
+        )
 
     def test_doctor_distinguishes_unconfigured_and_partial_mgit(self) -> None:
         workspace = self.create_workspace()
