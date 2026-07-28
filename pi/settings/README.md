@@ -35,7 +35,7 @@ Before restarting Pi:
 
 ### Owned by this repository
 
-The optional [model tier router](https://github.com/flurdy/pi-model-tier-router) now lives in a standalone private Git package and is not installed by this starter.
+The optional [skill model router](https://github.com/flurdy/pi-skill-model-router) now lives in a standalone public Git package and is not installed by this starter.
 
 | Component | Location | Purpose | Installation note |
 | --- | --- | --- | --- |
