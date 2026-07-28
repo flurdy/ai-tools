@@ -23,13 +23,21 @@ This repo is meant to be the shareable, curated version of tools that also live 
 | [Project workspace scaffold](shared/project-workspace/) | Shared | Creates a safe cross-project context and Beads workspace around existing repositories or greenfield projects. |
 | [Kitty shell reset](shared/kitty/) | Shared | Fish prompt hook that clears the agent tab title when returning to the shell. |
 
-## Related Repos And Docs
+### Skill Model Router
 
-- The skill model router lives separately in [flurdy/pi-skill-model-router](https://github.com/flurdy/pi-skill-model-router); its pre-extraction history remains in this repository.
-- Skills live separately in [flurdy/agent-skills](https://github.com/flurdy/agent-skills), especially `shared/`. This repo links to skills rather than vendoring them.
-- Longer-form docs are published at <https://flurdy.com/docs>.
+- [flurdy/pi-skill-model-router](https://github.com/flurdy/pi-skill-model-router)
+- The skill model router has moved to its own repository.
+
+### Skills
+
+- [flurdy/agent-skills](https://github.com/flurdy/agent-skills)
+- Related and often referred skills live separately in its own repository.
+
+### Related Repos and Docs
+
 - The Kitty tab title write-up is at <https://flurdy.com/docs/kitty-ai-tabs/>.
 - Dotfiles source is [flurdy/dotfiles](https://github.com/flurdy/dotfiles).
+
 
 ## Layout
 
