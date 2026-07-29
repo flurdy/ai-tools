@@ -1250,9 +1250,16 @@ class ProjectWorkspaceTest(unittest.TestCase):
             "branch feature | upstream origin/main | ahead 2 | behind 3 | dirty 1",
             result.stdout,
         )
-        self.assertIn("in_progress P2 workspace-1 Coordinate work", result.stdout)
-        self.assertIn("ready       P3 service-1 Ready work", result.stdout)
-        self.assertIn("no-tracker (repos/no-tracker)\n  not initialized", result.stdout)
+        self.assertIn(
+            "| in_progress | P2 | workspace-1 | Coordinate work", result.stdout
+        )
+        self.assertIn("| ready       | P3 | service-1 | Ready work", result.stdout)
+        self.assertRegex(
+            result.stdout,
+            r"(?m)^no-tracker \(repos/no-tracker\) *\| not initialized$",
+        )
+        self.assertRegex(result.stdout, r"(?m)^workspace \(\.\) *\| branch main \|")
+        self.assertIn("\n\n=== BEADS STATUS ===", result.stdout)
         self.assertFalse((workspace / ".mgit.conf").exists())
         commands = self.command_log.read_text(encoding="utf-8")
         self.assertIn("--readonly", commands)
@@ -1270,8 +1277,8 @@ class ProjectWorkspaceTest(unittest.TestCase):
             "status", "--workspace", str(workspace), "--section", "beads"
         )
 
-        self.assertIn("workspace-19 Ready 19", result.stdout)
-        self.assertNotIn("workspace-20 Ready 20", result.stdout)
+        self.assertIn("workspace-19 | Ready 19", result.stdout)
+        self.assertNotIn("workspace-20 | Ready 20", result.stdout)
         self.assertIn("more ready work omitted", result.stdout)
         commands = self.command_log.read_text(encoding="utf-8")
         self.assertIn("--limit 21", commands)
@@ -1309,7 +1316,7 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.assertIn("branch healthy", git_result.stdout)
         self.assertNotEqual(0, beads_result.returncode)
         self.assertIn("ERROR: store unavailable", beads_result.stdout)
-        self.assertIn("healthy-1 Still visible", beads_result.stdout)
+        self.assertIn("healthy-1 | Still visible", beads_result.stdout)
 
     def test_status_times_out_without_blocking_forever(self) -> None:
         workspace = self.create_workspace("status-timeout")
@@ -1344,7 +1351,8 @@ all-status: custom-status
         )
 
         self.assertIn("=== GIT STATUS ===", result.stdout)
-        self.assertIn("=== BEADS STATUS ===", result.stdout)
+        self.assertIn("\n\n=== BEADS STATUS ===", result.stdout)
+        self.assertIn("\n\n=== WORKSPACE HEALTH ===", result.stdout)
         self.assertIn("Workspace: PASS", result.stdout)
         self.assertIn("Custom: PASS", result.stdout)
         makefile = (workspace / "Makefile").read_text(encoding="utf-8")

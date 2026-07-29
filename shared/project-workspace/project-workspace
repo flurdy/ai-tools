@@ -1134,6 +1134,10 @@ def status_targets(
     ]
 
 
+def label_width(targets: list[tuple[str, str, Path]]) -> int:
+    return max((len(f"{name} ({path})") for name, path, _ in targets), default=0)
+
+
 def run_status_command(
     command: list[str], cwd: Path
 ) -> tuple[subprocess.CompletedProcess[str] | None, str | None]:
@@ -1184,22 +1188,26 @@ def display_count(value: int | None) -> str:
 def git_status(root: Path, manifest: dict[str, object]) -> bool:
     print("=== GIT STATUS ===")
     success = True
-    for name, relative_path, directory in status_targets(root, manifest):
-        print(f"{name} ({relative_path})")
+    targets = status_targets(root, manifest)
+    width = label_width(targets)
+    for name, relative_path, directory in targets:
+        label = f"{name} ({relative_path})".ljust(width)
         result, error = run_status_command(
             ["git", "status", "--porcelain=v2", "--branch"], directory
         )
         if error is not None:
-            print(f"  ERROR: {error}")
+            print(f"{label} | ERROR: {error}")
             success = False
             continue
         assert result is not None
         summary = parse_git_status(result.stdout)
         print(
-            f"  branch {summary.branch} | upstream {summary.upstream or '—'} | "
+            f"{label} | branch {summary.branch} | "
+            f"upstream {summary.upstream or '—'} | "
             f"ahead {display_count(summary.ahead)} | "
             f"behind {display_count(summary.behind)} | dirty {summary.dirty}"
         )
+    print()
     return success
 
 
@@ -1233,36 +1241,42 @@ def load_status_issues(
     return issues, None
 
 
-def print_status_issues(status: str, issues: list[dict[str, object]]) -> None:
+def print_status_issues(
+    label: str, status: str, issues: list[dict[str, object]]
+) -> None:
     for issue in issues[:STATUS_ISSUE_LIMIT]:
         print(
-            f"  {status:<11} P{issue['priority']} {issue['id']} {issue['title']}"
+            f"{label} | {status:<11} | P{issue['priority']} | "
+            f"{issue['id']} | {issue['title']}"
         )
     if len(issues) > STATUS_ISSUE_LIMIT:
-        print(f"  … more {status} work omitted")
+        print(f"{label} | … more {status} work omitted")
 
 
 def beads_status(root: Path, manifest: dict[str, object]) -> bool:
     print("=== BEADS STATUS ===")
     success = True
-    for name, relative_path, directory in status_targets(root, manifest):
-        print(f"{name} ({relative_path})")
+    targets = status_targets(root, manifest)
+    width = label_width(targets)
+    for name, relative_path, directory in targets:
+        label = f"{name} ({relative_path})".ljust(width)
         if not (directory / ".beads").is_dir():
-            print("  not initialized")
+            print(f"{label} | not initialized")
             continue
         active, active_error = load_status_issues(
             directory, ["--status=in_progress"]
         )
         ready, ready_error = load_status_issues(directory, ["--ready"])
         if active_error is not None or ready_error is not None:
-            print(f"  ERROR: {active_error or ready_error}")
+            print(f"{label} | ERROR: {active_error or ready_error}")
             success = False
             continue
         if not active and not ready:
-            print("  no active or ready work")
+            print(f"{label} | no active or ready work")
             continue
-        print_status_issues("in_progress", active)
-        print_status_issues("ready", ready)
+        print_status_issues(label, "in_progress", active)
+        print_status_issues(label, "ready", ready)
+    print()
     return success
 
 
@@ -1273,8 +1287,6 @@ def status_workspace(root: Path, section: str) -> bool:
     if section in ("all", "git"):
         success = git_status(workspace_root, manifest) and success
     if section in ("all", "beads"):
-        if section == "all":
-            print()
         success = beads_status(workspace_root, manifest) and success
     return success
 
@@ -1307,9 +1319,11 @@ def beads_doctor(root: Path) -> None:
 def doctor_workspace(root: Path) -> None:
     workspace_root = Path(os.path.abspath(root.expanduser()))
     manifest, _readme = load_workspace_manifest(workspace_root)
+    print("=== WORKSPACE HEALTH ===")
     print("Workspace: PASS")
     beads_doctor(workspace_root)
     mgit_doctor(workspace_root, manifest)
+    print()
 
 
 def parser() -> argparse.ArgumentParser:

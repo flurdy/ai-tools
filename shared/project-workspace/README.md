@@ -162,6 +162,9 @@ works without optional mgit configuration, and reports partial repository failur
 before returning non-zero. Git status uses local tracking refs only and never fetches
 or changes configuration. Beads queries use `--readonly`, remain independent per
 repository, and show bounded in-progress and ready work without synchronizing stores.
+Each section is titled and separated by a blank line, and Git and Beads both render one
+pipe-delimited row per line — a repository per row for Git, an issue per row for Beads —
+so the combined output stays scannable.
 
 A workspace can add unowned, project-specific targets in `workspace.mk`. Extending
 `all-status` there composes CI, deployment, runtime, or other local checks without
