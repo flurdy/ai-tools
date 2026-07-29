@@ -9,13 +9,11 @@ Claude Code statusline command inspired by Bobthefish. It renders Claude's `✦`
 
 ## Install
 
-Copy or symlink the script into your Claude config, for example:
-
 ```bash
-mkdir -p ~/.claude
-cp statusline-command.sh ~/.claude/statusline-command.sh
-chmod +x ~/.claude/statusline-command.sh
+make install
 ```
+
+This symlinks the script into `~/.claude/`, so the installed statusline cannot drift from source. Override the destination with `make install CLAUDE_DIR=/somewhere/else`. Prefer this over copying: a copy silently forks and stops receiving changes.
 
 Then configure Claude Code to use it as the statusline command. Merge the permissions from `settings.statusline.fragment.json` into your Claude settings if you want Claude to be allowed to run `bash -n statusline-command.sh`.
 
