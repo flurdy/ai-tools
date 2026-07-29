@@ -189,6 +189,16 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.assertTrue((workspace / "infrastructure" / ".gitkeep").is_file())
         self.assertFalse((workspace / ".mgit.conf").exists())
         self.assertFalse((workspace / "scripts" / "mgit").exists())
+        expected_envrc = (
+            "# Local direnv configuration for project workspaces.\n"
+            "source_up\n"
+            "\n"
+            "source_env_if_exists .envrc.local\n"
+            "dotenv_if_exists .env\n"
+            "dotenv_if_exists .env.local\n"
+        )
+        generated_envrc = (workspace / ".envrc").read_text(encoding="utf-8")
+        self.assertEqual(expected_envrc, generated_envrc)
         generated_readme = (workspace / "README.md").read_text(encoding="utf-8")
         self.assertIn("modern Unix-like systems with Python 3.10+", generated_readme)
         self.assertIn("copying the executable alone is unsupported", generated_readme)
@@ -205,9 +215,36 @@ class ProjectWorkspaceTest(unittest.TestCase):
         rerun = self.run_cli("init", "Example Project")
 
         self.assertEqual(0, rerun.returncode)
+        self.assertEqual(
+            generated_envrc, (workspace / ".envrc").read_text(encoding="utf-8")
+        )
         rerun_commands = self.command_log.read_text(encoding="utf-8")
         self.assertEqual(1, rerun_commands.count("git init -b main"))
         self.assertEqual(2, rerun_commands.count("bd init --init-if-missing"))
+
+    def test_rerun_adds_missing_managed_envrc(self) -> None:
+        workspace = self.create_workspace()
+        envrc = workspace / ".envrc"
+        expected = envrc.read_text(encoding="utf-8")
+        envrc.unlink()
+
+        result = self.run_cli("init", "Workspace", "--output", str(workspace))
+
+        self.assertEqual(0, result.returncode)
+        self.assertEqual(expected, envrc.read_text(encoding="utf-8"))
+
+    def test_rerun_preserves_conflicting_managed_envrc(self) -> None:
+        workspace = self.create_workspace()
+        envrc = workspace / ".envrc"
+        custom = "export KEEP_ME=1\n"
+        envrc.write_text(custom, encoding="utf-8")
+
+        result = self.run_cli(
+            "init", "Workspace", "--output", str(workspace), check=False
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual(custom, envrc.read_text(encoding="utf-8"))
 
     def test_links_existing_repository_without_absorbing_it(self) -> None:
         repository = self.create_repository("application")
@@ -253,6 +290,7 @@ class ProjectWorkspaceTest(unittest.TestCase):
             "init", "Preview", "--output", str(workspace), "--dry-run"
         )
 
+        self.assertIn("CREATE file .envrc", result.stdout)
         self.assertIn("CREATE file workspace.json", result.stdout)
         self.assertIn("RUN git init -b main", result.stdout)
         self.assertIn("RUN bd init", result.stdout)

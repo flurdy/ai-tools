@@ -111,6 +111,7 @@ rerun is a no-op.
 example-workspace/
 ├── .beads/
 ├── .git/
+├── .envrc
 ├── AGENTS.md
 ├── Makefile
 ├── README.md
@@ -125,7 +126,9 @@ example-workspace/
     └── example -> /path/to/example
 ```
 
-`workspace.json` is the concise machine-readable topology index. Cross-project PRDs,
+`workspace.json` is the concise machine-readable topology index. The managed `.envrc`
+sources parent direnv configuration and optionally loads `.envrc.local`, `.env`, and
+`.env.local`; keep workspace-specific overrides in those local files. Cross-project PRDs,
 ADRs, architecture, runbooks, and durable work belong in the workspace. Service- and
 infrastructure-specific material remains authoritative in its own repository.
 
