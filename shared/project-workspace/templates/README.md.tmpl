@@ -55,8 +55,10 @@ deployment, runtime, and release behavior outside the generated core.
 
 Both registration commands support `--dry-run`. Keep custom README content outside the
 `project-workspace` marker pairs surrounding the generated lists. Use `bd` from this root
-for durable cross-project work. `make doctor` runs a bounded, non-mutating Beads health
-probe and reports missing tooling separately from an unusable store.
+for durable cross-project work. `make doctor` warns without failing when `README.md`,
+`AGENTS.md`, or `Makefile` differs from its current template, then runs a bounded,
+non-mutating Beads health probe and reports missing tooling separately from an unusable
+store.
 
 ## Tooling requirements
 

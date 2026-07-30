@@ -1291,6 +1291,30 @@ def status_workspace(root: Path, section: str) -> bool:
     return success
 
 
+def template_drift_files(
+    root: Path, manifest: dict[str, object]
+) -> tuple[str, ...]:
+    replacements = {"PROJECT_NAME": str(manifest["name"])}
+    expected = {
+        "README.md": readme_text(manifest),
+        "AGENTS.md": render_template("AGENTS.md.tmpl", replacements),
+        "Makefile": render_template("Makefile.tmpl", replacements),
+    }
+    return tuple(
+        filename
+        for filename, content in expected.items()
+        if existing_text(root / filename) != content
+    )
+
+
+def templates_doctor(root: Path, manifest: dict[str, object]) -> None:
+    drifted = template_drift_files(root, manifest)
+    if drifted:
+        print(f"Templates: WARNING (drift: {', '.join(drifted)})")
+    else:
+        print("Templates: PASS")
+
+
 def beads_doctor(root: Path) -> None:
     if shutil.which("bd") is None:
         raise WorkspaceError("bd is required to validate workspace tracking")
@@ -1321,6 +1345,7 @@ def doctor_workspace(root: Path) -> None:
     manifest, _readme = load_workspace_manifest(workspace_root)
     print("=== WORKSPACE HEALTH ===")
     print("Workspace: PASS")
+    templates_doctor(workspace_root, manifest)
     beads_doctor(workspace_root)
     mgit_doctor(workspace_root, manifest)
     print()

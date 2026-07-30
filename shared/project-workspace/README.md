@@ -176,9 +176,11 @@ all-status: ci-status deploy-status
 
 `make doctor` uses the installed `project-workspace` command as the authoritative
 manifest, relative-link, Git-repository, orphan-path, and generated-README validator.
-It also runs the non-mutating `bd list --limit 1 --no-pager --readonly` health probe with
-a five-second timeout. A missing `bd` executable, an unusable Beads store, and a probe
-timeout produce distinct failures.
+It warns when `README.md`, `AGENTS.md`, or `Makefile` differs from the current rendered
+template without failing, because intentional local changes are supported. It also runs
+the non-mutating `bd list --limit 1 --no-pager --readonly` health probe with a five-second
+timeout. A missing `bd` executable, an unusable Beads store, and a probe timeout produce
+distinct failures.
 
 ## Configure multi-repository Git (optional)
 

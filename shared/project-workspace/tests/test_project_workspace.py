@@ -1430,6 +1430,37 @@ all-status: custom-status
         self.assertIn("repository status unavailable", result.stderr)
         self.assertNotIn("\x1b", result.stderr)
 
+    def test_doctor_warns_when_template_owned_files_drift(self) -> None:
+        workspace = self.create_workspace("template-drift")
+
+        clean = self.run_cli("doctor", "--workspace", str(workspace))
+
+        self.assertIn("Templates: PASS", clean.stdout)
+
+        readme = workspace / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8") + "\n## Local notes\n",
+            encoding="utf-8",
+        )
+        agents = workspace / "AGENTS.md"
+        agents.write_text(
+            agents.read_text(encoding="utf-8") + "\nLocal agent guidance.\n",
+            encoding="utf-8",
+        )
+        makefile = workspace / "Makefile"
+        makefile.write_text(
+            makefile.read_text(encoding="utf-8") + "\nlocal-target:\n\t@true\n",
+            encoding="utf-8",
+        )
+
+        drifted = self.run_cli("doctor", "--workspace", str(workspace))
+
+        self.assertEqual(0, drifted.returncode)
+        self.assertIn(
+            "Templates: WARNING (drift: README.md, AGENTS.md, Makefile)",
+            drifted.stdout,
+        )
+
     def test_doctor_rejects_missing_workspace_files_and_directories(self) -> None:
         missing_file = self.create_workspace("missing-file")
         (missing_file / "AGENTS.md").unlink()
