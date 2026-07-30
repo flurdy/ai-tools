@@ -40,14 +40,19 @@ make status
 make git-status
 make beads-status
 make all-status
+make sync
+make sync-check
 make doctor
 ```
 
 `make status` and `make all-status` show Git state, active and ready Beads work,
 and workspace health across the root and every repository in `workspace.json`.
-The focused `git-status` and `beads-status` targets show one section only. Status
-commands are read-only: they do not fetch Git remotes or synchronize independent
-Beads stores.
+The focused `git-status` and `beads-status` targets show one section only. Git status
+also discovers actionable alternate worktrees through Git metadata and reports their
+path, branch, dirty count, and upstream state without fetching. `make sync` and
+`make sync-check` operate only on the workspace root and registered checkout paths;
+they never rebase or push alternate worktree branches implicitly. Beads stores remain
+independent and are never synchronized by status commands.
 
 For workspace-specific checks, add an unowned `workspace.mk` file and extend the
 combined target, for example `all-status: ci-status deploy-status`. Keep CI,

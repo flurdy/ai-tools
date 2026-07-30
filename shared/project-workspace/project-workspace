@@ -23,6 +23,7 @@ BEADS_HEALTH_TIMEOUT_SECONDS = 5
 STATUS_TIMEOUT_SECONDS = 5
 SYNC_TIMEOUT_SECONDS = 120
 STATUS_ISSUE_LIMIT = 20
+STATUS_WORKTREE_LIMIT = 20
 DIAGNOSTIC_OUTPUT_LIMIT = 2_000
 
 MANAGED_DIRECTORIES = (
@@ -46,6 +47,13 @@ class GitStatus:
     ahead: int | None
     behind: int | None
     dirty: int
+
+
+@dataclass(frozen=True)
+class GitStatusRow:
+    label: str
+    status: GitStatus | None = None
+    error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1198,28 +1206,129 @@ def repository_git_status(directory: Path) -> tuple[GitStatus | None, str | None
     return parse_git_status(result.stdout), None
 
 
+def repository_git_common_directory(
+    directory: Path,
+) -> tuple[Path | None, str | None]:
+    result, error = run_repository_command(
+        ["git", "rev-parse", "--git-common-dir"], directory
+    )
+    if error is not None:
+        return None, error
+    assert result is not None
+    lines = result.stdout.splitlines()
+    if len(lines) != 1 or not lines[0]:
+        return None, "invalid git common directory"
+    common_directory = Path(lines[0])
+    if not common_directory.is_absolute():
+        common_directory = directory / common_directory
+    try:
+        return common_directory.resolve(), None
+    except OSError as error:
+        return None, str(error)
+
+
+def repository_worktrees(directory: Path) -> tuple[list[Path], str | None]:
+    result, error = run_repository_command(
+        ["git", "worktree", "list", "--porcelain"], directory
+    )
+    if error is not None:
+        return [], error
+    assert result is not None
+    worktrees: list[Path] = []
+    for line in result.stdout.splitlines():
+        if not line.startswith("worktree "):
+            continue
+        path = Path(line.removeprefix("worktree "))
+        if not path.is_absolute():
+            path = directory / path
+        try:
+            resolved = path.resolve()
+        except OSError as error:
+            return [], str(error)
+        if resolved not in worktrees:
+            worktrees.append(resolved)
+    if not worktrees:
+        return [], "invalid git worktree list: no worktree entries"
+    if len(worktrees) > STATUS_WORKTREE_LIMIT:
+        return [], (
+            f"worktree limit exceeded ({len(worktrees)} > {STATUS_WORKTREE_LIMIT})"
+        )
+    return worktrees, None
+
+
+def actionable_worktree(status: GitStatus) -> bool:
+    if status.dirty or status.upstream is None:
+        return True
+    if status.ahead is None or status.behind is None:
+        return True
+    return status.ahead > 0
+
+
+def git_status_rows(
+    targets: list[tuple[str, str, Path]],
+) -> list[GitStatusRow]:
+    rows: list[GitStatusRow] = []
+    registered_paths = {directory.resolve() for _, _, directory in targets}
+    inspected_common_directories: set[Path] = set()
+    for name, relative_path, directory in targets:
+        label = f"{name} ({relative_path})"
+        summary, error = repository_git_status(directory)
+        rows.append(GitStatusRow(label, summary, error))
+
+        common_directory, common_error = repository_git_common_directory(directory)
+        if common_error is not None:
+            rows.append(
+                GitStatusRow(
+                    f"{name} worktrees ({relative_path})", error=common_error
+                )
+            )
+            continue
+        assert common_directory is not None
+        if common_directory in inspected_common_directories:
+            continue
+        inspected_common_directories.add(common_directory)
+
+        worktrees, worktree_error = repository_worktrees(directory)
+        if worktree_error is not None:
+            rows.append(
+                GitStatusRow(
+                    f"{name} worktrees ({relative_path})", error=worktree_error
+                )
+            )
+            continue
+        for worktree in worktrees:
+            if worktree in registered_paths:
+                continue
+            worktree_status, status_error = repository_git_status(worktree)
+            worktree_label = f"{name} worktree ({worktree})"
+            if status_error is not None:
+                rows.append(GitStatusRow(worktree_label, error=status_error))
+            elif worktree_status is not None and actionable_worktree(worktree_status):
+                rows.append(GitStatusRow(worktree_label, worktree_status))
+    return rows
+
+
 def display_count(value: int | None) -> str:
     return "—" if value is None else str(value)
 
 
 def git_status(root: Path, manifest: dict[str, object]) -> bool:
     print("=== GIT STATUS ===")
+    rows = git_status_rows(status_targets(root, manifest))
+    width = max((len(row.label) for row in rows), default=0)
     success = True
-    targets = status_targets(root, manifest)
-    width = label_width(targets)
-    for name, relative_path, directory in targets:
-        label = f"{name} ({relative_path})".ljust(width)
-        summary, error = repository_git_status(directory)
-        if error is not None:
-            print(f"{label} | ERROR: {error}")
+    for row in rows:
+        label = row.label.ljust(width)
+        if row.error is not None:
+            print(f"{label} | ERROR: {row.error}")
             success = False
             continue
-        assert summary is not None
+        assert row.status is not None
         print(
-            f"{label} | branch {summary.branch} | "
-            f"upstream {summary.upstream or '—'} | "
-            f"ahead {display_count(summary.ahead)} | "
-            f"behind {display_count(summary.behind)} | dirty {summary.dirty}"
+            f"{label} | branch {row.status.branch} | "
+            f"upstream {row.status.upstream or '—'} | "
+            f"ahead {display_count(row.status.ahead)} | "
+            f"behind {display_count(row.status.behind)} | dirty {row.status.dirty}"
         )
     print()
     return success
@@ -1398,6 +1507,7 @@ def sync_workspace(root: Path, dry_run: bool, assume_yes: bool) -> bool:
     workspace_root = Path(os.path.abspath(root.expanduser()))
     manifest, _readme = load_workspace_manifest(workspace_root)
     print("=== WORKSPACE SYNC ===")
+    print("Scope: registered checkouts only; alternate worktrees are not synced.")
     success = True
     targets = status_targets(workspace_root, manifest)
     width = label_width(targets)

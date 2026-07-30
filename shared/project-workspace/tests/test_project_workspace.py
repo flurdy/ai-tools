@@ -28,6 +28,26 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.write_command(
             "git",
             'echo "git $*" >> "$COMMAND_LOG"\n'
+            'if [[ "$1" == "rev-parse" && "${2:-}" == "--git-common-dir" ]]; then\n'
+            '  if [[ -f .git/project-workspace-common-dir-fail ]]; then\n'
+            '    cat .git/project-workspace-common-dir-fail >&2\n'
+            "    exit 2\n"
+            "  fi\n"
+            '  [[ -f .git/project-workspace-common-dir ]] && cat .git/project-workspace-common-dir || printf "%s/.git\\n" "$(pwd -P)"\n'
+            "  exit\n"
+            "fi\n"
+            'if [[ "$1" == "worktree" && "${2:-}" == "list" ]]; then\n'
+            '  if [[ -f .git/project-workspace-worktrees-fail ]]; then\n'
+            '    cat .git/project-workspace-worktrees-fail >&2\n'
+            "    exit 2\n"
+            "  fi\n"
+            '  if [[ -f .git/project-workspace-worktrees ]]; then\n'
+            '    cat .git/project-workspace-worktrees\n'
+            "  else\n"
+            '    printf "worktree %s\\nHEAD test\\nbranch refs/heads/main\\n\\n" "$(pwd -P)"\n'
+            "  fi\n"
+            "  exit\n"
+            "fi\n"
             'if [[ "$1" == "status" ]]; then\n'
             '  [[ -f .git/project-workspace-status-sleep ]] && sleep 6\n'
             '  if [[ -f .git/project-workspace-status-fail ]]; then\n'
@@ -161,6 +181,15 @@ class ProjectWorkspaceTest(unittest.TestCase):
 
     def set_git_status(self, repository: Path, output: str) -> None:
         (repository / ".git" / "project-workspace-status").write_text(
+            output, encoding="utf-8"
+        )
+
+    def set_worktrees(self, repository: Path, worktrees: list[Path]) -> None:
+        output = "".join(
+            f"worktree {worktree.resolve()}\nHEAD test\nbranch refs/heads/main\n\n"
+            for worktree in worktrees
+        )
+        (repository / ".git" / "project-workspace-worktrees").write_text(
             output, encoding="utf-8"
         )
 
@@ -1304,6 +1333,205 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.assertIn("--readonly", commands)
         self.assertNotIn(" fetch ", commands)
 
+    def test_status_reports_dirty_and_ahead_alternate_worktrees(self) -> None:
+        workspace = self.create_workspace("worktree-status")
+        service = self.create_repository("service")
+        dirty = self.create_repository("service-dirty")
+        ahead = self.create_repository("service-ahead")
+        behind = self.create_repository("service-behind")
+        self.run_cli("add-repo", str(service), "--workspace", str(workspace))
+        self.set_tracking_status(service, ahead=0, behind=0)
+        self.set_tracking_status(dirty, ahead=0, behind=0, dirty=2)
+        self.set_tracking_status(ahead, ahead=3, behind=1)
+        self.set_tracking_status(behind, ahead=0, behind=4)
+        self.set_worktrees(service, [service, dirty, ahead, behind])
+
+        result = self.run_cli(
+            "status", "--workspace", str(workspace), "--section", "git"
+        )
+
+        self.assertIn(
+            f"service worktree ({dirty.resolve()})",
+            result.stdout,
+        )
+        self.assertIn(
+            "branch main | upstream origin/main | ahead 0 | behind 0 | dirty 2",
+            result.stdout,
+        )
+        self.assertIn(
+            f"service worktree ({ahead.resolve()})",
+            result.stdout,
+        )
+        self.assertIn(
+            "branch main | upstream origin/main | ahead 3 | behind 1 | dirty 0",
+            result.stdout,
+        )
+        self.assertNotIn(
+            f"service worktree ({behind.resolve()})",
+            result.stdout,
+        )
+
+    def test_status_reports_detached_and_no_upstream_alternate_worktrees(self) -> None:
+        workspace = self.create_workspace("worktree-branches")
+        service = self.create_repository("service")
+        detached = self.create_repository("service-detached")
+        unpublished = self.create_repository("service-unpublished")
+        self.run_cli("add-repo", str(service), "--workspace", str(workspace))
+        self.set_tracking_status(service, ahead=0, behind=0)
+        self.set_git_status(detached, "# branch.head (detached)\n")
+        self.set_git_status(unpublished, "# branch.head feature\n")
+        self.set_worktrees(service, [service, detached, unpublished])
+
+        result = self.run_cli(
+            "status", "--workspace", str(workspace), "--section", "git"
+        )
+
+        self.assertIn(
+            f"service worktree ({detached.resolve()})",
+            result.stdout,
+        )
+        self.assertIn("branch (detached) | upstream —", result.stdout)
+        self.assertIn(
+            f"service worktree ({unpublished.resolve()})",
+            result.stdout,
+        )
+        self.assertIn("branch feature | upstream —", result.stdout)
+
+    def test_status_reports_worktree_discovery_failure_and_continues(self) -> None:
+        workspace = self.create_workspace("worktree-failure")
+        failing = self.create_repository("failing")
+        healthy = self.create_repository("healthy")
+        healthy_alternate = self.create_repository("healthy-alternate")
+        self.run_cli("add-repo", str(failing), "--workspace", str(workspace))
+        self.run_cli("add-repo", str(healthy), "--workspace", str(workspace))
+        (
+            failing / ".git" / "project-workspace-worktrees-fail"
+        ).write_text("worktree discovery unavailable\n", encoding="utf-8")
+        self.set_git_status(healthy_alternate, "# branch.head feature\n? changed\n")
+        self.set_worktrees(healthy, [healthy, healthy_alternate])
+
+        result = self.run_cli(
+            "status",
+            "--workspace",
+            str(workspace),
+            "--section",
+            "git",
+            check=False,
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertRegex(
+            result.stdout,
+            r"(?m)^failing worktrees \(repos/failing\) +\| "
+            r"ERROR: worktree discovery unavailable$",
+        )
+        self.assertIn(
+            f"healthy worktree ({healthy_alternate.resolve()})",
+            result.stdout,
+        )
+
+    def test_status_bounds_worktree_discovery(self) -> None:
+        workspace = self.create_workspace("bounded-worktrees")
+        service = self.create_repository("service")
+        alternates = [
+            self.create_repository(f"service-{index}") for index in range(21)
+        ]
+        self.run_cli("add-repo", str(service), "--workspace", str(workspace))
+        self.set_worktrees(service, [service, *alternates])
+
+        result = self.run_cli(
+            "status",
+            "--workspace",
+            str(workspace),
+            "--section",
+            "git",
+            check=False,
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn(
+            "service worktrees (repos/service) | ERROR: "
+            "worktree limit exceeded (22 > 20)",
+            result.stdout,
+        )
+
+    @unittest.skipUnless(shutil.which("git"), "Git is required for worktree tests")
+    def test_status_handles_registered_linked_worktree_and_deduplicates_common_dir(
+        self,
+    ) -> None:
+        real_git = self.use_real_git()
+        workspace = self.create_workspace("linked-worktrees")
+        repository = self.root / "shared-repository"
+        repository.mkdir()
+        subprocess.run(
+            [real_git, "init", "-b", "main"],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [real_git, "config", "user.email", "test@example.com"],
+            cwd=repository,
+            check=True,
+        )
+        subprocess.run(
+            [real_git, "config", "user.name", "Test User"],
+            cwd=repository,
+            check=True,
+        )
+        (repository / "README.md").write_text("test\n", encoding="utf-8")
+        subprocess.run(
+            [real_git, "add", "README.md"], cwd=repository, check=True
+        )
+        subprocess.run(
+            [real_git, "commit", "-m", "initial"],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+        )
+        linked = self.root / "shared-linked"
+        alternate = self.root / "shared-alternate"
+        subprocess.run(
+            [real_git, "worktree", "add", "-b", "linked", str(linked)],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [real_git, "worktree", "add", "-b", "alternate", str(alternate)],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+        )
+        self.run_cli(
+            "add-repo",
+            str(repository),
+            "--name",
+            "main-copy",
+            "--workspace",
+            str(workspace),
+        )
+        self.run_cli(
+            "add-repo",
+            str(linked),
+            "--name",
+            "linked-copy",
+            "--workspace",
+            str(workspace),
+        )
+
+        result = self.run_cli(
+            "status", "--workspace", str(workspace), "--section", "git"
+        )
+
+        self.assertRegex(result.stdout, r"(?m)^main-copy \(repos/main-copy\) +\|")
+        self.assertRegex(
+            result.stdout, r"(?m)^linked-copy \(repos/linked-copy\) +\|"
+        )
+        self.assertEqual(
+            1, result.stdout.count(f"worktree ({alternate.resolve()})")
+        )
+
     def test_beads_status_limits_each_work_group(self) -> None:
         workspace = self.create_workspace("bounded-status")
         ready = [
@@ -1432,8 +1660,13 @@ all-status: custom-status
             r"(?m)^unstaged \(repos/unstaged\) +\| skipped \(uncommitted changes: 3\)$",
         )
         commands = self.command_log.read_text(encoding="utf-8")
+        self.assertIn(
+            "Scope: registered checkouts only; alternate worktrees are not synced.",
+            result.stdout,
+        )
         self.assertEqual(1, commands.count("git push"))
         self.assertEqual(2, commands.count("git fetch --quiet"))
+        self.assertNotIn("git worktree list", commands)
 
     def test_sync_fast_forwards_repositories_behind_upstream(self) -> None:
         workspace = self.sync_workspace_with("sync-behind", ["behind"])

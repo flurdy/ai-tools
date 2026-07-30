@@ -162,12 +162,18 @@ make doctor
 `make status` aliases `make all-status`, which composes the focused Git and Beads
 views with `doctor`. The status command reads validated `workspace.json` topology,
 works without optional mgit configuration, and reports partial repository failures
-before returning non-zero. Git status uses local tracking refs only and never fetches
-or changes configuration. Beads queries use `--readonly`, remain independent per
+before returning non-zero. Git status always shows the workspace and registered
+checkouts, then uses Git metadata to discover worktrees once per shared common directory.
+Actionable alternate worktrees—dirty, ahead, diverged, detached, without an upstream, or
+with unavailable tracking counts—are shown with their absolute path, branch, upstream,
+ahead/behind counts, and dirty count. Behind-only and clean, tracked alternates are
+omitted. Discovery and per-worktree status checks are bounded; failures remain visible
+without hiding healthy repositories. Git status uses local tracking refs only and never
+fetches or changes configuration. Beads queries use `--readonly`, remain independent per
 repository, and show bounded in-progress and ready work without synchronizing stores.
 Each section is titled and separated by a blank line, and Git and Beads both render one
-pipe-delimited row per line — a repository per row for Git, an issue per row for Beads —
-so the combined output stays scannable.
+pipe-delimited row per line—one registered checkout or actionable alternate worktree per
+Git row, and one issue per Beads row—so the combined output stays scannable.
 
 A workspace can add unowned, project-specific targets in `workspace.mk`. Extending
 `all-status` there composes CI, deployment, runtime, or other local checks without
@@ -180,7 +186,9 @@ all-status: ci-status deploy-status
 `make sync` fetches each repository and then integrates and publishes its branch in
 one pass; `make sync-check` previews the same decisions without integrating or pushing.
 Sync is the only command that contacts remotes, so it stays separate from the local
-read-only status views. A repository is skipped, and reported, when its branch has no
+read-only status views. Its integration and publication scope is the workspace root and
+registered checkout paths only: alternate worktree branches are never rebased or pushed
+implicitly. A registered checkout is skipped, and reported, when its branch has no
 upstream or its working tree is dirty, so unpublished branches and in-progress edits are
 never published or rebased implicitly. Otherwise a branch that is only behind is
 fast-forwarded, one that is only ahead is pushed, and one that has diverged is rebased
