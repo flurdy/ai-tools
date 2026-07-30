@@ -12,6 +12,7 @@ This repo is meant to be the shareable, curated version of tools that also live 
 | [Claude Kitty tab title](claude/kitty-tab-title/) | Claude Code | Hook script and settings fragment for showing repo/session state in Kitty tab titles. |
 | [Codex Kitty tab title](codex/kitty-tab-title/) | Codex | Codex hook script and `hooks.json` for the same Kitty tab title workflow. |
 | [Pi statusline](pi/statusline/) | Pi | Pi extension for a responsive Bobthefish/Claude-Code-inspired footer with model, context, git, PR, cost, token, and cache signals. |
+| [Pi watch loop](pi/watch-loop/) | Pi | In-memory protocol-v1 extension for bounded fixed or adaptive watch workflows inside one interactive session. |
 | [Pi Flurdy dark theme](pi/theme/) | Pi | High-contrast dark theme with clearly separated success green and warning amber. |
 | [Pi skill model router](https://github.com/flurdy/pi-skill-model-router) | Pi | Standalone public Git package that routes skill metadata to locally configured models. |
 | [Pi `APPEND_SYSTEM.md` example](pi/append-system/) | Pi | Opt-in appended system instructions for concise next steps and safe remote Git operations. |
@@ -50,6 +51,7 @@ codex/
   kitty-tab-title/
 pi/
   statusline/
+  watch-loop/
   theme/
   append-system/
   settings/
