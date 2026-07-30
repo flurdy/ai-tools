@@ -41,6 +41,16 @@ class ProjectWorkspaceTest(unittest.TestCase):
             "  fi\n"
             "  exit\n"
             "fi\n"
+            'if [[ "$1" == fetch || "$1" == push || "$1" == merge || "$1" == rebase ]]; then\n'
+            '  if [[ -f ".git/project-workspace-$1-fail" ]]; then\n'
+            '    cat ".git/project-workspace-$1-fail" >&2\n'
+            "    exit 3\n"
+            "  fi\n"
+            '  if [[ -f ".git/project-workspace-status-after-$1" ]]; then\n'
+            '    mv ".git/project-workspace-status-after-$1" .git/project-workspace-status\n'
+            "  fi\n"
+            "  exit\n"
+            "fi\n"
             'if [[ "$1" == "-C" ]]; then\n'
             '  [[ -f "$2/.git/project-workspace-initialized" ]] && echo "$2"\n'
             "  exit\n"
@@ -134,6 +144,7 @@ class ProjectWorkspaceTest(unittest.TestCase):
             check=check,
             cwd=cwd or self.root,
             env=self.environment,
+            stdin=subprocess.DEVNULL,
             text=True,
         )
 
@@ -152,6 +163,34 @@ class ProjectWorkspaceTest(unittest.TestCase):
         (repository / ".git" / "project-workspace-status").write_text(
             output, encoding="utf-8"
         )
+
+    def set_tracking_status(
+        self,
+        repository: Path,
+        ahead: int,
+        behind: int,
+        dirty: int = 0,
+        after_fetch: bool = False,
+    ) -> None:
+        suffix = "-after-fetch" if after_fetch else ""
+        (repository / ".git" / f"project-workspace-status{suffix}").write_text(
+            "# branch.head main\n"
+            "# branch.upstream origin/main\n"
+            f"# branch.ab +{ahead} -{behind}\n" + "1 changed\n" * dirty,
+            encoding="utf-8",
+        )
+
+    def sync_workspace_with(self, name: str, repositories: list[str]) -> Path:
+        workspace = self.create_workspace(name)
+        self.set_git_status(workspace, "# branch.head main\n")
+        for repository in repositories:
+            self.run_cli(
+                "add-repo",
+                str(self.create_repository(repository)),
+                "--workspace",
+                str(workspace),
+            )
+        return workspace
 
     def set_beads_status(
         self,
@@ -1365,6 +1404,139 @@ all-status: custom-status
         self.assertEqual(
             extension, (workspace / "workspace.mk").read_text(encoding="utf-8")
         )
+
+    def test_sync_publishes_ahead_work_and_reports_skips(self) -> None:
+        workspace = self.sync_workspace_with(
+            "sync", ["ahead", "current", "unstaged"]
+        )
+        self.set_tracking_status(self.root / "ahead", ahead=6, behind=0)
+        self.set_tracking_status(self.root / "current", ahead=0, behind=0)
+        self.set_tracking_status(self.root / "unstaged", ahead=2, behind=0, dirty=3)
+
+        result = self.run_cli("sync", "--workspace", str(workspace))
+
+        self.assertIn("=== WORKSPACE SYNC ===", result.stdout)
+        self.assertRegex(
+            result.stdout,
+            r"(?m)^workspace \(\.\) +\| skipped \(branch main has no upstream\)$",
+        )
+        self.assertRegex(
+            result.stdout, r"(?m)^ahead \(repos/ahead\) +\| pushed 6 to origin/main$"
+        )
+        self.assertRegex(
+            result.stdout,
+            r"(?m)^current \(repos/current\) +\| up to date with origin/main$",
+        )
+        self.assertRegex(
+            result.stdout,
+            r"(?m)^unstaged \(repos/unstaged\) +\| skipped \(uncommitted changes: 3\)$",
+        )
+        commands = self.command_log.read_text(encoding="utf-8")
+        self.assertEqual(1, commands.count("git push"))
+        self.assertEqual(2, commands.count("git fetch --quiet"))
+
+    def test_sync_fast_forwards_repositories_behind_upstream(self) -> None:
+        workspace = self.sync_workspace_with("sync-behind", ["behind"])
+        self.set_tracking_status(self.root / "behind", ahead=0, behind=0)
+        self.set_tracking_status(
+            self.root / "behind", ahead=0, behind=4, after_fetch=True
+        )
+
+        result = self.run_cli("sync", "--workspace", str(workspace))
+
+        self.assertRegex(
+            result.stdout,
+            r"(?m)^behind \(repos/behind\) +\| fast-forwarded 4 from origin/main$",
+        )
+        commands = self.command_log.read_text(encoding="utf-8")
+        self.assertIn("git merge --ff-only origin/main", commands)
+        self.assertNotIn("git push", commands)
+
+    def test_sync_rebases_diverged_repository_only_with_consent(self) -> None:
+        workspace = self.sync_workspace_with("sync-diverged", ["diverged"])
+        self.set_tracking_status(self.root / "diverged", ahead=2, behind=3)
+
+        declined = self.run_cli("sync", "--workspace", str(workspace))
+
+        self.assertIn(
+            "skipped (diverged from origin/main; rerun with --yes)", declined.stdout
+        )
+        self.assertNotIn("git rebase", self.command_log.read_text(encoding="utf-8"))
+
+        approved = self.run_cli("sync", "--workspace", str(workspace), "--yes")
+
+        self.assertIn("rebased onto origin/main and pushed 2", approved.stdout)
+        commands = self.command_log.read_text(encoding="utf-8")
+        self.assertIn("git rebase origin/main", commands)
+        self.assertIn("git push", commands)
+
+    def test_sync_reports_repository_failures_without_stopping(self) -> None:
+        workspace = self.sync_workspace_with(
+            "sync-failures", ["rejected", "conflicted", "healthy"]
+        )
+        self.set_tracking_status(self.root / "rejected", ahead=1, behind=0)
+        (self.root / "rejected" / ".git" / "project-workspace-push-fail").write_text(
+            "remote rejected the update\n", encoding="utf-8"
+        )
+        self.set_tracking_status(self.root / "conflicted", ahead=1, behind=1)
+        (
+            self.root / "conflicted" / ".git" / "project-workspace-rebase-fail"
+        ).write_text("conflict in shared file\n", encoding="utf-8")
+        self.set_tracking_status(self.root / "healthy", ahead=0, behind=0)
+
+        result = self.run_cli(
+            "sync", "--workspace", str(workspace), "--yes", check=False
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("ERROR: push failed: remote rejected the update", result.stdout)
+        self.assertIn(
+            "ERROR: rebase onto origin/main was aborted: conflict in shared file",
+            result.stdout,
+        )
+        self.assertIn("up to date with origin/main", result.stdout)
+        self.assertIn(
+            "git rebase --abort", self.command_log.read_text(encoding="utf-8")
+        )
+
+    def test_sync_dry_run_previews_without_changing_repositories(self) -> None:
+        workspace = self.sync_workspace_with(
+            "sync-preview", ["ahead", "behind", "diverged"]
+        )
+        self.set_tracking_status(self.root / "ahead", ahead=6, behind=0)
+        self.set_tracking_status(self.root / "behind", ahead=0, behind=4)
+        self.set_tracking_status(self.root / "diverged", ahead=2, behind=3)
+
+        result = self.run_cli("sync", "--workspace", str(workspace), "--dry-run")
+
+        self.assertIn("would push 6 to origin/main", result.stdout)
+        self.assertIn("would fast-forward 4 from origin/main", result.stdout)
+        self.assertIn(
+            "would rebase 2 onto origin/main and push (behind 3)", result.stdout
+        )
+        commands = self.command_log.read_text(encoding="utf-8")
+        self.assertIn("git fetch --quiet", commands)
+        self.assertNotIn("git push", commands)
+        self.assertNotIn("git merge", commands)
+        self.assertNotIn("git rebase", commands)
+
+    def test_generated_make_sync_previews_repository_publication(self) -> None:
+        workspace = self.sync_workspace_with("make-sync", ["service"])
+        self.set_tracking_status(self.root / "service", ahead=3, behind=0)
+
+        result = subprocess.run(
+            ["make", "sync-check"],
+            capture_output=True,
+            check=True,
+            cwd=workspace,
+            env=self.environment,
+            stdin=subprocess.DEVNULL,
+            text=True,
+        )
+
+        self.assertIn("=== WORKSPACE SYNC ===", result.stdout)
+        self.assertIn("would push 3 to origin/main", result.stdout)
+        self.assertNotIn("git push", self.command_log.read_text(encoding="utf-8"))
 
     def test_doctor_distinguishes_unconfigured_and_partial_mgit(self) -> None:
         workspace = self.create_workspace()

@@ -4,9 +4,10 @@
 repositories. The workspace owns cross-project context and Beads tracking; linked
 repositories retain their implementation, history, and local instructions.
 
-The CLI provides non-destructive workspace initialisation and explicit source
-registration. Refresh, removal, and broad repository lifecycle management remain out of
-scope until real workspace use demonstrates a need.
+The CLI provides non-destructive workspace initialisation, explicit source registration,
+local status and health views, and consent-gated branch synchronisation. Refresh,
+removal, and broader repository lifecycle management remain out of scope until real
+workspace use demonstrates a need.
 
 Run the focused test suite with `make test` from this directory.
 
@@ -153,6 +154,8 @@ make status
 make git-status
 make beads-status
 make all-status
+make sync
+make sync-check
 make doctor
 ```
 
@@ -173,6 +176,19 @@ adding those domains to the generated core:
 ```make
 all-status: ci-status deploy-status
 ```
+
+`make sync` fetches each repository and then integrates and publishes its branch in
+one pass; `make sync-check` previews the same decisions without integrating or pushing.
+Sync is the only command that contacts remotes, so it stays separate from the local
+read-only status views. A repository is skipped, and reported, when its branch has no
+upstream or its working tree is dirty, so unpublished branches and in-progress edits are
+never published or rebased implicitly. Otherwise a branch that is only behind is
+fast-forwarded, one that is only ahead is pushed, and one that has diverged is rebased
+onto its upstream and then pushed. Divergence requires consent: sync prompts, skips the
+repository when the answer is no or the run is non-interactive, and proceeds unattended
+only with `--yes`. A conflicting rebase is aborted so the branch is left as it was found.
+Pushes are never forced. Per-repository failures are reported and the remaining
+repositories still run, then the command returns non-zero.
 
 `make doctor` uses the installed `project-workspace` command as the authoritative
 manifest, relative-link, Git-repository, orphan-path, and generated-README validator.
@@ -241,6 +257,10 @@ service so the error remains actionable.
 - Registration writes controlled relative links and uses atomic replacement for the
   manifest. Exact reruns are safe, and reruns complete an interrupted link or README
   update that had not yet reached the manifest replacement.
+- `sync` refuses to act on a dirty or untracked branch, rebases a diverged branch only
+  with consent, aborts a conflicting rebase, and never force-pushes. `--dry-run` still
+  fetches, because an accurate preview needs current tracking refs, but changes no
+  branch and pushes nothing.
 - `configure-mgit` requires a documented installed `setup-multirepo-git` skill and
   validates the workspace, its indexed repository links, `.mgit.conf`, and `scripts/mgit`
   before writing. `--dry-run` performs the same preflight without writes.

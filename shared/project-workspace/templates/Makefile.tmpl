@@ -1,12 +1,14 @@
 SHELL := /usr/bin/env bash
 
-.PHONY: help status git-status beads-status all-status doctor
+.PHONY: help status git-status beads-status all-status sync sync-check doctor
 
 help:
 	@echo "make status        # show combined repository and work status"
 	@echo "make git-status    # show Git state for the workspace and repositories"
 	@echo "make beads-status  # show active and ready work across Beads stores"
 	@echo "make all-status    # show Git, Beads, and workspace health"
+	@echo "make sync          # fetch, integrate, and publish repository work"
+	@echo "make sync-check    # preview sync without integrating or pushing"
 	@echo "make doctor        # validate the workspace structure"
 
 status: all-status
@@ -20,6 +22,14 @@ beads-status:
 	@project-workspace status --workspace . --section beads
 
 all-status: git-status beads-status doctor
+
+sync:
+	@command -v project-workspace >/dev/null 2>&1 || { echo "ERROR: project-workspace is required" >&2; exit 127; }
+	@project-workspace sync --workspace .
+
+sync-check:
+	@command -v project-workspace >/dev/null 2>&1 || { echo "ERROR: project-workspace is required" >&2; exit 127; }
+	@project-workspace sync --workspace . --dry-run
 
 doctor:
 	@command -v project-workspace >/dev/null 2>&1 || { echo "ERROR: project-workspace is required" >&2; exit 127; }
