@@ -72,7 +72,8 @@ export function parseBeadsCounts(issuesStdout: string, blockedStdout: string): B
 export function formatBeadsCounts(counts: BeadsCounts | undefined): string {
 	if (!counts) return "";
 	const priorities = counts.openByPriority.flatMap((value, priority) => (value > 0 ? [`P${priority}:${value}`] : []));
-	const parts = ["◉", ...(priorities.length > 0 ? priorities : ["0"]), `◐${counts.inProgress}`];
+	const parts = ["◉", ...(priorities.length > 0 ? priorities : ["0"])];
+	if (counts.inProgress > 0) parts.push(`◐${counts.inProgress}`);
 	if (counts.blocked > 0) parts.push(`⛔${counts.blocked}`);
 	return parts.join(" ");
 }

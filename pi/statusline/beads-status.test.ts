@@ -36,7 +36,8 @@ test("formats compact priority, active, and blocked indicators", () => {
 	assert.equal(formatBeadsCounts(undefined), "");
 	assert.equal(formatBeadsCounts({ openByPriority: [0, 0, 0, 0, 5], inProgress: 1, blocked: 0 }), "◉ P4:5 ◐1");
 	assert.equal(formatBeadsCounts({ openByPriority: [1, 0, 2, 0, 5], inProgress: 1, blocked: 2 }), "◉ P0:1 P2:2 P4:5 ◐1 ⛔2");
-	assert.equal(formatBeadsCounts({ openByPriority: [0, 0, 0, 0, 0], inProgress: 0, blocked: 0 }), "◉ 0 ◐0");
+	assert.equal(formatBeadsCounts({ openByPriority: [0, 0, 0, 0, 0], inProgress: 0, blocked: 0 }), "◉ 0");
+	assert.equal(formatBeadsCounts({ openByPriority: [0, 0, 1, 0, 0], inProgress: 0, blocked: 2 }), "◉ P2:1 ⛔2");
 });
 
 test("finds the nearest Beads workspace", async () => {

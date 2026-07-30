@@ -271,7 +271,7 @@ cache_beads() {
                "\($blocked_count)|" +
                (["◉"] +
                 (if ($priority_parts | length) > 0 then $priority_parts else ["0"] end) +
-                ["◐\($active)"] +
+                (if $active > 0 then ["◐\($active)"] else [] end) +
                 (if $blocked_count > 0 then ["⛔\($blocked_count)"] else [] end) |
                 join(" "))
              else error("invalid bd response") end

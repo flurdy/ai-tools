@@ -149,7 +149,8 @@ clear_cache
 render "$TEST_ROOT/workspace" >/dev/null
 wait_for_cache
 output=$(render "$TEST_ROOT/workspace")
-assert_contains "$output" "◉ 0 ◐0"
+assert_contains "$output" "◉ 0"
+assert_not_contains "$output" "◐"
 assert_not_contains "$output" "⛔"
 
 printf '{}\n' > "$BD_FIXTURES/issues.json"
