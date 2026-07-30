@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+
 export interface OpenRouterCredits {
 	totalCredits: number;
 	totalUsage: number;
@@ -43,9 +45,29 @@ function nonNegativeNumber(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
-export function openRouterCreditsApiKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
+type ApiKeyLookup = (service: string, project: string) => string | undefined;
+
+function lookupApiKey(service: string, project: string): string | undefined {
+	try {
+		return execFileSync("secret-api-key", ["lookup", service, project], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+			timeout: 2000,
+		}).trim() || undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+export function openRouterCreditsApiKey(
+	env: NodeJS.ProcessEnv = process.env,
+	lookup: ApiKeyLookup = lookupApiKey,
+): string | undefined {
 	if (env.PI_STATUSLINE_OPENROUTER_CREDITS === "0") return undefined;
-	return env.PI_STATUSLINE_OPENROUTER_MANAGEMENT_KEY?.trim() || undefined;
+	const explicitKey = env.PI_STATUSLINE_OPENROUTER_MANAGEMENT_KEY?.trim();
+	if (explicitKey) return explicitKey;
+	const project = env.PI_STATUSLINE_OPENROUTER_PROJECT?.trim() || env.SECRET_API_KEY_PROJECT?.trim();
+	return project ? lookup("openrouter_management", project)?.trim() || undefined : undefined;
 }
 
 export function isOpenRouterCreditsStale(credits: OpenRouterCredits, nowMs: number, staleAfterMs: number): boolean {

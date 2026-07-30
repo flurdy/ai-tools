@@ -39,7 +39,8 @@ Then restart Pi, or run `/reload` from an existing Pi session.
 - `PI_STATUSLINE_CODEX_QUOTA_STALE=900000` — age after which the last successful quota snapshot is marked stale (minimum one minute).
 - `PI_STATUSLINE_CODEX_QUOTA_TIMEOUT=10000` — timeout for one Codex quota lookup in milliseconds.
 - `PI_STATUSLINE_CODEX_BIN=codex` — Codex CLI executable to invoke.
-- `PI_STATUSLINE_OPENROUTER_MANAGEMENT_KEY=...` — enable the OpenRouter credit-balance cell with an explicit management key.
+- `PI_STATUSLINE_OPENROUTER_PROJECT=...` — project passed to `secret-api-key lookup openrouter_management`; falls back to `SECRET_API_KEY_PROJECT`.
+- `PI_STATUSLINE_OPENROUTER_MANAGEMENT_KEY=...` — legacy explicit management key fallback; prefer the keyring lookup.
 - `PI_STATUSLINE_OPENROUTER_CREDITS=0` — disable the OpenRouter credit-balance lookup even when a key is configured.
 - `PI_STATUSLINE_OPENROUTER_CREDITS_TTL=300000` — OpenRouter balance refresh interval in milliseconds (minimum one minute).
 - `PI_STATUSLINE_OPENROUTER_CREDITS_STALE=900000` — age after which the last successful balance is rendered dim (minimum one minute).
@@ -126,6 +127,6 @@ The displayed quota belongs to the account authenticated in the Codex CLI. It re
 
 ## OpenRouter credit source
 
-The optional `OR` segment calls OpenRouter's `GET /api/v1/credits` endpoint and displays `total_credits - total_usage`. OpenRouter requires a management key for this account-level endpoint; normal inference keys receive HTTP 403. The lookup is asynchronous, cached, timeout-bounded, and disabled unless `PI_STATUSLINE_OPENROUTER_MANAGEMENT_KEY` is set. A transient refresh failure keeps the last successful balance and immediately renders it dim; age also dims a snapshot after the configured stale interval. Missing, rejected, and malformed responses stay hidden.
+The optional `OR` segment calls OpenRouter's `GET /api/v1/credits` endpoint and displays `total_credits - total_usage`. OpenRouter requires a management key for this account-level endpoint; normal inference keys receive HTTP 403. When `PI_STATUSLINE_OPENROUTER_PROJECT` or `SECRET_API_KEY_PROJECT` is set, the statusline loads it once with `secret-api-key lookup openrouter_management PROJECT`. The API lookup is asynchronous, cached, and timeout-bounded. A transient refresh failure keeps the last successful balance and immediately renders it dim; age also dims a snapshot after the configured stale interval. Missing, rejected, and malformed responses stay hidden.
 
-The statusline intentionally does not read `OPENROUTER_API_KEY`, log credentials or response bodies, or render the management key. Management keys have broader account permissions than inference keys, so expose one to the Pi process only when this balance cell is worth that access.
+The statusline intentionally does not read `OPENROUTER_API_KEY`, log credentials or response bodies, or render the management key. The legacy explicit management-key environment variable remains supported, but keyring lookup avoids exposing the key to Pi's child commands.

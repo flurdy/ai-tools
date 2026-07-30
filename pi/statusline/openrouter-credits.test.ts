@@ -10,20 +10,46 @@ import {
 const jsonResponse = (body: unknown, status = 200) =>
 	Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
 
-test("selects an explicitly configured management key", () => {
-	assert.equal(openRouterCreditsApiKey({ PI_STATUSLINE_OPENROUTER_MANAGEMENT_KEY: "  secret  " }), "secret");
+test("loads the management key for the configured project", () => {
+	const calls: string[][] = [];
+	const lookup = (service: string, project: string) => {
+		calls.push([service, project]);
+		return "  secret  ";
+	};
+
+	assert.equal(openRouterCreditsApiKey({ SECRET_API_KEY_PROJECT: "flurdy" }, lookup), "secret");
+	assert.deepEqual(calls, [["openrouter_management", "flurdy"]]);
+});
+
+test("retains an explicit management key without invoking the helper", () => {
+	let lookups = 0;
 	assert.equal(
-		openRouterCreditsApiKey({ PI_STATUSLINE_OPENROUTER_CREDITS: "0", PI_STATUSLINE_OPENROUTER_MANAGEMENT_KEY: "secret" }),
-		undefined,
+		openRouterCreditsApiKey({ PI_STATUSLINE_OPENROUTER_MANAGEMENT_KEY: "  secret  " }, () => {
+			lookups++;
+			return undefined;
+		}),
+		"secret",
 	);
-	assert.equal(openRouterCreditsApiKey({}), undefined);
+	assert.equal(lookups, 0);
+});
+
+test("does not load a management key when disabled or unconfigured", () => {
+	let lookups = 0;
+	const lookup = () => {
+		lookups++;
+		return "secret";
+	};
+
+	assert.equal(openRouterCreditsApiKey({}, lookup), undefined);
+	assert.equal(openRouterCreditsApiKey({ PI_STATUSLINE_OPENROUTER_CREDITS: "0", SECRET_API_KEY_PROJECT: "flurdy" }, lookup), undefined);
+	assert.equal(lookups, 0);
 });
 
 test("does not create a lookup when disabled or unconfigured", () => {
 	let requests = 0;
-	for (const env of [{}, { PI_STATUSLINE_OPENROUTER_CREDITS: "0", PI_STATUSLINE_OPENROUTER_MANAGEMENT_KEY: "secret" }]) {
+	for (const env of [{}, { PI_STATUSLINE_OPENROUTER_CREDITS: "0", SECRET_API_KEY_PROJECT: "flurdy" }]) {
 		const cache = createOpenRouterCreditsCache({
-			apiKey: openRouterCreditsApiKey(env),
+			apiKey: openRouterCreditsApiKey(env, () => "secret"),
 			fetchImpl: () => {
 				requests++;
 				return jsonResponse({ data: { total_credits: 10, total_usage: 2 } });
