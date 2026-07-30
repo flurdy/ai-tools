@@ -8,6 +8,7 @@ import { BeadsCountsCache, fetchBeadsCounts, findBeadsRoot, formatBeadsCounts } 
 import { fetchCodexWeeklyQuota, isCodexQuotaStale, showsCodexQuota, type CodexWeeklyQuota } from "./codex-quota.ts";
 import { fetchGitDivergence, formatGitDivergence, GitDivergenceCache } from "./git-divergence.ts";
 import { activeModelLabel, modelLabel } from "./model-label.ts";
+import { OpenRouterCostAdvisory, openRouterAdvisoryConfig, sharedOpenRouterAdvisoryState } from "./openrouter-advisory.ts";
 import { createOpenRouterCreditsCache, openRouterCreditsApiKey } from "./openrouter-credits.ts";
 import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT, codexQuotaTone } from "./quota-display.ts";
 
@@ -206,6 +207,7 @@ function getUsage(ctx: ExtensionContext): Usage {
 }
 
 export default function piStatusline(pi: ExtensionAPI): void {
+	const openRouterAdvisory = new OpenRouterCostAdvisory(openRouterAdvisoryConfig(), sharedOpenRouterAdvisoryState());
 	let thinking = process.env.PI_STATUSLINE_THINKING ?? "";
 	let startedAt = Date.now();
 	let refreshCodexQuotaForModel: ((provider: string | undefined) => void) | undefined;
@@ -249,9 +251,38 @@ export default function piStatusline(pi: ExtensionAPI): void {
 
 	pi.on("model_select", (event, ctx) => {
 		refreshCodexQuotaForModel?.(event.model.provider);
+		const warning = openRouterAdvisory.warningForModelSelect(
+			ctx.sessionManager.getSessionId(),
+			event.model,
+			ctx.getContextUsage()?.tokens ?? null,
+			event.source,
+		);
+		if (warning) ctx.ui.notify(warning, "warning");
 		if (!activeRun) return;
 		activeModel = { provider: event.model.provider, id: event.model.id };
 		setLastPromptWidget(ctx);
+	});
+
+	pi.on("before_agent_start", (event, ctx) => {
+		if (!ctx.model) return;
+		const warning = openRouterAdvisory.warningForPrompt(
+			ctx.sessionManager.getSessionId(),
+			ctx.model,
+			ctx.getContextUsage()?.tokens ?? null,
+			event.prompt,
+			event.images?.length ?? 0,
+		);
+		if (warning) ctx.ui.notify(warning, "warning");
+	});
+
+	pi.on("turn_start", (_event, ctx) => {
+		if (!ctx.model) return;
+		const warning = openRouterAdvisory.warningForTurn(
+			ctx.sessionManager.getSessionId(),
+			ctx.model,
+			ctx.getContextUsage()?.tokens ?? null,
+		);
+		if (warning) ctx.ui.notify(warning, "warning");
 	});
 
 	pi.on("agent_start", (_event, ctx) => {

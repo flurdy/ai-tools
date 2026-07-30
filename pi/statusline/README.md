@@ -39,6 +39,9 @@ Then restart Pi, or run `/reload` from an existing Pi session.
 - `PI_STATUSLINE_CODEX_QUOTA_STALE=900000` — age after which the last successful quota snapshot is marked stale (minimum one minute).
 - `PI_STATUSLINE_CODEX_QUOTA_TIMEOUT=10000` — timeout for one Codex quota lookup in milliseconds.
 - `PI_STATUSLINE_CODEX_BIN=codex` — Codex CLI executable to invoke.
+- `PI_STATUSLINE_OPENROUTER_WARN=0` — disable large-context OpenRouter warnings.
+- `PI_STATUSLINE_OPENROUTER_WARN_TOKENS=100000` — absolute context-token warning interval; `0` disables token-based warnings.
+- `PI_STATUSLINE_OPENROUTER_WARN_COST=1` — estimated uncached input-cost warning interval in dollars; `0` disables cost-based warnings.
 - `PI_STATUSLINE_OPENROUTER_PROJECT=...` — project passed to `secret-api-key lookup openrouter_management`; falls back to `SECRET_API_KEY_PROJECT`.
 - `PI_STATUSLINE_OPENROUTER_MANAGEMENT_KEY=...` — legacy explicit management key fallback; prefer the keyring lookup.
 - `PI_STATUSLINE_OPENROUTER_CREDITS=0` — disable the OpenRouter credit-balance lookup even when a key is configured.
@@ -108,6 +111,15 @@ The latest prompt is taken from your submitted input, so it can expose task deta
 - cached GitHub PR number when available
 - open Beads grouped by priority plus compact active and blocked counts in table mode when the cwd is inside a Beads workspace
 - Pi-configured estimated cost, tokens, and cache stats in table mode (not provider billing or subscription usage)
+- visible OpenRouter cost warnings outside the footer when large absolute context or estimated uncached input crosses a configured band
+
+## OpenRouter large-context advisory
+
+The advisory is enabled by default only for models whose Pi provider is `openrouter`. It warns immediately after a manual model switch when the existing conversation is already above a threshold, includes newly submitted text and images before the first request, and checks again before each continuing tool-loop turn. The defaults warn at 100,000 context tokens or $1 of estimated uncached input. Further warnings occur only when the next multiple of either configured threshold is crossed, and are deduplicated by session and model. Session restore and `/reload` therefore do not repeat a warning for a band already shown in the current Pi process.
+
+The cost figure is a local estimate: current context tokens multiplied by the active model's Pi-configured request-wide input rate. Before the first request, submitted text uses Pi's conservative four-characters-per-token estimate and each image adds 1,200 tokens. The estimate assumes all context is billed as uncached input and excludes output, exact provider payload adjustments, cache discounts, routing changes, account credits, and provider billing corrections. The notification labels it `estimated uncached input` and omits it when pricing metadata is missing or invalid. It never queries OpenRouter billing or account spend.
+
+Set `PI_STATUSLINE_OPENROUTER_WARN=0` to disable the advisory. Set either interval to `0` to disable only that signal; invalid values fall back to the documented defaults.
 
 ## Git upstream source
 
