@@ -39,6 +39,16 @@ This repo is meant to be the shareable, curated version of tools that also live 
 - The Kitty tab title write-up is at <https://flurdy.com/docs/kitty-ai-tabs/>.
 - Dotfiles source is [flurdy/dotfiles](https://github.com/flurdy/dotfiles).
 
+## Install reviewed local Pi resources
+
+```bash
+make apply
+```
+
+This links the statusline, Kitty tab title, watch loop, and theme from the checkout into
+`~/.pi/agent`. It does not install settings, launchers, `APPEND_SYSTEM.md`, or the standalone
+skill model router. Run `/reload` or restart Pi after applying extension links.
+
 
 ## Layout
 

@@ -121,13 +121,24 @@ make -C repos/ai-tools/pi/watch-loop check
 pi -e ./repos/ai-tools/pi/watch-loop
 ```
 
-Install the reviewed local package with an absolute path:
+Install all reviewed local Pi resources owned by ai-tools:
+
+```bash
+# From ai-tools
+make apply
+
+# From the workspace root
+make -C repos/ai-tools apply
+```
+
+Or install only this package with an absolute path:
 
 ```bash
 pi install /absolute/path/to/ai-tools/pi/watch-loop
 ```
 
-Alternatively, link the directory into `~/.pi/agent/extensions/watch-loop` and run `/reload`. Do not commit machine-specific paths to shared settings.
+`make apply` links the directory into `~/.pi/agent/extensions/watch-loop` without committing a
+machine-specific path to shared settings. Run `/reload` afterward.
 
 ## Rollback
 
