@@ -432,7 +432,9 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					branch: git.branch ? theme.fg(status ? "warning" : "success", ` ${git.branch}${status ? ` ${status}` : ""}`) : "",
 					divergence: divergence ? theme.fg("warning", divergence) : "",
 					pr: pr ? theme.fg("success", ` ${pr}`) : "",
-					beads: beadsCounts ? theme.fg(beadsCounts.blocked > 0 ? "warning" : "accent", formatBeadsCounts(beadsCounts)) : "",
+					beads: beadsCounts
+						? theme.fg(beadsCounts.blocked > 0 || beadsCounts.unavailableSources > 0 ? "warning" : "accent", formatBeadsCounts(beadsCounts))
+						: "",
 				};
 			}
 

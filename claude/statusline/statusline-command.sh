@@ -185,9 +185,9 @@ cache_pr() {
 }
 
 # --- Non-blocking Beads lookup (cached) ---
-# Prints the last-known counts as "blocked|display" and refreshes stale data in
-# a detached process. Outside a Beads workspace, or when bd/jq/timeout is
-# unavailable, it prints nothing and the table omits the cell.
+# Prints the last-known counts as "warning|display" and refreshes stale data in
+# a detached process. Valid project-workspace roots aggregate registered
+# repository stores; ordinary repositories retain nearest-store scope.
 find_beads_root() {
   local directory
   directory=$(cd "$cwd" 2>/dev/null && pwd -P) || return
@@ -201,15 +201,22 @@ find_beads_root() {
 
 cache_beads() {
   [ "${CLAUDE_STATUSLINE_BEADS:-1}" = "0" ] && return
-  command -v bd >/dev/null 2>&1 || return
   command -v jq >/dev/null 2>&1 || return
 
   local timeout_cmd
   timeout_cmd=$(command -v gtimeout 2>/dev/null || command -v timeout 2>/dev/null) || return
 
-  local root
+  local root workspace_mode=0
   root=$(find_beads_root)
   [ -z "$root" ] && return
+  if [ -e "$root/.git" ] && [ -f "$root/workspace.json" ] &&
+     [ -f "$root/README.md" ] && [ -f "$root/AGENTS.md" ] && [ -f "$root/Makefile" ] &&
+     [ -d "$root/repos" ] && [ -d "$root/infrastructure" ]; then
+    command -v project-workspace >/dev/null 2>&1 || return
+    workspace_mode=1
+  else
+    command -v bd >/dev/null 2>&1 || return
+  fi
 
   local ttl="${CLAUDE_STATUSLINE_BEADS_TTL:-30}"
   local timeout_seconds="${CLAUDE_STATUSLINE_BEADS_TIMEOUT:-2}"
@@ -231,7 +238,7 @@ cache_beads() {
   [ -f "$cache" ] && age=$(( now - $(stat -c %Y "$cache" 2>/dev/null || stat -f %m "$cache" 2>/dev/null || echo 0) ))
   if [ "$age" -ge "$ttl" ]; then
     ( umask 077
-      local issues blocked payload tmp="$cache.tmp.$BASHPID" lock_dir=""
+      local issues blocked aggregate payload tmp="$cache.tmp.$BASHPID" lock_dir=""
       if command -v flock >/dev/null 2>&1; then
         exec 9>"$lock"
         flock -n 9 || exit 0
@@ -246,36 +253,75 @@ cache_beads() {
       refresh_age=$ttl
       [ -f "$cache" ] && refresh_age=$(( refresh_now - $(stat -c %Y "$cache" 2>/dev/null || stat -f %m "$cache" 2>/dev/null || echo 0) ))
       if [ "$refresh_age" -ge "$ttl" ]; then
-        if issues=$(cd "$root" && "$timeout_cmd" --kill-after=1 "$timeout_seconds" bd list --json --limit 0 --readonly 2>/dev/null) &&
-           blocked=$(cd "$root" && "$timeout_cmd" --kill-after=1 "$timeout_seconds" bd blocked --json --readonly 2>/dev/null) &&
-           payload=$(jq -nr --argjson issues "$issues" --argjson blocked "$blocked" '
-             def valid:
-               ($issues | type == "array") and
-               ($blocked | type == "array") and
-               all($issues[];
-                 (type == "object") and
-                 (.status | type == "string") and
-                 (if .status == "open" then
-                    (.priority | type == "number") and
-                    (.priority == (.priority | floor)) and
-                    (.priority >= 0 and .priority <= 4)
-                  else true end));
-             if valid then
-               [$issues[] | select(.status == "open") | .priority] as $priorities |
-               ([$issues[] | select(.status == "in_progress")] | length) as $active |
-               ($blocked | length) as $blocked_count |
-               ([range(0; 5) as $priority |
-                 ($priorities | map(select(. == $priority)) | length) as $count |
-                 select($count > 0) |
-                 "P\($priority):\($count)"]) as $priority_parts |
-               "\($blocked_count)|" +
-               (["◉"] +
-                (if ($priority_parts | length) > 0 then $priority_parts else ["0"] end) +
-                (if $active > 0 then ["◐\($active)"] else [] end) +
-                (if $blocked_count > 0 then ["⛔\($blocked_count)"] else [] end) |
-                join(" "))
-             else error("invalid bd response") end
-           ' 2>/dev/null); then
+        if [ "$workspace_mode" -eq 1 ]; then
+          local source_timeout=0.5
+          [ "$timeout_seconds" -gt 1 ] && source_timeout=$((timeout_seconds - 1))
+          if aggregate=$(cd "$root" && "$timeout_cmd" --kill-after=1 "$timeout_seconds" project-workspace beads-counts --workspace "$root" --timeout "$source_timeout" 2>/dev/null) &&
+             payload=$(jq -nr --argjson counts "$aggregate" '
+               def nonnegative_integer:
+                 type == "number" and . == floor and . >= 0;
+               def valid:
+                 ($counts | type == "object") and
+                 ($counts.version == 1) and
+                 ($counts.openByPriority | type == "array" and length == 5 and all(.[]; nonnegative_integer)) and
+                 ($counts.inProgress | nonnegative_integer) and
+                 ($counts.blocked | nonnegative_integer) and
+                 ($counts.successfulSources | nonnegative_integer) and
+                 ($counts.unavailableSources | nonnegative_integer) and
+                 (($counts.successfulSources + $counts.unavailableSources) > 0) and
+                 ($counts.diagnostics | type == "array" and length == $counts.unavailableSources and all(.[]; type == "string"));
+               if valid then
+                 ([range(0; 5) as $priority |
+                   $counts.openByPriority[$priority] as $count |
+                   select($count > 0) |
+                   "P\($priority):\($count)"]) as $priority_parts |
+                 (if $counts.successfulSources == 0 then ["?"]
+                  elif ($priority_parts | length) > 0 then $priority_parts
+                  else ["0"] end) as $summary |
+                 (if $counts.blocked > 0 or $counts.unavailableSources > 0 then 1 else 0 end) as $warning |
+                 "\($warning)|" +
+                 (["◉"] + $summary +
+                  (if $counts.inProgress > 0 then ["◐\($counts.inProgress)"] else [] end) +
+                  (if $counts.blocked > 0 then ["⛔\($counts.blocked)"] else [] end) +
+                  (if $counts.unavailableSources > 0 then ["⚠\($counts.unavailableSources)"] else [] end) |
+                  join(" "))
+               else error("invalid project-workspace response") end
+             ' 2>/dev/null); then
+            printf '%s\n' "$payload" > "$tmp"
+          else
+            : > "$tmp"
+          fi
+        elif issues=$(cd "$root" && "$timeout_cmd" --kill-after=1 "$timeout_seconds" bd list --json --limit 0 --readonly 2>/dev/null) &&
+             blocked=$(cd "$root" && "$timeout_cmd" --kill-after=1 "$timeout_seconds" bd blocked --json --readonly 2>/dev/null) &&
+             payload=$(jq -nr --argjson issues "$issues" --argjson blocked "$blocked" '
+               def valid:
+                 ($issues | type == "array") and
+                 ($blocked | type == "array") and
+                 all($issues[];
+                   (type == "object") and
+                   (.status | type == "string") and
+                   (if .status == "open" then
+                      (.priority | type == "number") and
+                      (.priority == (.priority | floor)) and
+                      (.priority >= 0 and .priority <= 4)
+                    else true end));
+               if valid then
+                 [$issues[] | select(.status == "open") | .priority] as $priorities |
+                 ([$issues[] | select(.status == "in_progress")] | length) as $active |
+                 ($blocked | length) as $blocked_count |
+                 ([range(0; 5) as $priority |
+                   ($priorities | map(select(. == $priority)) | length) as $count |
+                   select($count > 0) |
+                   "P\($priority):\($count)"]) as $priority_parts |
+                 (if $blocked_count > 0 then 1 else 0 end) as $warning |
+                 "\($warning)|" +
+                 (["◉"] +
+                  (if ($priority_parts | length) > 0 then $priority_parts else ["0"] end) +
+                  (if $active > 0 then ["◐\($active)"] else [] end) +
+                  (if $blocked_count > 0 then ["⛔\($blocked_count)"] else [] end) |
+                  join(" "))
+               else error("invalid bd response") end
+             ' 2>/dev/null); then
           printf '%s\n' "$payload" > "$tmp"
         else
           : > "$tmp"
@@ -747,10 +793,10 @@ render_table() {
   local PAD=1
 
   # Explicit compact mode never enters this table-only lookup path.
-  local segment_beads="" beads_blocked="" beads_text=""
-  IFS='|' read -r beads_blocked beads_text <<< "$(cache_beads)"
-  if [[ "$beads_blocked" =~ ^[0-9]+$ ]] && [ -n "$beads_text" ]; then
-    if [ "$beads_blocked" -gt 0 ]; then
+  local segment_beads="" beads_warning="" beads_text=""
+  IFS='|' read -r beads_warning beads_text <<< "$(cache_beads)"
+  if [[ "$beads_warning" =~ ^[0-9]+$ ]] && [ -n "$beads_text" ]; then
+    if [ "$beads_warning" -gt 0 ]; then
       segment_beads="${C_BAR_WARN}${beads_text}${RST}"
     else
       segment_beads="${C_MODEL}${beads_text}${RST}"

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 
 export type OpenByPriority = [number, number, number, number, number];
 
@@ -8,10 +8,13 @@ export interface BeadsCounts {
 	openByPriority: OpenByPriority;
 	inProgress: number;
 	blocked: number;
+	successfulSources: number;
+	unavailableSources: number;
 }
 
 export interface FetchBeadsCountsOptions {
 	command?: string;
+	workspaceCommand?: string;
 	timeoutMs?: number;
 	signal?: AbortSignal;
 }
@@ -30,6 +33,12 @@ function asObject(value: unknown): JsonObject | undefined {
 
 function count(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
+function isProjectWorkspaceRoot(root: string): boolean {
+	return [".git", ".beads", "workspace.json", "README.md", "AGENTS.md", "Makefile", "repos", "infrastructure"].every((path) =>
+		existsSync(join(root, path)),
+	);
 }
 
 export function findBeadsRoot(cwd: string): string | undefined {
@@ -63,7 +72,13 @@ export function parseBeadsCounts(issuesStdout: string, blockedStdout: string): B
 			openByPriority[priority] += 1;
 		}
 
-		return { openByPriority, inProgress, blocked: blockedIssues.length };
+		return {
+			openByPriority,
+			inProgress,
+			blocked: blockedIssues.length,
+			successfulSources: 1,
+			unavailableSources: 0,
+		};
 	} catch {
 		return undefined;
 	}
@@ -72,36 +87,116 @@ export function parseBeadsCounts(issuesStdout: string, blockedStdout: string): B
 export function formatBeadsCounts(counts: BeadsCounts | undefined): string {
 	if (!counts) return "";
 	const priorities = counts.openByPriority.flatMap((value, priority) => (value > 0 ? [`P${priority}:${value}`] : []));
-	const parts = ["◉", ...(priorities.length > 0 ? priorities : ["0"])];
+	const summary = counts.successfulSources === 0 ? ["?"] : priorities.length > 0 ? priorities : ["0"];
+	const parts = ["◉", ...summary];
 	if (counts.inProgress > 0) parts.push(`◐${counts.inProgress}`);
 	if (counts.blocked > 0) parts.push(`⛔${counts.blocked}`);
+	if (counts.unavailableSources > 0) parts.push(`⚠${counts.unavailableSources}`);
 	return parts.join(" ");
 }
 
-function runBd(root: string, args: string[], options: FetchBeadsCountsOptions): Promise<string> {
+function runCommand(command: string, root: string, args: string[], options: FetchBeadsCountsOptions): Promise<string> {
 	return new Promise((resolve, reject) => {
-		execFile(
-			options.command ?? "bd",
+		if (options.signal?.aborted) {
+			reject(new Error("Beads count query aborted"));
+			return;
+		}
+
+		const timeoutMs = options.timeoutMs ?? 2000;
+		let settled = false;
+		let terminatingError: Error | undefined;
+		let forceKillTimeout: ReturnType<typeof setTimeout> | undefined;
+		let timeout: ReturnType<typeof setTimeout> | undefined;
+		const child = execFile(
+			command,
 			args,
-			{
-				cwd: root,
-				encoding: "utf8",
-				timeout: options.timeoutMs ?? 2000,
-				windowsHide: true,
-				signal: options.signal,
-			},
-			(error, stdout) => {
-				if (error) reject(error);
-				else resolve(stdout);
-			},
+			{ cwd: root, encoding: "utf8", windowsHide: true },
+			(error, stdout) => settle(terminatingError ?? error ?? undefined, stdout),
 		);
+		function settle(error?: Error, stdout?: string) {
+			if (settled) return;
+			settled = true;
+			if (timeout) clearTimeout(timeout);
+			if (forceKillTimeout) clearTimeout(forceKillTimeout);
+			options.signal?.removeEventListener("abort", onAbort);
+			if (error) reject(error);
+			else resolve(stdout ?? "");
+		}
+		function kill(signal: NodeJS.Signals) {
+			try {
+				child.kill(signal);
+			} catch {}
+		}
+		function terminate(error: Error) {
+			if (terminatingError) return;
+			terminatingError = error;
+			kill("SIGTERM");
+			forceKillTimeout = setTimeout(() => {
+				if (child.exitCode === null) kill("SIGKILL");
+				child.stdout?.destroy();
+				child.stderr?.destroy();
+				settle(error);
+			}, 100);
+		}
+		function onAbort() {
+			terminate(new Error("Beads count query aborted"));
+		}
+		timeout = setTimeout(() => terminate(new Error(`Beads count query timed out after ${timeoutMs}ms`)), timeoutMs);
+		options.signal?.addEventListener("abort", onAbort, { once: true });
+		if (options.signal?.aborted) onAbort();
 	});
 }
 
+function parseWorkspaceBeadsCounts(stdout: string): BeadsCounts | undefined {
+	try {
+		const payload = asObject(JSON.parse(stdout) as unknown);
+		if (!payload || payload.version !== 1 || !Array.isArray(payload.openByPriority) || payload.openByPriority.length !== 5) return undefined;
+		const priorities = payload.openByPriority.map(count);
+		const inProgress = count(payload.inProgress);
+		const blocked = count(payload.blocked);
+		const successfulSources = count(payload.successfulSources);
+		const unavailableSources = count(payload.unavailableSources);
+		if (
+			priorities.some((value) => value === undefined) ||
+			inProgress === undefined ||
+			blocked === undefined ||
+			successfulSources === undefined ||
+			unavailableSources === undefined ||
+			successfulSources + unavailableSources === 0 ||
+			!Array.isArray(payload.diagnostics) ||
+			payload.diagnostics.length !== unavailableSources ||
+			payload.diagnostics.some((value) => typeof value !== "string")
+		) return undefined;
+		return {
+			openByPriority: priorities as OpenByPriority,
+			inProgress,
+			blocked,
+			successfulSources,
+			unavailableSources,
+		};
+	} catch {
+		return undefined;
+	}
+}
+
 export async function fetchBeadsCounts(root: string, options: FetchBeadsCountsOptions = {}): Promise<BeadsCounts> {
+	if (isProjectWorkspaceRoot(root)) {
+		const timeoutMs = options.timeoutMs ?? 2000;
+		const sourceTimeoutSeconds = Math.max(0.05, (timeoutMs - 100) / 1000);
+		const stdout = await runCommand(
+			options.workspaceCommand ?? "project-workspace",
+			root,
+			["beads-counts", "--workspace", root, "--timeout", String(sourceTimeoutSeconds)],
+			options,
+		);
+		const counts = parseWorkspaceBeadsCounts(stdout);
+		if (!counts) throw new Error("Invalid project-workspace count response");
+		return counts;
+	}
+
 	const [issuesStdout, blockedStdout] = await Promise.all([
-		runBd(root, ["list", "--json", "--limit", "0", "--readonly"], options),
-		runBd(root, ["blocked", "--json", "--readonly"], options),
+		runCommand(options.command ?? "bd", root, ["list", "--json", "--limit", "0", "--readonly"], options),
+		runCommand(options.command ?? "bd", root, ["blocked", "--json", "--readonly"], options),
 	]);
 	const counts = parseBeadsCounts(issuesStdout, blockedStdout);
 	if (!counts) throw new Error("Invalid bd count response");

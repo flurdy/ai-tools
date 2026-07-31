@@ -6,7 +6,19 @@ STATUSLINE="$SCRIPT_DIR/statusline-command.sh"
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
-mkdir -p "$TEST_ROOT/bin" "$TEST_ROOT/workspace/.beads" "$TEST_ROOT/workspace/nested" "$TEST_ROOT/plain" "$TEST_ROOT/fixtures"
+mkdir -p \
+  "$TEST_ROOT/bin" \
+  "$TEST_ROOT/workspace/.beads" \
+  "$TEST_ROOT/workspace/nested" \
+  "$TEST_ROOT/project/.git" \
+  "$TEST_ROOT/project/.beads" \
+  "$TEST_ROOT/project/infrastructure" \
+  "$TEST_ROOT/project/repos/service/.beads" \
+  "$TEST_ROOT/project/repos/service/nested" \
+  "$TEST_ROOT/plain" \
+  "$TEST_ROOT/fixtures"
+printf '{}\n' > "$TEST_ROOT/project/workspace.json"
+touch "$TEST_ROOT/project/README.md" "$TEST_ROOT/project/AGENTS.md" "$TEST_ROOT/project/Makefile"
 cat > "$TEST_ROOT/bin/bd" <<'EOF'
 #!/usr/bin/env bash
 [ -f "$BD_FIXTURES/track-calls" ] && printf '%s\n' "${1:-}" >> "$BD_FIXTURES/calls"
@@ -22,7 +34,15 @@ case "${1:-}" in
 esac
 EOF
 chmod +x "$TEST_ROOT/bin/bd"
+cat > "$TEST_ROOT/bin/project-workspace" <<'EOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == "beads-counts" ]] || exit 2
+[ -f "$PROJECT_WORKSPACE_FIXTURES/workspace-fail" ] && exit 1
+cat "$PROJECT_WORKSPACE_FIXTURES/workspace-counts.json"
+EOF
+chmod +x "$TEST_ROOT/bin/project-workspace"
 export BD_FIXTURES="$TEST_ROOT/fixtures"
+export PROJECT_WORKSPACE_FIXTURES="$TEST_ROOT/fixtures"
 
 cache_path() {
   local root=$1 key
@@ -30,16 +50,20 @@ cache_path() {
   printf '/tmp/statusline-beads-%s' "$key"
 }
 
-clear_cache() {
-  local cache
-  cache=$(cache_path "$TEST_ROOT/workspace")
+clear_cache_for() {
+  local root=$1 cache
+  cache=$(cache_path "$root")
   rm -f "$cache" "$cache.lock" "$cache.tmp."*
   rm -rf "$cache.lock.d"
 }
 
+clear_cache() {
+  clear_cache_for "$TEST_ROOT/workspace"
+}
+
 wait_for_cache() {
-  local cache
-  cache=$(cache_path "$TEST_ROOT/workspace")
+  local root=${1:-$TEST_ROOT/workspace} cache
+  cache=$(cache_path "$root")
   for _ in {1..100}; do
     [ -f "$cache" ] && [ ! -e "$cache.lock.d" ] && return
     sleep 0.05
@@ -142,6 +166,40 @@ case "${table_lines[3]}" in
   *"◉ P0:1 P2:2 P4:1 ◐2 ⛔1"*'$1.23'*) ;;
   *) printf 'Expected Beads cell immediately before cost on row 2\n' >&2; exit 1 ;;
 esac
+
+cp -f "$SCRIPT_DIR/../../shared/project-workspace/tests/fixtures/beads-counts-partial.json" \
+  "$PROJECT_WORKSPACE_FIXTURES/workspace-counts.json"
+clear_cache_for "$TEST_ROOT/project"
+render "$TEST_ROOT/project" >/dev/null
+wait_for_cache "$TEST_ROOT/project"
+output=$(render "$TEST_ROOT/project")
+assert_contains "$output" "◉ P0:1 P4:2 ◐2 ⛔1 ⚠1"
+
+cat > "$PROJECT_WORKSPACE_FIXTURES/workspace-counts.json" <<'EOF'
+{"version":1,"openByPriority":[0,0,0,0,0],"inProgress":0,"blocked":0,"successfulSources":0,"unavailableSources":2,"diagnostics":["workspace: unavailable","service: unavailable"]}
+EOF
+clear_cache_for "$TEST_ROOT/project"
+render "$TEST_ROOT/project" >/dev/null
+wait_for_cache "$TEST_ROOT/project"
+output=$(render "$TEST_ROOT/project")
+assert_contains "$output" "◉ ? ⚠2"
+
+printf '[{"status":"open","priority":3}]\n' > "$BD_FIXTURES/issues.json"
+printf '[]\n' > "$BD_FIXTURES/blocked.json"
+clear_cache_for "$TEST_ROOT/project/repos/service"
+render "$TEST_ROOT/project/repos/service/nested" >/dev/null
+wait_for_cache "$TEST_ROOT/project/repos/service"
+output=$(render "$TEST_ROOT/project/repos/service/nested")
+assert_contains "$output" "◉ P3:1"
+assert_not_contains "$output" "P4:2"
+
+clear_cache_for "$TEST_ROOT/project"
+touch "$PROJECT_WORKSPACE_FIXTURES/workspace-fail"
+render "$TEST_ROOT/project" >/dev/null
+wait_for_cache "$TEST_ROOT/project"
+output=$(render "$TEST_ROOT/project")
+assert_not_contains "$output" "◉"
+rm -f "$PROJECT_WORKSPACE_FIXTURES/workspace-fail"
 
 printf '[]\n' > "$BD_FIXTURES/issues.json"
 printf '[]\n' > "$BD_FIXTURES/blocked.json"

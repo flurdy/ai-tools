@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -94,8 +95,10 @@ class ProjectWorkspaceTest(unittest.TestCase):
             "    fi\n"
             '    if [[ "$*" == *"--ready"* ]]; then\n'
             "      status_file=.beads/project-workspace-ready.json\n"
-            "    else\n"
+            '    elif [[ "$*" == *"--status=in_progress"* ]]; then\n'
             "      status_file=.beads/project-workspace-active.json\n"
+            "    else\n"
+            "      status_file=.beads/project-workspace-all.json\n"
             "    fi\n"
             '    [[ -f "$status_file" ]] && cat "$status_file" || echo "[]"\n'
             "    exit\n"
@@ -104,6 +107,19 @@ class ProjectWorkspaceTest(unittest.TestCase):
             '    echo "${BD_HEALTH_ERROR:-store unavailable}" >&2\n'
             "    exit 2\n"
             "  fi\n"
+            "  exit\n"
+            "fi\n"
+            'if [[ "$1" == "blocked" ]]; then\n'
+            '  if [[ "$*" == *"--no-pager"* ]]; then\n'
+            '    echo "unknown flag: --no-pager" >&2\n'
+            "    exit 2\n"
+            "  fi\n"
+            '  [[ -f .beads/project-workspace-status-sleep ]] && sleep 6\n'
+            '  if [[ -f .beads/project-workspace-status-fail ]]; then\n'
+            '    cat .beads/project-workspace-status-fail >&2\n'
+            "    exit 2\n"
+            "  fi\n"
+            '  [[ -f .beads/project-workspace-blocked.json ]] && cat .beads/project-workspace-blocked.json || echo "[]"\n'
             "  exit\n"
             "fi\n"
             "mkdir -p .beads\n"
@@ -234,6 +250,16 @@ class ProjectWorkspaceTest(unittest.TestCase):
         )
         (beads / "project-workspace-ready.json").write_text(
             json.dumps(ready), encoding="utf-8"
+        )
+        (beads / "project-workspace-all.json").write_text(
+            json.dumps(
+                [dict(issue, status="in_progress") for issue in active]
+                + [dict(issue, status="open") for issue in ready]
+            ),
+            encoding="utf-8",
+        )
+        (beads / "project-workspace-blocked.json").write_text(
+            "[]", encoding="utf-8"
         )
 
     def use_real_git(self) -> str:
@@ -1332,6 +1358,149 @@ class ProjectWorkspaceTest(unittest.TestCase):
         commands = self.command_log.read_text(encoding="utf-8")
         self.assertIn("--readonly", commands)
         self.assertNotIn(" fetch ", commands)
+
+    def test_beads_counts_aggregates_all_registered_stores_and_p4_work(self) -> None:
+        workspace = self.create_workspace("aggregate-counts")
+        service = self.create_repository("service")
+        self.run_cli("add-repo", str(service), "--workspace", str(workspace))
+        self.set_beads_status(
+            workspace,
+            [{"id": "workspace-active", "title": "Active", "priority": 2}],
+            [{"id": "workspace-p4", "title": "Backlog", "priority": 4}],
+        )
+        self.set_beads_status(
+            service,
+            [{"id": "service-active", "title": "Active", "priority": 1}],
+            [
+                {"id": "service-p0", "title": "Urgent", "priority": 0},
+                {"id": "service-p4", "title": "Backlog", "priority": 4},
+            ],
+        )
+        (service / ".beads" / "project-workspace-blocked.json").write_text(
+            '[{"id":"blocked"}]', encoding="utf-8"
+        )
+
+        result = self.run_cli(
+            "beads-counts", "--workspace", str(workspace), "--timeout", "1"
+        )
+
+        self.assertEqual(
+            {
+                "version": 1,
+                "openByPriority": [1, 0, 0, 0, 2],
+                "inProgress": 2,
+                "blocked": 1,
+                "successfulSources": 2,
+                "unavailableSources": 0,
+                "diagnostics": [],
+            },
+            json.loads(result.stdout),
+        )
+        commands = self.command_log.read_text(encoding="utf-8")
+        self.assertIn("bd list --json --limit 0 --no-pager --readonly", commands)
+        self.assertIn("bd blocked --json --readonly", commands)
+
+    def test_beads_counts_reports_partial_sources_without_counting_them_as_zero(self) -> None:
+        workspace = self.create_workspace("partial-counts")
+        failing = self.create_repository("failing")
+        missing = self.create_repository("missing")
+        self.run_cli("add-repo", str(failing), "--workspace", str(workspace))
+        self.run_cli("add-repo", str(missing), "--workspace", str(workspace))
+        self.set_beads_status(
+            workspace,
+            [],
+            [{"id": "workspace-p4", "title": "Backlog", "priority": 4}],
+        )
+        self.set_beads_status(failing, [], [])
+        (failing / ".beads" / "project-workspace-status-fail").write_text(
+            "store unavailable\n", encoding="utf-8"
+        )
+
+        result = self.run_cli(
+            "beads-counts", "--workspace", str(workspace), "--timeout", "1"
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertEqual([0, 0, 0, 0, 1], payload["openByPriority"])
+        self.assertEqual(1, payload["successfulSources"])
+        self.assertEqual(2, payload["unavailableSources"])
+        self.assertEqual(2, len(payload["diagnostics"]))
+        self.assertTrue(any("failing (repos/failing): store unavailable" in item for item in payload["diagnostics"]))
+        self.assertTrue(
+            any(
+                "missing (repos/missing): Beads store is not initialized" in item
+                for item in payload["diagnostics"]
+            )
+        )
+
+    def test_beads_counts_keeps_healthy_counts_when_a_store_times_out(self) -> None:
+        workspace = self.create_workspace("timeout-counts")
+        slow = self.create_repository("slow")
+        self.run_cli("add-repo", str(slow), "--workspace", str(workspace))
+        self.set_beads_status(
+            workspace,
+            [],
+            [{"id": "workspace-p2", "title": "Ready", "priority": 2}],
+        )
+        self.set_beads_status(slow, [], [])
+        (slow / ".beads" / "project-workspace-status-sleep").touch()
+
+        started = time.monotonic()
+        result = self.run_cli(
+            "beads-counts", "--workspace", str(workspace), "--timeout", "0.1"
+        )
+        elapsed = time.monotonic() - started
+        payload = json.loads(result.stdout)
+
+        self.assertLess(elapsed, 1)
+        self.assertEqual([0, 0, 1, 0, 0], payload["openByPriority"])
+        self.assertEqual(1, payload["successfulSources"])
+        self.assertEqual(1, payload["unavailableSources"])
+        self.assertIn("timed out after 0.1 seconds", payload["diagnostics"][0])
+
+    def test_beads_counts_caps_workers_and_does_not_restart_queued_timeouts(self) -> None:
+        workspace = self.create_workspace("queued-counts")
+        repositories = [self.create_repository(f"slow-{index}") for index in range(9)]
+        for repository in repositories:
+            self.run_cli("add-repo", str(repository), "--workspace", str(workspace))
+        for repository in [workspace, *repositories]:
+            self.set_beads_status(repository, [], [])
+            (repository / ".beads" / "project-workspace-status-sleep").touch()
+        self.command_log.write_text("", encoding="utf-8")
+
+        started = time.monotonic()
+        result = self.run_cli(
+            "beads-counts", "--workspace", str(workspace), "--timeout", "0.1"
+        )
+        elapsed = time.monotonic() - started
+        payload = json.loads(result.stdout)
+        commands = self.command_log.read_text(encoding="utf-8").splitlines()
+        count_commands = [
+            command
+            for command in commands
+            if command.startswith("bd list") or command.startswith("bd blocked")
+        ]
+
+        self.assertLess(elapsed, 1)
+        self.assertGreater(len(count_commands), 0)
+        self.assertLessEqual(len(count_commands), 16)
+        self.assertEqual(0, payload["successfulSources"])
+        self.assertEqual(10, payload["unavailableSources"])
+
+    def test_beads_counts_rejects_malformed_workspace_topology(self) -> None:
+        workspace = self.create_workspace("malformed-counts")
+        manifest = workspace / "workspace.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data["repositories"] = "invalid"
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+
+        result = self.run_cli(
+            "beads-counts", "--workspace", str(workspace), check=False
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual("", result.stdout)
+        self.assertIn("workspace.json field must be a list", result.stderr)
 
     def test_status_reports_dirty_and_ahead_alternate_worktrees(self) -> None:
         workspace = self.create_workspace("worktree-status")

@@ -171,6 +171,11 @@ omitted. Discovery and per-worktree status checks are bounded; failures remain v
 without hiding healthy repositories. Git status uses local tracking refs only and never
 fetches or changes configuration. Beads queries use `--readonly`, remain independent per
 repository, and show bounded in-progress and ready work without synchronizing stores.
+`project-workspace beads-counts --workspace PATH` provides the same validated workspace
+scope as compact JSON for statusline consumers. It queries all stores concurrently,
+includes every open P0–P4 issue, and reports unavailable sources separately from the
+healthy aggregate instead of counting failures as zero. `--timeout` bounds each concurrent
+command.
 Each section is titled and separated by a blank line, and Git and Beads both render one
 pipe-delimited row per line—one registered checkout or actionable alternate worktree per
 Git row, and one issue per Beads row—so the combined output stays scannable.

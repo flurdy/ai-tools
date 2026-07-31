@@ -127,7 +127,7 @@ The optional divergence cell asynchronously compares the cache-keyed branch with
 
 ## Beads count source
 
-The table footer discovers the nearest parent `.beads` workspace and asynchronously queries `bd list --json --limit 0 --readonly` and `bd blocked --json --readonly`. Open counts are grouped into non-zero `P0`–`P4` buckets; active and blocked counts use compact symbols, and blocked is omitted when zero. The lookup is cached, timeout-bounded, and never runs during footer rendering. Its cell stays hidden in compact mode, outside Beads workspaces, and when `bd` is missing or a lookup fails.
+The table footer discovers the nearest parent `.beads` workspace. At a validated project-workspace root it uses `project-workspace beads-counts` to aggregate the root and every registered repository store; inside a registered repository and outside project workspaces it retains the nearest-store `bd` query. Open counts include non-zero `P0`–`P4` buckets, including P4 backlog work. Active and blocked counts use compact symbols. A partial workspace result keeps healthy counts and adds `⚠N` for unavailable sources; if every source is unavailable it shows `◉ ? ⚠N` rather than a false zero. The lookup is cached, timeout-bounded, and never runs during footer rendering. Its cell stays hidden in compact mode, outside Beads workspaces, when required commands are missing, or when topology or output is invalid.
 
 ## Codex quota source
 
