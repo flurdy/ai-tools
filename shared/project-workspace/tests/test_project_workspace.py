@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -29,6 +30,15 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.write_command(
             "git",
             'echo "git $*" >> "$COMMAND_LOG"\n'
+            "require_local_comparison() {\n"
+            '  printf "comparison environment: lazy=%s locks=%s command=%s\\n" '
+            '"${GIT_NO_LAZY_FETCH:-}" "${GIT_OPTIONAL_LOCKS:-}" "$*" '
+            '>> "$COMMAND_LOG"\n'
+            '  if [[ "${GIT_NO_LAZY_FETCH:-}" != 1 || "${GIT_OPTIONAL_LOCKS:-}" != 0 ]]; then\n'
+            '    echo "comparison environment is not read-only" >&2\n'
+            "    exit 4\n"
+            "  fi\n"
+            "}\n"
             'if [[ "$1" == "rev-parse" && "${2:-}" == "--git-common-dir" ]]; then\n'
             '  if [[ -f .git/project-workspace-common-dir-fail ]]; then\n'
             '    cat .git/project-workspace-common-dir-fail >&2\n'
@@ -46,6 +56,47 @@ class ProjectWorkspaceTest(unittest.TestCase):
             '    cat .git/project-workspace-worktrees\n'
             "  else\n"
             '    printf "worktree %s\\nHEAD test\\nbranch refs/heads/main\\n\\n" "$(pwd -P)"\n'
+            "  fi\n"
+            "  exit\n"
+            "fi\n"
+            'if [[ "$1" == "rev-parse" ]]; then\n'
+            '  require_local_comparison "$@"\n'
+            '  if [[ -f .git/project-workspace-revisions-fail ]]; then\n'
+            '    cat .git/project-workspace-revisions-fail >&2\n'
+            "    exit 2\n"
+            "  fi\n"
+            '  if [[ -f .git/project-workspace-revisions ]]; then\n'
+            '    cat .git/project-workspace-revisions\n'
+            "  else\n"
+            '    printf "%040d\\n%040d\\n" 1 2\n'
+            "  fi\n"
+            "  exit\n"
+            "fi\n"
+            'if [[ "$1" == "rev-list" ]]; then\n'
+            '  require_local_comparison "$@"\n'
+            '  if [[ -f .git/project-workspace-rev-list-fail ]]; then\n'
+            '    cat .git/project-workspace-rev-list-fail >&2\n'
+            "    exit 2\n"
+            "  fi\n"
+            '  if [[ "$*" == *"--merges"* ]]; then\n'
+            '    [[ -f .git/project-workspace-merge-count ]] &&\n'
+            '      cat .git/project-workspace-merge-count || echo 0\n'
+            "  else\n"
+            '    [[ -f .git/project-workspace-patch-count ]] &&\n'
+            '      cat .git/project-workspace-patch-count || echo 1\n'
+            "  fi\n"
+            "  exit\n"
+            "fi\n"
+            'if [[ "$1" == "cherry" ]]; then\n'
+            '  require_local_comparison "$@"\n'
+            '  if [[ -f .git/project-workspace-cherry-fail ]]; then\n'
+            '    cat .git/project-workspace-cherry-fail >&2\n'
+            "    exit 2\n"
+            "  fi\n"
+            '  if [[ -f .git/project-workspace-cherry ]]; then\n'
+            '    cat .git/project-workspace-cherry\n'
+            "  else\n"
+            '    printf "+ %040d\\n" 2\n'
             "  fi\n"
             "  exit\n"
             "fi\n"
@@ -216,14 +267,30 @@ class ProjectWorkspaceTest(unittest.TestCase):
         behind: int,
         dirty: int = 0,
         after_fetch: bool = False,
+        branch: str = "main",
     ) -> None:
         suffix = "-after-fetch" if after_fetch else ""
         (repository / ".git" / f"project-workspace-status{suffix}").write_text(
-            "# branch.head main\n"
+            f"# branch.head {branch}\n"
             "# branch.upstream origin/main\n"
             f"# branch.ab +{ahead} -{behind}\n" + "1 changed\n" * dirty,
             encoding="utf-8",
         )
+
+    def set_patch_comparison(
+        self,
+        repository: Path,
+        cherry: str = "+ 0000000000000000000000000000000000000002\n",
+        patch_count: str = "1\n",
+        merge_count: str = "0\n",
+    ) -> None:
+        metadata = {
+            "project-workspace-cherry": cherry,
+            "project-workspace-patch-count": patch_count,
+            "project-workspace-merge-count": merge_count,
+        }
+        for name, value in metadata.items():
+            (repository / ".git" / name).write_text(value, encoding="utf-8")
 
     def sync_workspace_with(self, name: str, repositories: list[str]) -> Path:
         workspace = self.create_workspace(name)
@@ -1538,6 +1605,222 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.assertNotIn(
             f"service worktree ({behind.resolve()})",
             result.stdout,
+        )
+        self.assertNotIn("integrated cleanup candidate", result.stdout)
+
+    def test_status_keeps_an_unmatched_clean_worktree_actionable(self) -> None:
+        workspace = self.create_workspace("unmatched-worktree")
+        service = self.create_repository("service")
+        alternate = self.create_repository("service-alternate")
+        self.run_cli("add-repo", str(service), "--workspace", str(workspace))
+        self.set_tracking_status(service, ahead=0, behind=0)
+        self.set_tracking_status(
+            alternate, ahead=1, behind=0, branch="feature"
+        )
+        self.set_patch_comparison(service)
+        self.set_worktrees(service, [service, alternate])
+
+        result = self.run_cli(
+            "status", "--workspace", str(workspace), "--section", "git"
+        )
+
+        self.assertIn(f"service worktree ({alternate.resolve()})", result.stdout)
+        self.assertIn("ahead 1 | behind 0 | dirty 0", result.stdout)
+        self.assertNotIn("integrated cleanup candidate", result.stdout)
+        commands = self.command_log.read_text(encoding="utf-8")
+        comparison_commands = [
+            command
+            for command in commands.splitlines()
+            if command.startswith("comparison environment:")
+        ]
+        self.assertEqual(4, len(comparison_commands))
+        self.assertTrue(
+            all("lazy=1 locks=0" in command for command in comparison_commands)
+        )
+        self.assertTrue(
+            any("command=cherry " in command for command in comparison_commands)
+        )
+        self.assertNotIn("git fetch", commands)
+
+    def test_status_suppresses_cleanup_with_multiple_registered_heads(self) -> None:
+        workspace = self.create_workspace("ambiguous-worktree")
+        service = self.create_repository("service")
+        linked = self.create_repository("service-linked")
+        alternate = self.create_repository("service-alternate")
+        self.run_cli("add-repo", str(service), "--workspace", str(workspace))
+        self.run_cli(
+            "add-repo",
+            str(linked),
+            "--name",
+            "service-linked",
+            "--workspace",
+            str(workspace),
+        )
+        common_directory = self.root / "shared-common"
+        for repository in (service, linked):
+            (
+                repository / ".git" / "project-workspace-common-dir"
+            ).write_text(f"{common_directory}\n", encoding="utf-8")
+            self.set_tracking_status(repository, ahead=0, behind=0)
+        self.set_tracking_status(
+            alternate, ahead=1, behind=0, branch="feature"
+        )
+        self.set_patch_comparison(
+            service,
+            cherry="- 0000000000000000000000000000000000000002\n",
+        )
+        self.set_worktrees(service, [service, linked, alternate])
+
+        result = self.run_cli(
+            "status", "--workspace", str(workspace), "--section", "git"
+        )
+
+        self.assertIn(f"service worktree ({alternate.resolve()})", result.stdout)
+        self.assertNotIn("integrated cleanup candidate", result.stdout)
+        commands = self.command_log.read_text(encoding="utf-8")
+        self.assertNotIn("comparison environment:", commands)
+
+    def test_status_rejects_merge_only_and_failed_patch_comparisons(self) -> None:
+        scenarios = {
+            "merge": ("1\n", "1\n", None),
+            "malformed": ("1\n", "invalid\n", None),
+            "too-many": ("101\n", "0\n", None),
+            "failure": ("1\n", "0\n", "comparison unavailable\n"),
+        }
+        for name, (patch_count, merge_count, failure) in scenarios.items():
+            with self.subTest(name=name):
+                workspace = self.create_workspace(f"{name}-comparison")
+                service = self.create_repository(f"{name}-service")
+                alternate = self.create_repository(f"{name}-alternate")
+                self.run_cli(
+                    "add-repo", str(service), "--workspace", str(workspace)
+                )
+                self.set_tracking_status(service, ahead=0, behind=0)
+                self.set_tracking_status(
+                    alternate, ahead=1, behind=0, branch="feature"
+                )
+                self.set_patch_comparison(
+                    service,
+                    cherry="- 0000000000000000000000000000000000000002\n",
+                    patch_count=patch_count,
+                    merge_count=merge_count,
+                )
+                if failure is not None:
+                    (
+                        service
+                        / ".git"
+                        / "project-workspace-cherry-fail"
+                    ).write_text(failure, encoding="utf-8")
+                self.set_worktrees(service, [service, alternate])
+
+                result = self.run_cli(
+                    "status",
+                    "--workspace",
+                    str(workspace),
+                    "--section",
+                    "git",
+                )
+
+                self.assertIn(
+                    f"{name}-service worktree ({alternate.resolve()})",
+                    result.stdout,
+                )
+                self.assertNotIn("integrated cleanup candidate", result.stdout)
+
+    @unittest.skipUnless(shutil.which("git"), "Git is required for worktree tests")
+    def test_status_labels_a_cherry_picked_worktree_as_a_cleanup_candidate(
+        self,
+    ) -> None:
+        real_git = self.use_real_git()
+        workspace = self.create_workspace("integrated-worktree")
+        repository = self.root / "integrated-service"
+        repository.mkdir()
+        subprocess.run(
+            [real_git, "init", "-b", "main"],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [real_git, "config", "user.email", "test@example.com"],
+            cwd=repository,
+            check=True,
+        )
+        subprocess.run(
+            [real_git, "config", "user.name", "Test User"],
+            cwd=repository,
+            check=True,
+        )
+        (repository / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run([real_git, "add", "README.md"], cwd=repository, check=True)
+        subprocess.run(
+            [real_git, "commit", "-m", "base"],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [real_git, "branch", "tracking-base"],
+            cwd=repository,
+            check=True,
+        )
+        alternate = self.root / "integrated-alternate"
+        subprocess.run(
+            [
+                real_git,
+                "worktree",
+                "add",
+                "-b",
+                "feature",
+                str(alternate),
+                "tracking-base",
+            ],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [real_git, "branch", "--set-upstream-to=tracking-base"],
+            cwd=alternate,
+            check=True,
+            capture_output=True,
+        )
+        (alternate / "feature.txt").write_text("integrated\n", encoding="utf-8")
+        subprocess.run([real_git, "add", "feature.txt"], cwd=alternate, check=True)
+        subprocess.run(
+            [real_git, "commit", "-m", "feature"],
+            cwd=alternate,
+            check=True,
+            capture_output=True,
+        )
+        feature_commit = subprocess.run(
+            [real_git, "rev-parse", "HEAD"],
+            cwd=alternate,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        cherry_pick_environment = os.environ.copy()
+        cherry_pick_environment["GIT_COMMITTER_DATE"] = "2001-01-01T00:00:00+0000"
+        subprocess.run(
+            [real_git, "cherry-pick", feature_commit],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+            env=cherry_pick_environment,
+        )
+        self.run_cli(
+            "add-repo", str(repository), "--workspace", str(workspace)
+        )
+
+        result = self.run_cli(
+            "status", "--workspace", str(workspace), "--section", "git"
+        )
+
+        self.assertRegex(
+            result.stdout,
+            rf"(?m)^integrated-service worktree \({re.escape(str(alternate.resolve()))}\)"
+            r" .*\| integrated cleanup candidate$",
         )
 
     def test_status_reports_detached_and_no_upstream_alternate_worktrees(self) -> None:

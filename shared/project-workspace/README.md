@@ -166,11 +166,16 @@ before returning non-zero. Git status always shows the workspace and registered
 checkouts, then uses Git metadata to discover worktrees once per shared common directory.
 Actionable alternate worktrees—dirty, ahead, diverged, detached, without an upstream, or
 with unavailable tracking counts—are shown with their absolute path, branch, upstream,
-ahead/behind counts, and dirty count. Behind-only and clean, tracked alternates are
-omitted. Discovery and per-worktree status checks are bounded; failures remain visible
-without hiding healthy repositories. Git status uses local tracking refs only and never
-fetches or changes configuration. Beads queries use `--readonly`, remain independent per
-repository, and show bounded in-progress and ready work without synchronizing stores.
+ahead/behind counts, and dirty count. A clean, non-diverged alternate is labelled
+`integrated cleanup candidate` only when its bounded non-merge history is already
+represented in the registered checkout HEAD by ancestry or patch equivalence. Dirty,
+detached, diverged, oversized, merge-only, malformed, timed-out, or failed comparisons
+retain the ordinary actionable row. Behind-only and clean, tracked alternates are omitted.
+Discovery and comparisons are local, read-only, bounded, deduplicated per Git common
+directory, disable automatic lazy object fetching, and never contact remotes or change
+configuration. Beads queries use `--readonly`, remain
+independent per repository, and show bounded in-progress and ready work without
+synchronizing stores.
 `project-workspace beads-counts --workspace PATH` provides the same validated workspace
 scope as compact JSON for statusline consumers. It queries all stores concurrently,
 includes every open P0–P4 issue, and reports unavailable sources separately from the
@@ -179,6 +184,25 @@ command.
 Each section is titled and separated by a blank line, and Git and Beads both render one
 pipe-delimited row per line—one registered checkout or actionable alternate worktree per
 Git row, and one issue per Beads row—so the combined output stays scannable.
+
+### Manual parallel member-worktree workflow
+
+Keep the workspace root as the coordination and status frame while managing a member
+worktree explicitly:
+
+1. Create it from the registered checkout:
+   `git -C repos/service worktree add -b feature /tmp/service-feature`.
+2. Work, verify, and commit inside `/tmp/service-feature`.
+3. Integrate the commit through the project's normal review, merge, or explicit
+   cherry-pick flow.
+4. Run `make git-status`; an `integrated cleanup candidate` label is evidence to review,
+   not permission to remove anything.
+5. After confirming the branch and files are no longer needed, explicitly run
+   `git -C repos/service worktree remove /tmp/service-feature`, then delete the branch
+   separately if appropriate.
+
+No workspace command creates, merges, synchronizes, removes, or deletes alternate
+worktrees or their branches. `make sync` remains limited to registered checkout paths.
 
 A workspace can add unowned, project-specific targets in `workspace.mk`. Extending
 `all-status` there composes CI, deployment, runtime, or other local checks without

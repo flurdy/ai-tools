@@ -27,6 +27,7 @@ STATUS_TIMEOUT_SECONDS = 5
 SYNC_TIMEOUT_SECONDS = 120
 STATUS_ISSUE_LIMIT = 20
 STATUS_WORKTREE_LIMIT = 20
+STATUS_PATCH_LIMIT = 100
 STATUS_COUNT_WORKERS = 16
 DIAGNOSTIC_OUTPUT_LIMIT = 2_000
 
@@ -58,6 +59,7 @@ class GitStatusRow:
     label: str
     status: GitStatus | None = None
     error: str | None = None
+    integrated_cleanup_candidate: bool = False
 
 
 @dataclass(frozen=True)
@@ -1158,7 +1160,10 @@ def label_width(targets: list[tuple[str, str, Path]]) -> int:
 
 
 def run_repository_command(
-    command: list[str], cwd: Path, timeout: float = STATUS_TIMEOUT_SECONDS
+    command: list[str],
+    cwd: Path,
+    timeout: float = STATUS_TIMEOUT_SECONDS,
+    environment: dict[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str] | None, str | None]:
     try:
         result = subprocess.run(
@@ -1166,6 +1171,7 @@ def run_repository_command(
             cwd=cwd,
             capture_output=True,
             check=False,
+            env=environment,
             text=True,
             timeout=timeout,
         )
@@ -1181,12 +1187,18 @@ def run_repository_command(
 
 
 def run_repository_command_before(
-    command: list[str], cwd: Path, deadline: float, timeout: float
+    command: list[str],
+    cwd: Path,
+    deadline: float,
+    timeout: float,
+    environment: dict[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str] | None, str | None]:
     remaining = deadline - monotonic()
     if remaining <= 0:
         return None, f"timed out after {timeout} seconds"
-    result, error = run_repository_command(command, cwd, remaining)
+    result, error = run_repository_command(
+        command, cwd, remaining, environment
+    )
     if error is not None and error.startswith("timed out after "):
         return None, f"timed out after {timeout} seconds"
     return result, error
@@ -1280,18 +1292,121 @@ def actionable_worktree(status: GitStatus) -> bool:
     return status.ahead > 0
 
 
+def parse_revision_count(output: str) -> int | None:
+    value = output.strip()
+    if re.fullmatch(r"\d+", value) is None:
+        return None
+    return int(value)
+
+
+def integrated_cleanup_candidate(
+    registered_directory: Path, status: GitStatus, deadline: float
+) -> bool:
+    if (
+        status.dirty
+        or status.branch in {"?", "(detached)"}
+        or status.upstream is None
+        or status.ahead is None
+        or status.behind is None
+        or status.ahead <= 0
+        or status.behind != 0
+    ):
+        return False
+
+    branch_reference = f"refs/heads/{status.branch}"
+    comparison_environment = os.environ.copy()
+    comparison_environment["GIT_NO_LAZY_FETCH"] = "1"
+    comparison_environment["GIT_OPTIONAL_LOCKS"] = "0"
+    revisions, revision_error = run_repository_command_before(
+        ["git", "rev-parse", "HEAD", branch_reference],
+        registered_directory,
+        deadline,
+        STATUS_TIMEOUT_SECONDS,
+        comparison_environment,
+    )
+    if revision_error is not None:
+        return False
+    assert revisions is not None
+    revision_lines = revisions.stdout.splitlines()
+    if len(revision_lines) != 2 or any(
+        re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", revision) is None
+        for revision in revision_lines
+    ):
+        return False
+    registered_head, worktree_head = revision_lines
+    revision_range = f"{registered_head}..{worktree_head}"
+
+    patch_result, patch_error = run_repository_command_before(
+        ["git", "rev-list", "--count", "--no-merges", revision_range],
+        registered_directory,
+        deadline,
+        STATUS_TIMEOUT_SECONDS,
+        comparison_environment,
+    )
+    merge_result, merge_error = run_repository_command_before(
+        ["git", "rev-list", "--count", "--merges", revision_range],
+        registered_directory,
+        deadline,
+        STATUS_TIMEOUT_SECONDS,
+        comparison_environment,
+    )
+    if patch_error is not None or merge_error is not None:
+        return False
+    assert patch_result is not None and merge_result is not None
+    patch_count = parse_revision_count(patch_result.stdout)
+    merge_count = parse_revision_count(merge_result.stdout)
+    if (
+        patch_count is None
+        or patch_count > STATUS_PATCH_LIMIT
+        or merge_count != 0
+    ):
+        return False
+    if patch_count == 0:
+        return True
+
+    cherry, cherry_error = run_repository_command_before(
+        ["git", "cherry", registered_head, worktree_head],
+        registered_directory,
+        deadline,
+        STATUS_TIMEOUT_SECONDS,
+        comparison_environment,
+    )
+    if cherry_error is not None:
+        return False
+    assert cherry is not None
+    lines = cherry.stdout.splitlines()
+    return len(lines) == patch_count and all(
+        re.fullmatch(r"- [0-9a-f]{40}|- [0-9a-f]{64}", line) is not None
+        for line in lines
+    )
+
+
 def git_status_rows(
     targets: list[tuple[str, str, Path]],
 ) -> list[GitStatusRow]:
     rows: list[GitStatusRow] = []
     registered_paths = {directory.resolve() for _, _, directory in targets}
+    common_directories = {
+        directory.resolve(): repository_git_common_directory(directory)
+        for _, _, directory in targets
+    }
+    common_directory_counts: dict[Path, int] = {}
+    comparisons_are_unambiguous = all(
+        error is None for _, error in common_directories.values()
+    )
+    for common_directory, error in common_directories.values():
+        if common_directory is not None and error is None:
+            common_directory_counts[common_directory] = (
+                common_directory_counts.get(common_directory, 0) + 1
+            )
+
     inspected_common_directories: set[Path] = set()
     for name, relative_path, directory in targets:
         label = f"{name} ({relative_path})"
         summary, error = repository_git_status(directory)
         rows.append(GitStatusRow(label, summary, error))
 
-        common_directory, common_error = repository_git_common_directory(directory)
+        common_directory, common_error = common_directories[directory.resolve()]
         if common_error is not None:
             rows.append(
                 GitStatusRow(
@@ -1312,6 +1427,12 @@ def git_status_rows(
                 )
             )
             continue
+        comparison_is_unambiguous = (
+            comparisons_are_unambiguous
+            and common_directory_counts[common_directory] == 1
+            and error is None
+        )
+        comparison_deadline = monotonic() + STATUS_TIMEOUT_SECONDS
         for worktree in worktrees:
             if worktree in registered_paths:
                 continue
@@ -1320,7 +1441,16 @@ def git_status_rows(
             if status_error is not None:
                 rows.append(GitStatusRow(worktree_label, error=status_error))
             elif worktree_status is not None and actionable_worktree(worktree_status):
-                rows.append(GitStatusRow(worktree_label, worktree_status))
+                integrated = comparison_is_unambiguous and integrated_cleanup_candidate(
+                    directory, worktree_status, comparison_deadline
+                )
+                rows.append(
+                    GitStatusRow(
+                        worktree_label,
+                        worktree_status,
+                        integrated_cleanup_candidate=integrated,
+                    )
+                )
     return rows
 
 
@@ -1340,11 +1470,17 @@ def git_status(root: Path, manifest: dict[str, object]) -> bool:
             success = False
             continue
         assert row.status is not None
+        cleanup_candidate = (
+            " | integrated cleanup candidate"
+            if row.integrated_cleanup_candidate
+            else ""
+        )
         print(
             f"{label} | branch {row.status.branch} | "
             f"upstream {row.status.upstream or '—'} | "
             f"ahead {display_count(row.status.ahead)} | "
             f"behind {display_count(row.status.behind)} | dirty {row.status.dirty}"
+            f"{cleanup_candidate}"
         )
     print()
     return success
