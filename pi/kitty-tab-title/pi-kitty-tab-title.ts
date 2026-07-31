@@ -10,7 +10,65 @@ interface GitInfo {
 }
 
 const DEFAULT_REPO = "pi";
+const SESSION_NAME_MAX_LENGTH = 24;
 const roleBySession = new Map<string, string>();
+const stateBySession = new Map<string, string>();
+
+function keepSessionNameCharacter(character: string): boolean {
+	const codePoint = character.codePointAt(0) ?? 0;
+	if (
+		(codePoint >= 0x30 && codePoint <= 0x39) ||
+		(codePoint >= 0x41 && codePoint <= 0x5a) ||
+		(codePoint >= 0x61 && codePoint <= 0x7a)
+	) return true;
+	if (codePoint <= 0xbf) return false;
+	if (
+		codePoint === 0x034f ||
+		(codePoint >= 0x0600 && codePoint <= 0x0605) ||
+		codePoint === 0x061c ||
+		codePoint === 0x06dd ||
+		codePoint === 0x070f ||
+		(codePoint >= 0x0890 && codePoint <= 0x0891) ||
+		codePoint === 0x08e2 ||
+		(codePoint >= 0x115f && codePoint <= 0x1160) ||
+		(codePoint >= 0x17b4 && codePoint <= 0x17b5) ||
+		(codePoint >= 0x180b && codePoint <= 0x180f) ||
+		(codePoint >= 0x2000 && codePoint <= 0x206f) ||
+		(codePoint >= 0x2190 && codePoint <= 0x303f) ||
+		codePoint === 0x3164 ||
+		(codePoint >= 0xd800 && codePoint <= 0xdfff) ||
+		(codePoint >= 0xfe00 && codePoint <= 0xfe0f) ||
+		codePoint === 0xfeff ||
+		codePoint === 0xffa0 ||
+		(codePoint >= 0xfff0 && codePoint <= 0xffff) ||
+		codePoint === 0x110bd ||
+		codePoint === 0x110cd ||
+		(codePoint >= 0x13430 && codePoint <= 0x1343f) ||
+		(codePoint >= 0x1bca0 && codePoint <= 0x1bcaf) ||
+		(codePoint >= 0x1d173 && codePoint <= 0x1d17a) ||
+		(codePoint >= 0x1f000 && codePoint <= 0x1faff) ||
+		(codePoint >= 0xe0000 && codePoint <= 0xe0fff) ||
+		(codePoint >= 0xfdd0 && codePoint <= 0xfdef) ||
+		(codePoint & 0xffff) >= 0xfffe
+	) return false;
+	return true;
+}
+
+export function normalizeSessionName(name: string | undefined): string {
+	if (!name) return "";
+	const parts: string[] = [];
+	let separator = false;
+	for (const character of name) {
+		if (keepSessionNameCharacter(character)) {
+			if (separator && parts.length > 0) parts.push("-");
+			parts.push(character);
+			separator = false;
+		} else {
+			separator = parts.length > 0;
+		}
+	}
+	return parts.slice(0, SESSION_NAME_MAX_LENGTH).join("").replace(/-+$/g, "");
+}
 
 function log(message: string): void {
 	const file = process.env.PI_KITTY_TITLE_LOG;
@@ -161,10 +219,15 @@ function sessionBead(ctx: ExtensionContext, branch: string, evidence = ""): stri
 	return status === "closed" ? `✓${candidate}` : candidate;
 }
 
-function buildLabel(ctx: ExtensionContext, promptOrEvidence = ""): string {
+export function buildLabel(
+	ctx: ExtensionContext,
+	promptOrEvidence = "",
+	sessionName?: string,
+): string {
 	const git = getGitInfo(ctx.cwd);
 	const repo = process.env.KITTY_TITLE_REPO_ALIAS || git.repo;
-	const branchShort = shortBranch(git.branch);
+	const normalizedSessionName = normalizeSessionName(sessionName);
+	const role = sessionRole(ctx, promptOrEvidence);
 	let label = `${git.mark}-${repo}`;
 
 	if (process.env.SSH_TTY) {
@@ -172,15 +235,19 @@ function buildLabel(ctx: ExtensionContext, promptOrEvidence = ""): string {
 		label = `🌐${host}·${label}`;
 	}
 
-	if (branchShort) {
-		label += `/${branchShort}`;
+	if (normalizedSessionName) {
+		label += `/${normalizedSessionName}`;
 	} else {
-		const bead = sessionBead(ctx, git.branch, promptOrEvidence);
-		if (bead) label += `/${displayBead(git.repo, bead)}`;
-	}
+		const branchShort = shortBranch(git.branch);
+		if (branchShort) {
+			label += `/${branchShort}`;
+		} else {
+			const bead = sessionBead(ctx, git.branch, promptOrEvidence);
+			if (bead) label += `/${displayBead(git.repo, bead)}`;
+		}
 
-	const role = sessionRole(ctx, promptOrEvidence);
-	if (role) label += `·${role}`;
+		if (role) label += `·${role}`;
+	}
 	return label;
 }
 
@@ -208,23 +275,51 @@ function setKittyTabTitle(title: string): void {
 	}
 }
 
-function updateTitle(ctx: ExtensionContext, state: string, evidence = ""): void {
-	setKittyTabTitle(`${buildLabel(ctx, evidence)}·${state}`);
-}
+const ORCA_CONFLICT_MESSAGE =
+	"Pi Kitty tab titles are disabled because ORCA_PANE_KEY enables the competing orca-titlebar-spinner writer. Disable orca-titlebar-spinner.ts, then set PI_KITTY_TITLE_ALLOW_ORCA=1 for this session to use flurdy-kitty-tab-title.ts.";
 
-export default function piKittyTabTitle(pi: ExtensionAPI): void {
+export function registerPiKittyTabTitle(
+	pi: ExtensionAPI,
+	writeTitle: (title: string) => void = setKittyTabTitle,
+): void {
+	if (process.env.ORCA_PANE_KEY && process.env.PI_KITTY_TITLE_ALLOW_ORCA !== "1") {
+		pi.on("session_start", (_event, ctx) => {
+			log(`disabled=${ORCA_CONFLICT_MESSAGE}`);
+			ctx.ui.notify(ORCA_CONFLICT_MESSAGE, "warning");
+		});
+		return;
+	}
+
+	const updateTitle = (
+		ctx: ExtensionContext,
+		state: string,
+		evidence = "",
+		sessionName = pi.getSessionName(),
+	): void => {
+		stateBySession.set(safeSessionKey(ctx), state);
+		writeTitle(`${buildLabel(ctx, evidence, sessionName)}·${state}`);
+	};
+
 	pi.on("session_start", (_event, ctx) => updateTitle(ctx, "🌱"));
-
-	pi.on("input", (event, ctx) => {
-		sessionRole(ctx, event.text);
-		updateTitle(ctx, "💭", event.text);
+	pi.on("session_info_changed", (event, ctx) => {
+		const state = stateBySession.get(safeSessionKey(ctx)) ?? "🌱";
+		stateBySession.set(safeSessionKey(ctx), state);
+		writeTitle(`${buildLabel(ctx, "", event.name)}·${state}`);
 	});
 
+	pi.on("input", (event, ctx) => updateTitle(ctx, "💭", event.text));
 	pi.on("agent_start", (_event, ctx) => updateTitle(ctx, "💭"));
-	pi.on("tool_execution_start", (event, ctx) => updateTitle(ctx, "⚙️", `${event.toolName}\n${JSON.stringify(event.args ?? {})}`));
+	pi.on("tool_execution_start", (event, ctx) =>
+		updateTitle(ctx, "⚙️", `${event.toolName}\n${JSON.stringify(event.args ?? {})}`),
+	);
 	pi.on("tool_execution_end", (_event, ctx) => updateTitle(ctx, "💭"));
 	pi.on("session_before_compact", (_event, ctx) => updateTitle(ctx, "🧹"));
 	pi.on("session_compact", (_event, ctx) => updateTitle(ctx, "💭"));
 	pi.on("agent_end", (_event, ctx) => updateTitle(ctx, "✅"));
-	pi.on("session_shutdown", (_event, ctx) => updateTitle(ctx, "✅"));
+	pi.on("session_shutdown", (_event, ctx) => {
+		updateTitle(ctx, "✅");
+		stateBySession.delete(safeSessionKey(ctx));
+	});
 }
+
+export default registerPiKittyTabTitle;

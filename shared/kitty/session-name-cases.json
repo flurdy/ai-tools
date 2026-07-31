@@ -1,0 +1,13 @@
+[
+  {"name":"empty","input":"   \t\n","expected":""},
+  {"name":"spaces","input":"Foreman design","expected":"Foreman-design"},
+  {"name":"unicode","input":" Café 東京 ","expected":"Café-東京"},
+  {"name":"full-width Unicode","input":"Ｆｏｏ plan","expected":"Ｆｏｏ-plan"},
+  {"name":"cross-runtime Unicode version","input":"name-\ud88b\ude3a","expected":"name-\ud88b\ude3a"},
+  {"name":"punctuation","input":"Roadmap / Phase #2","expected":"Roadmap-Phase-2"},
+  {"name":"symbols","input":"🚀 Launch—Plan","expected":"Launch-Plan"},
+  {"name":"terminal controls","input":"safe\u001b]2;owned\u0007\nnext","expected":"safe-2-owned-next"},
+  {"name":"Unicode format controls","input":"a\u061c\u180e\ud804\udcbd\ud80d\udc30\ud82f\udca0\ud834\udd73b","expected":"a-b"},
+  {"name":"default-ignorable Unicode","input":"a\u034f\u115f\u1160\u17b4\u17b5\u180b\u180c\u180d\u180f\u3164\uffa0b","expected":"a-b"},
+  {"name":"length bound","input":"123456789012345678901234567890","expected":"123456789012345678901234"}
+]

@@ -1,5 +1,7 @@
 *.local.md
 node_modules/
+__pycache__/
+*.pyc
 .pi-subagents/
 
 # Beads / Dolt files (added by bd init)
