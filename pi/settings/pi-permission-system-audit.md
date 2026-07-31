@@ -12,7 +12,7 @@ Audit date: 2026-07-20
 4. The bash gate does not distinguish output redirects from ordinary command paths. An auto-allowed command can write through `>` when the destination's path policy allows it; upstream issue [#609](https://github.com/gotgenes/pi-packages/issues/609) remains open.
 5. The installed subprocess-based `pi-subagents@0.35.0` forwards direct-child prompts, but nested children target a headless parent and per-agent permission identity is not reliably selected.
 
-A project-scoped pilot is reasonable only after explicit approval in a known trusted repository, using the conservative policy in [`pi/settings/pi-permission-system.config.example.json`](../pi/settings/pi-permission-system.config.example.json). Keep bash on `ask`, deny proxy MCP calls, disable adapter direct/App capabilities, avoid nested subagents, and leave composite tool wrappers denied until their nested-call behavior is tested.
+A project-scoped pilot is reasonable only after explicit approval in a known trusted repository, using the conservative policy in [`pi-permission-system.config.example.json`](pi-permission-system.config.example.json). Keep bash on `ask`, deny proxy MCP calls, disable adapter direct/App capabilities, avoid nested subagents, and leave composite tool wrappers denied until their nested-call behavior is tested.
 
 The package was downloaded and inspected for this audit. It was **not installed, enabled, or loaded by Pi**.
 

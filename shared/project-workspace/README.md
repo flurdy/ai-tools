@@ -143,9 +143,8 @@ Beads store through a supported Dolt remote or backup, and recreate optional mgi
 configuration when the installed skill path changes.
 
 `project-workspace` deliberately does not clone, discover, relink, or synchronize those
-independently owned dependencies. See the
-[v1 pilot report](../../docs/project-workspace-v1-pilot-report.md) for the exercised
-relocation and recovery evidence.
+independently owned dependencies. It validates reconstructed topology but does not fetch or repair
+missing repositories, Beads data, or optional mgit configuration.
 
 The generated Makefile provides:
 
