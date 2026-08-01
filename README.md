@@ -14,7 +14,6 @@ This repo is meant to be the shareable, curated version of tools that also live 
 | [Pi statusline](pi/statusline/) | Pi | Pi extension for a responsive Bobthefish/Claude-Code-inspired footer with model, context, git, PR, cost, token, and cache signals. |
 | [Pi watch loop](pi/watch-loop/) | Pi | In-memory protocol-v1 extension for bounded fixed or adaptive watch workflows inside one interactive session. |
 | [Pi Flurdy dark theme](pi/theme/) | Pi | High-contrast dark theme with clearly separated success green and warning amber. |
-| [Pi skill model router](https://github.com/flurdy/pi-skill-model-router) | Pi | Standalone public Git package that routes skill metadata to locally configured models. |
 | [Pi `APPEND_SYSTEM.md` example](pi/append-system/) | Pi | Opt-in appended system instructions for concise next steps and safe remote Git operations. |
 | [Pi settings starter](pi/settings/) | Pi | Redacted global settings starter, component catalog, and explicit safe-MCP configuration boundary. |
 | [Pi Kitty tab title](pi/kitty-tab-title/) | Pi | Pi extension for showing repo/session state in Kitty tab titles, matching the Claude/Codex workflow. |
@@ -24,20 +23,18 @@ This repo is meant to be the shareable, curated version of tools that also live 
 | [Project workspace scaffold](shared/project-workspace/) | Shared | Creates a safe cross-project context and Beads workspace around existing repositories or greenfield projects. |
 | [Kitty shell reset](shared/kitty/) | Shared | Fish prompt hook that clears the agent tab title when returning to the shell. |
 
-### Skill Model Router
+## Related projects and docs
 
-- [flurdy/pi-skill-model-router](https://github.com/flurdy/pi-skill-model-router)
-- The skill model router has moved to its own repository.
+These independently usable repositories are installed and versioned separately, but complement
+the tools here:
 
-### Skills
+- [flurdy/agent-skills](https://github.com/flurdy/agent-skills) — portable workflows for Pi,
+  Claude Code, and Codex.
+- [flurdy/pi-skill-model-router](https://github.com/flurdy/pi-skill-model-router) — an optional
+  Pi extension that maps skill routing metadata to locally configured models, with its
+  pre-extraction history in this repository.
 
-- [flurdy/agent-skills](https://github.com/flurdy/agent-skills)
-- Related and often referred skills live separately in its own repository.
-
-### Related Repos and Docs
-
-- The Kitty tab title write-up is at <https://flurdy.com/docs/kitty-ai-tabs/>.
-- Dotfiles source is [flurdy/dotfiles](https://github.com/flurdy/dotfiles).
+The Kitty tab title write-up is at <https://flurdy.com/docs/kitty-ai-tabs/>.
 
 ## Install reviewed local Pi resources
 
