@@ -47,7 +47,8 @@ make apply
 
 This links the statusline, Kitty tab title, watch loop, and theme from the checkout into
 `~/.pi/agent`. It does not install settings, launchers, `APPEND_SYSTEM.md`, or the standalone
-skill model router. Run `/reload` or restart Pi after applying extension links.
+skill model router. Restart Pi after first linking an extension; `/reload` is sufficient for
+later source changes once Pi has loaded it.
 
 
 ## Layout

@@ -17,6 +17,7 @@ apply:
 	ln -sfn "$(CURDIR)/pi/watch-loop" "$(PI_EXTENSIONS_DIR)/watch-loop"
 	ln -sfn "$(CURDIR)/pi/theme/flurdy-dark.json" "$(PI_THEMES_DIR)/flurdy-dark.json"
 	$(MAKE) verify-apply
+	@echo "Restart Pi to discover newly linked extensions."
 
 verify-apply:
 	test "$$(readlink "$(PI_EXTENSIONS_DIR)/flurdy-statusline")" = "$(CURDIR)/pi/statusline"

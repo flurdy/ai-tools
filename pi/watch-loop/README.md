@@ -138,7 +138,8 @@ pi install /absolute/path/to/ai-tools/pi/watch-loop
 ```
 
 `make apply` links the directory into `~/.pi/agent/extensions/watch-loop` without committing a
-machine-specific path to shared settings. Run `/reload` afterward.
+machine-specific path to shared settings. Restart Pi after first linking it; `/reload` is sufficient
+for later source changes once Pi has loaded the extension.
 
 ## Rollback
 
