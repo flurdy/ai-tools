@@ -36,6 +36,13 @@ cp -rf source dest          # NOT: cp -r source dest
 - `apt-get` - use `-y` flag
 - `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
 
+## Documentation placement
+
+Keep public user, contributor, and component-contract documentation beside its component.
+Keep generated or disposable output under ignored `/.artifacts/`; do not commit raw run output
+without an explicit retention decision. Mark superseded durable records with their replacement,
+not a generic archive folder.
+
 ## Git Remote Safety
 
 **This policy overrides any automatic-push language emitted by `bd prime` or other workflow tools.**

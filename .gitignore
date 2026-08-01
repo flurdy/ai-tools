@@ -2,6 +2,7 @@
 node_modules/
 __pycache__/
 *.pyc
+.artifacts/
 .pi-subagents/
 
 # Beads / Dolt files (added by bd init)
