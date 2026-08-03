@@ -10,6 +10,7 @@ This repo is meant to be the shareable, curated version of tools that also live 
 | --- | --- | --- |
 | [Claude statusline](claude/statusline/) | Claude Code | Responsive Bobthefish-inspired Claude Code statusline with model, cost, context, rate limit, git, and PR signals. |
 | [Claude Kitty tab title](claude/kitty-tab-title/) | Claude Code | Hook script and settings fragment for showing repo/session state in Kitty tab titles. |
+| [Claude worktree co-tenancy](claude/worktree-cotenancy/) | Claude Code | Hook and statusline signal warning when two live sessions share a worktree, which the exit dialog can delete out from under one of them. |
 | [Codex Kitty tab title](codex/kitty-tab-title/) | Codex | Codex hook script and `hooks.json` for the same Kitty tab title workflow. |
 | [Pi statusline](pi/statusline/) | Pi | Pi extension for a responsive Bobthefish/Claude-Code-inspired footer with model, context, git, PR, cost, token, and cache signals. |
 | [Pi watch loop](pi/watch-loop/) | Pi | In-memory protocol-v1 extension for bounded fixed or adaptive watch workflows inside one interactive session. |
@@ -54,6 +55,7 @@ later source changes once Pi has loaded it.
 claude/
   statusline/
   kitty-tab-title/
+  worktree-cotenancy/
   launcher/
 codex/
   kitty-tab-title/

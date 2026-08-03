@@ -351,4 +351,52 @@ assert_not_contains "$output" "⇣"
 clear_git_divergence_cache "$GIT_WORKSPACE" main
 clear_git_divergence_cache "$GIT_LOCAL" main
 clear_git_status_cache
-printf 'Claude statusline Beads and Git-divergence tests passed\n'
+
+# Worktree co-tenancy: a second live session in the same worktree is flagged on
+# the worktree cell, because that is when exiting can destroy the other session.
+export CLAUDE_WORKTREE_LEASE_DIR="$TEST_ROOT/leases"
+GIT_WORKTREE="$TEST_ROOT/git-worktree"
+git -C "$GIT_LOCAL" worktree add -q "$GIT_WORKTREE" -b cotenancy
+COTENANCY_PIDS=()
+seed_cotenancy_lease() {
+  local session=$1 pid=$2 root=$3 dir key started
+  key=$(printf '%s' "$root" | cksum | tr -cd '0-9' | cut -c1-12)
+  dir="$CLAUDE_WORKTREE_LEASE_DIR/$key"
+  mkdir -p "$dir"
+  started=$(awk '{ sub(/^.*\) /, ""); print $20 }' "/proc/$pid/stat" 2>/dev/null || true)
+  printf 'pid=%s\nsession=%s\nworktree=%s\nstarted=%s\n' "$pid" "$session" "$root" "$started" > "$dir/$session"
+}
+
+sleep 60 & COTENANCY_PIDS+=("$!")
+seed_cotenancy_lease session-one "${COTENANCY_PIDS[0]}" "$GIT_WORKTREE"
+clear_git_status_cache
+output=$(render "$GIT_WORKTREE")
+assert_contains "$output" "🌳"
+assert_not_contains "$output" "⚠"
+
+sleep 60 & COTENANCY_PIDS+=("$!")
+seed_cotenancy_lease session-two "${COTENANCY_PIDS[1]}" "$GIT_WORKTREE"
+clear_git_status_cache
+output=$(render "$GIT_WORKTREE")
+assert_contains "$output" "⚠2"
+
+clear_git_status_cache
+output=$(CLAUDE_STATUSLINE_COTENANCY=0 render "$GIT_WORKTREE")
+assert_contains "$output" "🌳"
+assert_not_contains "$output" "⚠2"
+
+# The main checkout shares the lease store but is never at risk.
+clear_git_status_cache
+output=$(render "$GIT_LOCAL")
+assert_not_contains "$output" "⚠2"
+
+for pid in "${COTENANCY_PIDS[@]}"; do
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+done
+clear_git_status_cache
+output=$(render "$GIT_WORKTREE")
+assert_not_contains "$output" "⚠"
+
+clear_git_status_cache
+printf 'Claude statusline Beads, Git-divergence and worktree co-tenancy tests passed\n'

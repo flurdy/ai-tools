@@ -20,6 +20,31 @@ session_id=$(echo "$input" | jq -r '.session_id // empty')
 
 host=$(hostname -s)
 
+# --- Worktree co-tenancy ---
+# Claude Code's exit dialog removes a worktree without knowing whether another
+# session is still working in it, taking that session's directory and commits with
+# it. The guard hook records a lease per live session; surfacing the count here is
+# what makes a shared worktree visible at the moment someone exits.
+cotenancy_guard() {
+  [ "${CLAUDE_STATUSLINE_COTENANCY:-1}" = "0" ] && return 1
+  local self dir candidate
+  self=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null) || self="${BASH_SOURCE[0]}"
+  dir=$(dirname "$self")
+  for candidate in \
+    "$dir/../worktree-cotenancy/worktree-cotenancy.sh" \
+    "$HOME/.claude/hooks/worktree-cotenancy.sh"; do
+    [ -f "$candidate" ] && { printf '%s' "$candidate"; return 0; }
+  done
+  return 1
+}
+
+cotenancy_count() {
+  local guard count
+  guard=$(cotenancy_guard) || return
+  count=$(bash "$guard" count "$cwd" 2>/dev/null)
+  [[ "$count" =~ ^[0-9]+$ ]] && printf '%s' "$count"
+}
+
 # --- Caching helper for expensive git operations ---
 cache_git_status() {
   local cache_file="/tmp/statusline-git-cache-$session_id"
@@ -35,7 +60,7 @@ cache_git_status() {
   fi
 
   # Cache miss or stale: refresh git status
-  local branch dirty untracked staged is_worktree repo
+  local branch dirty untracked staged is_worktree repo cotenants
   if [ -d "$cwd/.git" ] || git -C "$cwd" rev-parse --git-dir &>/dev/null 2>&1; then
     branch=$(git -C "$cwd" symbolic-ref --short HEAD 2>/dev/null || git -C "$cwd" describe --tags --exact-match 2>/dev/null || git -C "$cwd" rev-parse --short HEAD 2>/dev/null)
 
@@ -62,16 +87,18 @@ cache_git_status() {
     # ~/Code/blc/claude-blc-2/worktrees/foo). Derive it from the shared
     # git dir: basename of the dir that holds the common .git → repo name.
     repo=""
+    cotenants=""
     if [ "$is_worktree" = "1" ]; then
       repo=$(basename "$(dirname "$commondir")" 2>/dev/null)
       [ "$repo" = "." ] || [ "$repo" = "/" ] && repo=""
+      cotenants=$(cotenancy_count)
     fi
   else
-    branch="" dirty="0" untracked="0" staged="0" is_worktree="0" repo=""
+    branch="" dirty="0" untracked="0" staged="0" is_worktree="0" repo="" cotenants=""
   fi
 
   # Write cache
-  echo "$branch|$dirty|$untracked|$staged|$is_worktree|$repo" > "$cache_file" 2>/dev/null
+  echo "$branch|$dirty|$untracked|$staged|$is_worktree|$repo|$cotenants" > "$cache_file" 2>/dev/null
   cat "$cache_file"
 }
 
@@ -525,7 +552,7 @@ segment_git=""
 segment_repo=""
 status_icons=""
 git_icon=$(printf '\xef\x90\x98')
-IFS='|' read -r branch dirty untracked staged is_worktree repo <<< "$(cache_git_status)"
+IFS='|' read -r branch dirty untracked staged is_worktree repo cotenants <<< "$(cache_git_status)"
 if [ -n "$branch" ]; then
   # Convert numeric flags back to visual icons
   dirty_icon=""
@@ -543,12 +570,16 @@ if [ -n "$branch" ]; then
   fi
 
   # Worktree: surface the real repo (the path's leaf is just the worktree dir,
-  # redundant with the branch) as its own cell.
+  # redundant with the branch) as its own cell. A second live session in the same
+  # worktree is flagged here: removing it on exit destroys the other session's work.
   if [ "$is_worktree" = "1" ]; then
     if [ -n "$repo" ]; then
       segment_repo="${C_REPO}🌳 ${repo}${RST}"
     else
       segment_repo="${C_REPO}🌳${RST}"
+    fi
+    if [[ "$cotenants" =~ ^[0-9]+$ ]] && [ "$cotenants" -gt 1 ]; then
+      segment_repo="${segment_repo} ${C_BAR_WARN}⚠${cotenants}${RST}"
     fi
   fi
 fi

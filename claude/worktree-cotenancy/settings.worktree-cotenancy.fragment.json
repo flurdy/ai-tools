@@ -1,0 +1,33 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/worktree-cotenancy.sh register"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/worktree-cotenancy.sh release"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(bash -n worktree-cotenancy.sh)",
+      "Bash(~/.claude/hooks/worktree-cotenancy.sh count:*)",
+      "Bash(~/.claude/hooks/worktree-cotenancy.sh list:*)"
+    ]
+  }
+}
