@@ -1,16 +1,10 @@
 # Agent Instructions
 
-This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
+## Durable tracking
 
-## Quick Reference
-
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work atomically
-bd close <id>         # Complete work
-bd dolt push          # Push beads data after explicit user approval
-```
+This project uses Beads (`bd`) for durable task tracking. Load and follow the shared
+`beads` skill at `~/.agents/skills/beads/SKILL.md`; repository-specific safety rules
+below remain authoritative.
 
 ## Non-Interactive Shell Commands
 
