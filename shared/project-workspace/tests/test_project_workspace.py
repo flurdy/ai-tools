@@ -47,6 +47,18 @@ class ProjectWorkspaceTest(unittest.TestCase):
             '  [[ -f .git/project-workspace-common-dir ]] && cat .git/project-workspace-common-dir || printf "%s/.git\\n" "$(pwd -P)"\n'
             "  exit\n"
             "fi\n"
+            'if [[ "$1" == "for-each-ref" ]]; then\n'
+            '  if [[ -f .git/project-workspace-branches-fail ]]; then\n'
+            '    cat .git/project-workspace-branches-fail >&2\n'
+            "    exit 2\n"
+            "  fi\n"
+            '  if [[ -f .git/project-workspace-branches ]]; then\n'
+            '    cat .git/project-workspace-branches\n'
+            "  else\n"
+            '    printf "main\\t\\t\\t%s\\n" "$(date +%s)"\n'
+            "  fi\n"
+            "  exit\n"
+            "fi\n"
             'if [[ "$1" == "worktree" && "${2:-}" == "list" ]]; then\n'
             '  if [[ -f .git/project-workspace-worktrees-fail ]]; then\n'
             '    cat .git/project-workspace-worktrees-fail >&2\n'
@@ -101,6 +113,10 @@ class ProjectWorkspaceTest(unittest.TestCase):
             "  exit\n"
             "fi\n"
             'if [[ "$1" == "status" ]]; then\n'
+            '  if [[ "${GIT_NO_LAZY_FETCH:-}" != 1 || "${GIT_OPTIONAL_LOCKS:-}" != 0 ]]; then\n'
+            '    echo "git status environment is not read-only" >&2\n'
+            "    exit 4\n"
+            "  fi\n"
             '  [[ -f .git/project-workspace-status-sleep ]] && sleep 6\n'
             '  if [[ -f .git/project-workspace-status-fail ]]; then\n'
             '    cat .git/project-workspace-status-fail >&2\n'
@@ -252,11 +268,35 @@ class ProjectWorkspaceTest(unittest.TestCase):
         )
 
     def set_worktrees(self, repository: Path, worktrees: list[Path]) -> None:
-        output = "".join(
-            f"worktree {worktree.resolve()}\nHEAD test\nbranch refs/heads/main\n\n"
-            for worktree in worktrees
+        self.set_worktree_entries(
+            repository, [(worktree, "main") for worktree in worktrees]
         )
+
+    def set_worktree_entries(
+        self, repository: Path, worktrees: list[tuple[Path, str | None]]
+    ) -> None:
+        output = ""
+        for worktree, branch in worktrees:
+            output += f"worktree {worktree.resolve()}\nHEAD {'1' * 40}\n"
+            output += (
+                f"branch refs/heads/{branch}\n\n"
+                if branch is not None
+                else "detached\n\n"
+            )
         (repository / ".git" / "project-workspace-worktrees").write_text(
+            output, encoding="utf-8"
+        )
+
+    def set_branches(
+        self,
+        repository: Path,
+        branches: list[tuple[str, str, str, int]],
+    ) -> None:
+        output = "".join(
+            f"{branch}\t{upstream}\t{tracking}\t{timestamp}\n"
+            for branch, upstream, tracking, timestamp in branches
+        )
+        (repository / ".git" / "project-workspace-branches").write_text(
             output, encoding="utf-8"
         )
 
@@ -1569,6 +1609,267 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.assertEqual("", result.stdout)
         self.assertIn("workspace.json field must be a list", result.stderr)
 
+    def test_git_inventory_lists_all_branches_and_links_worktrees(self) -> None:
+        workspace = self.create_workspace("branch-inventory")
+        service = self.create_repository("service")
+        alternate = self.create_repository("service-alternate")
+        detached = self.create_repository("service-detached")
+        self.run_cli("add-repo", str(service), "--workspace", str(workspace))
+        now = int(time.time())
+        self.set_branches(
+            service,
+            [
+                ("main", "origin/main", "", now),
+                ("feature", "", "", now - 86_400),
+                ("parked", "origin/parked", "behind 2", now - 40 * 86_400),
+            ],
+        )
+        self.set_worktree_entries(
+            service,
+            [(service, "main"), (alternate, "feature"), (detached, None)],
+        )
+        self.set_tracking_status(service, ahead=0, behind=0, branch="main")
+        self.set_git_status(alternate, "# branch.head feature\n")
+        self.set_git_status(detached, "# branch.head (detached)\n")
+
+        result = self.run_cli("git-inventory", "--workspace", str(workspace))
+
+        self.assertIn("=== GIT INVENTORY ===", result.stdout)
+        self.assertRegex(
+            result.stdout,
+            rf"(?m)^service \(repos/service\) +\| branch main +\| "
+            rf"worktree {re.escape(str(service.resolve()))} +\| checkout registered ",
+        )
+        self.assertRegex(
+            result.stdout,
+            rf"(?m)^service \(repos/service\) +\| branch feature +\| "
+            rf"worktree {re.escape(str(alternate.resolve()))} +\| checkout alternate ",
+        )
+        self.assertRegex(
+            result.stdout,
+            r"(?m)^service \(repos/service\) +\| branch parked +\| "
+            r"worktree — +\| checkout — .*\| behind 2 ",
+        )
+        self.assertRegex(
+            result.stdout,
+            rf"(?m)^service \(repos/service\) +\| branch \(detached\) +\| "
+            rf"worktree {re.escape(str(detached.resolve()))} .*"
+            rf"\| freshness unknown$",
+        )
+        self.assertIn("| freshness unclassified", result.stdout)
+        commands = self.command_log.read_text(encoding="utf-8")
+        self.assertIn("git for-each-ref", commands)
+        self.assertNotIn("git fetch", commands)
+
+    def test_git_inventory_classifies_freshness_only_with_threshold(self) -> None:
+        workspace = self.create_workspace("stale-inventory")
+        service = self.create_repository("service")
+        self.run_cli("add-repo", str(service), "--workspace", str(workspace))
+        now = int(time.time())
+        self.set_branches(
+            service,
+            [
+                ("fresh", "", "", now - 29 * 86_400),
+                ("stale", "", "", now - 30 * 86_400),
+            ],
+        )
+        self.set_worktree_entries(service, [(service, "fresh")])
+        self.set_git_status(service, "# branch.head fresh\n")
+
+        result = self.run_cli(
+            "git-inventory",
+            "--workspace",
+            str(workspace),
+            "--stale-after-days",
+            "30",
+        )
+
+        self.assertRegex(
+            result.stdout,
+            r"(?m)branch fresh .*\| age 29d \| freshness current$",
+        )
+        self.assertRegex(
+            result.stdout,
+            r"(?m)branch stale .*\| age 30d \| freshness stale$",
+        )
+
+    def test_git_inventory_continues_after_branch_source_failure(self) -> None:
+        workspace = self.create_workspace("partial-inventory")
+        failing = self.create_repository("failing")
+        healthy = self.create_repository("healthy")
+        self.run_cli("add-repo", str(failing), "--workspace", str(workspace))
+        self.run_cli("add-repo", str(healthy), "--workspace", str(workspace))
+        (failing / ".git" / "project-workspace-branches-fail").write_text(
+            "branch inventory unavailable\n", encoding="utf-8"
+        )
+        self.set_branches(
+            healthy, [("feature", "", "", int(time.time()))]
+        )
+        self.set_worktree_entries(healthy, [(healthy, "feature")])
+        self.set_git_status(healthy, "# branch.head feature\n")
+
+        result = self.run_cli(
+            "git-inventory", "--workspace", str(workspace), check=False
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn(
+            "failing (repos/failing) | ERROR: branch inventory unavailable",
+            result.stdout,
+        )
+        self.assertRegex(
+            result.stdout,
+            rf"(?m)^failing \(repos/failing\) \| branch main \| worktree "
+            rf"{re.escape(str(failing.resolve()))} ",
+        )
+        self.assertIn("healthy (repos/healthy)", result.stdout)
+        self.assertIn("branch feature", result.stdout)
+
+    def test_git_inventory_rejects_malformed_branch_output(self) -> None:
+        workspace = self.create_workspace("malformed-inventory")
+        service = self.create_repository("service")
+        self.run_cli("add-repo", str(service), "--workspace", str(workspace))
+        (service / ".git" / "project-workspace-branches").write_text(
+            "malformed\n", encoding="utf-8"
+        )
+
+        result = self.run_cli(
+            "git-inventory", "--workspace", str(workspace), check=False
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn(
+            "service (repos/service) | ERROR: invalid local branch inventory",
+            result.stdout,
+        )
+
+    def test_git_inventory_never_classifies_unknown_worktree_state_as_integrated(
+        self,
+    ) -> None:
+        scenarios = ("worktrees", "status", "mismatch")
+        for scenario in scenarios:
+            with self.subTest(scenario=scenario):
+                workspace = self.create_workspace(f"{scenario}-failure-inventory")
+                service = self.create_repository(f"{scenario}-service")
+                alternate = self.create_repository(f"{scenario}-alternate")
+                self.run_cli(
+                    "add-repo", str(service), "--workspace", str(workspace)
+                )
+                branches = [
+                    ("feature", "origin/main", "ahead 1", int(time.time()))
+                ]
+                if scenario == "mismatch":
+                    branches.append(
+                        ("other", "origin/main", "ahead 1", int(time.time()))
+                    )
+                self.set_branches(service, branches)
+                self.set_worktree_entries(service, [(alternate, "feature")])
+                self.set_patch_comparison(
+                    service,
+                    cherry="- 0000000000000000000000000000000000000002\n",
+                )
+                if scenario == "worktrees":
+                    (
+                        service / ".git" / "project-workspace-worktrees-fail"
+                    ).write_text("worktrees unavailable\n", encoding="utf-8")
+                elif scenario == "status":
+                    (
+                        alternate / ".git" / "project-workspace-status-fail"
+                    ).write_text("status unavailable\n", encoding="utf-8")
+                else:
+                    self.set_git_status(
+                        alternate, "# branch.head other\n? changed\n"
+                    )
+
+                result = self.run_cli(
+                    "git-inventory", "--workspace", str(workspace), check=False
+                )
+
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("branch feature", result.stdout)
+                self.assertNotIn("integrated cleanup candidate", result.stdout)
+                if scenario == "mismatch":
+                    self.assertIn(
+                        "worktree branch changed during inventory", result.stdout
+                    )
+
+    def test_git_inventory_reports_documented_safety_caps(self) -> None:
+        workspace = self.create_workspace("bounded-inventory")
+        service = self.create_repository("service")
+        self.run_cli("add-repo", str(service), "--workspace", str(workspace))
+        self.set_branches(
+            service,
+            [
+                (f"branch-{index:04d}", "", "", int(time.time()))
+                for index in range(1_001)
+            ],
+        )
+
+        result = self.run_cli(
+            "git-inventory", "--workspace", str(workspace), check=False
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn(
+            "branch limit exceeded (1001 > 1000)", result.stdout
+        )
+
+        worktree_workspace = self.create_workspace("bounded-worktree-inventory")
+        worktree_service = self.create_repository("worktree-service")
+        self.run_cli(
+            "add-repo",
+            str(worktree_service),
+            "--workspace",
+            str(worktree_workspace),
+        )
+        self.set_branches(
+            worktree_service,
+            [("main", "", "", int(time.time()))],
+        )
+        self.set_worktree_entries(
+            worktree_service,
+            [
+                (self.root / f"bounded-worktree-{index:03d}", f"branch-{index:03d}")
+                for index in range(201)
+            ],
+        )
+
+        worktree_result = self.run_cli(
+            "git-inventory",
+            "--workspace",
+            str(worktree_workspace),
+            check=False,
+        )
+
+        self.assertNotEqual(0, worktree_result.returncode)
+        self.assertIn(
+            "worktree limit exceeded (more than 200)", worktree_result.stdout
+        )
+
+    def test_git_inventory_requires_a_positive_stale_threshold(self) -> None:
+        workspace = self.create_workspace("invalid-threshold")
+
+        result = self.run_cli(
+            "git-inventory",
+            "--workspace",
+            str(workspace),
+            "--stale-after-days",
+            "0",
+            check=False,
+        )
+
+        self.assertEqual(2, result.returncode)
+        self.assertIn("must be greater than zero", result.stderr)
+
+    def test_git_status_does_not_run_complete_inventory(self) -> None:
+        workspace = self.create_workspace("status-compatibility")
+
+        self.run_cli("status", "--workspace", str(workspace), "--section", "git")
+
+        commands = self.command_log.read_text(encoding="utf-8")
+        self.assertNotIn("git for-each-ref", commands)
+        self.assertNotIn("=== GIT INVENTORY ===", commands)
+
     def test_status_reports_dirty_and_ahead_alternate_worktrees(self) -> None:
         workspace = self.create_workspace("worktree-status")
         service = self.create_repository("service")
@@ -1955,6 +2256,12 @@ class ProjectWorkspaceTest(unittest.TestCase):
             check=True,
             capture_output=True,
         )
+        subprocess.run(
+            [real_git, "tag", "alternate", "main"],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+        )
         self.run_cli(
             "add-repo",
             str(repository),
@@ -1983,6 +2290,16 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.assertEqual(
             1, result.stdout.count(f"worktree ({alternate.resolve()})")
         )
+
+        inventory = self.run_cli(
+            "git-inventory", "--workspace", str(workspace), check=False
+        )
+
+        self.assertEqual(0, inventory.returncode, inventory.stdout + inventory.stderr)
+        self.assertEqual(1, inventory.stdout.count("| branch alternate |"))
+        self.assertEqual(1, inventory.stdout.count("| branch linked |"))
+        self.assertEqual(1, inventory.stdout.count(str(alternate.resolve())))
+        self.assertEqual(1, inventory.stdout.count(str(linked.resolve())))
 
     def test_beads_status_limits_each_work_group(self) -> None:
         workspace = self.create_workspace("bounded-status")

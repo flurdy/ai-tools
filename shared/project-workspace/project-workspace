@@ -8,14 +8,16 @@ import json
 import math
 import os
 import re
+import selectors
 import shutil
 import subprocess
 import sys
 import tempfile
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from time import monotonic
+from time import monotonic, time
 
 ROOT = Path(__file__).resolve().parent
 TEMPLATES = ROOT / "templates"
@@ -27,6 +29,9 @@ STATUS_TIMEOUT_SECONDS = 5
 SYNC_TIMEOUT_SECONDS = 120
 STATUS_ISSUE_LIMIT = 20
 STATUS_WORKTREE_LIMIT = 20
+INVENTORY_WORKTREE_LIMIT = 200
+INVENTORY_WORKTREE_OUTPUT_LIMIT = 1_000_000
+INVENTORY_BRANCH_LIMIT = 1_000
 STATUS_PATCH_LIMIT = 100
 STATUS_COUNT_WORKERS = 16
 DIAGNOSTIC_OUTPUT_LIMIT = 2_000
@@ -58,6 +63,37 @@ class GitStatus:
 class GitStatusRow:
     label: str
     status: GitStatus | None = None
+    error: str | None = None
+    integrated_cleanup_candidate: bool = False
+
+
+@dataclass(frozen=True)
+class WorktreeEntry:
+    path: Path
+    branch: str | None
+    head: str | None
+
+
+@dataclass(frozen=True)
+class BranchEntry:
+    name: str
+    upstream: str | None
+    ahead: int | None
+    behind: int | None
+    commit_timestamp: int | None
+
+
+@dataclass(frozen=True)
+class GitInventoryRow:
+    label: str
+    branch: str | None = None
+    worktree: Path | None = None
+    checkout: str | None = None
+    upstream: str | None = None
+    ahead: int | None = None
+    behind: int | None = None
+    dirty: int | None = None
+    commit_timestamp: int | None = None
     error: str | None = None
     integrated_cleanup_candidate: bool = False
 
@@ -1225,8 +1261,13 @@ def parse_git_status(output: str) -> GitStatus:
 
 
 def repository_git_status(directory: Path) -> tuple[GitStatus | None, str | None]:
+    environment = os.environ.copy()
+    environment["GIT_NO_LAZY_FETCH"] = "1"
+    environment["GIT_OPTIONAL_LOCKS"] = "0"
     result, error = run_repository_command(
-        ["git", "status", "--porcelain=v2", "--branch"], directory
+        ["git", "status", "--porcelain=v2", "--branch"],
+        directory,
+        environment=environment,
     )
     if error is not None:
         return None, error
@@ -1255,33 +1296,234 @@ def repository_git_common_directory(
         return None, str(error)
 
 
-def repository_worktrees(directory: Path) -> tuple[list[Path], str | None]:
+def parse_worktree_entries(
+    output: str, directory: Path, limit: int
+) -> tuple[list[WorktreeEntry], str | None]:
+    entries: list[WorktreeEntry] = []
+    fields: dict[str, str | bool] = {}
+
+    def append_entry() -> str | None:
+        if not fields:
+            return None
+        raw_path = fields.get("worktree")
+        if not isinstance(raw_path, str) or not raw_path:
+            return "invalid git worktree list: missing worktree path"
+        path = Path(raw_path)
+        if not path.is_absolute():
+            path = directory / path
+        try:
+            resolved = path.resolve()
+        except OSError as error:
+            return str(error)
+        raw_branch = fields.get("branch")
+        branch: str | None = None
+        if isinstance(raw_branch, str):
+            if not raw_branch.startswith("refs/heads/"):
+                return "invalid git worktree list: malformed branch"
+            branch = raw_branch.removeprefix("refs/heads/")
+        elif "detached" not in fields:
+            return "invalid git worktree list: missing branch state"
+        raw_head = fields.get("HEAD")
+        head = raw_head if isinstance(raw_head, str) and raw_head else None
+        if any(entry.path == resolved for entry in entries):
+            return "invalid git worktree list: duplicate worktree path"
+        entries.append(WorktreeEntry(resolved, branch, head))
+        return None
+
+    for line in [*output.splitlines(), ""]:
+        if not line:
+            entry_error = append_entry()
+            if entry_error is not None:
+                return [], entry_error
+            fields = {}
+            continue
+        key, separator, value = line.partition(" ")
+        if key in {"worktree", "HEAD", "branch"} and separator:
+            fields[key] = value
+        elif key == "detached":
+            fields[key] = True
+    if not entries:
+        return [], "invalid git worktree list: no worktree entries"
+    if len(entries) > limit:
+        return [], f"worktree limit exceeded ({len(entries)} > {limit})"
+    return entries, None
+
+
+def repository_worktree_entries(
+    directory: Path, limit: int = STATUS_WORKTREE_LIMIT
+) -> tuple[list[WorktreeEntry], str | None]:
     result, error = run_repository_command(
         ["git", "worktree", "list", "--porcelain"], directory
     )
     if error is not None:
         return [], error
     assert result is not None
-    worktrees: list[Path] = []
-    for line in result.stdout.splitlines():
-        if not line.startswith("worktree "):
-            continue
-        path = Path(line.removeprefix("worktree "))
-        if not path.is_absolute():
-            path = directory / path
-        try:
-            resolved = path.resolve()
-        except OSError as error:
-            return [], str(error)
-        if resolved not in worktrees:
-            worktrees.append(resolved)
-    if not worktrees:
-        return [], "invalid git worktree list: no worktree entries"
-    if len(worktrees) > STATUS_WORKTREE_LIMIT:
-        return [], (
-            f"worktree limit exceeded ({len(worktrees)} > {STATUS_WORKTREE_LIMIT})"
+    return parse_worktree_entries(result.stdout, directory, limit)
+
+
+def repository_worktrees(directory: Path) -> tuple[list[Path], str | None]:
+    entries, error = repository_worktree_entries(directory)
+    return [entry.path for entry in entries], error
+
+
+def stop_process(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
+def bounded_repository_worktree_entries(
+    directory: Path,
+) -> tuple[list[WorktreeEntry], str | None]:
+    environment = os.environ.copy()
+    environment["GIT_NO_LAZY_FETCH"] = "1"
+    environment["GIT_OPTIONAL_LOCKS"] = "0"
+    try:
+        process = subprocess.Popen(
+            ["git", "worktree", "list", "--porcelain"],
+            cwd=directory,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
         )
-    return worktrees, None
+    except OSError as error:
+        return [], str(error)
+    assert process.stdout is not None
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ)
+    deadline = monotonic() + STATUS_TIMEOUT_SECONDS
+    output = bytearray()
+    pending = bytearray()
+    worktree_count = 0
+    failure: str | None = None
+    try:
+        while True:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                failure = f"timed out after {STATUS_TIMEOUT_SECONDS} seconds"
+                break
+            if not selector.select(remaining):
+                failure = f"timed out after {STATUS_TIMEOUT_SECONDS} seconds"
+                break
+            chunk = os.read(process.stdout.fileno(), 8_192)
+            if not chunk:
+                break
+            output.extend(chunk)
+            if len(output) > INVENTORY_WORKTREE_OUTPUT_LIMIT:
+                failure = (
+                    "worktree output limit exceeded "
+                    f"({INVENTORY_WORKTREE_OUTPUT_LIMIT} bytes)"
+                )
+                break
+            pending.extend(chunk)
+            lines = pending.split(b"\n")
+            pending = bytearray(lines.pop())
+            worktree_count += sum(
+                line.startswith(b"worktree ") for line in lines
+            )
+            if worktree_count > INVENTORY_WORKTREE_LIMIT:
+                failure = (
+                    "worktree limit exceeded "
+                    f"(more than {INVENTORY_WORKTREE_LIMIT})"
+                )
+                break
+    finally:
+        selector.close()
+
+    if failure is not None:
+        stop_process(process)
+        process.stdout.close()
+        return [], failure
+    try:
+        returncode = process.wait(timeout=max(0.01, deadline - monotonic()))
+    except subprocess.TimeoutExpired:
+        stop_process(process)
+        process.stdout.close()
+        return [], f"timed out after {STATUS_TIMEOUT_SECONDS} seconds"
+    process.stdout.close()
+    try:
+        decoded = output.decode()
+    except UnicodeDecodeError:
+        return [], "invalid UTF-8 in git worktree list"
+    if returncode != 0:
+        return [], diagnostic_output(decoded, returncode)
+    return parse_worktree_entries(
+        decoded, directory, INVENTORY_WORKTREE_LIMIT
+    )
+
+
+def parse_tracking_counts(
+    upstream: str, tracking: str
+) -> tuple[int | None, int | None] | None:
+    if not upstream:
+        return None, None
+    if not tracking:
+        return 0, 0
+    if tracking == "gone":
+        return None, None
+    counts = {"ahead": 0, "behind": 0}
+    for item in tracking.split(", "):
+        match = re.fullmatch(r"(ahead|behind) (\d+)", item)
+        if match is None:
+            return None
+        counts[match.group(1)] = int(match.group(2))
+    return counts["ahead"], counts["behind"]
+
+
+def repository_branches(
+    directory: Path,
+) -> tuple[list[BranchEntry], str | None]:
+    environment = os.environ.copy()
+    environment["GIT_NO_LAZY_FETCH"] = "1"
+    environment["GIT_OPTIONAL_LOCKS"] = "0"
+    result, error = run_repository_command(
+        [
+            "git",
+            "for-each-ref",
+            f"--count={INVENTORY_BRANCH_LIMIT + 1}",
+            "--sort=refname",
+            "--format=%(refname:lstrip=2)%09%(upstream:lstrip=2)%09%(upstream:track,nobracket)%09%(committerdate:unix)",
+            "refs/heads",
+        ],
+        directory,
+        environment=environment,
+    )
+    if error is not None:
+        return [], error
+    assert result is not None
+    branches: list[BranchEntry] = []
+    names: set[str] = set()
+    for line in result.stdout.splitlines():
+        fields = line.split("\t")
+        if len(fields) != 4 or not fields[0] or fields[0] in names:
+            return [], "invalid local branch inventory"
+        name, upstream, tracking, raw_timestamp = fields
+        counts = parse_tracking_counts(upstream, tracking)
+        if counts is None:
+            return [], "invalid local branch tracking state"
+        commit_timestamp = (
+            int(raw_timestamp) if re.fullmatch(r"\d+", raw_timestamp) else None
+        )
+        branches.append(
+            BranchEntry(
+                name,
+                upstream or None,
+                counts[0],
+                counts[1],
+                commit_timestamp,
+            )
+        )
+        names.add(name)
+    if len(branches) > INVENTORY_BRANCH_LIMIT:
+        return [], (
+            f"branch limit exceeded ({len(branches)} > {INVENTORY_BRANCH_LIMIT})"
+        )
+    return branches, None
 
 
 def actionable_worktree(status: GitStatus) -> bool:
@@ -1481,6 +1723,226 @@ def git_status(root: Path, manifest: dict[str, object]) -> bool:
             f"ahead {display_count(row.status.ahead)} | "
             f"behind {display_count(row.status.behind)} | dirty {row.status.dirty}"
             f"{cleanup_candidate}"
+        )
+    print()
+    return success
+
+
+def repository_commit_timestamp(directory: Path, reference: str | None) -> int | None:
+    if reference is None:
+        return None
+    environment = os.environ.copy()
+    environment["GIT_NO_LAZY_FETCH"] = "1"
+    environment["GIT_OPTIONAL_LOCKS"] = "0"
+    result, error = run_repository_command(
+        ["git", "show", "-s", "--format=%ct", reference],
+        directory,
+        environment=environment,
+    )
+    if error is not None:
+        return None
+    assert result is not None
+    value = result.stdout.strip()
+    return int(value) if re.fullmatch(r"\d+", value) else None
+
+
+def git_inventory_rows(
+    targets: list[tuple[str, str, Path]],
+) -> list[GitInventoryRow]:
+    rows: list[GitInventoryRow] = []
+    registered_paths = {directory.resolve() for _, _, directory in targets}
+    common_directories = {
+        directory.resolve(): repository_git_common_directory(directory)
+        for _, _, directory in targets
+    }
+    common_directory_counts: dict[Path, int] = {}
+    comparisons_are_unambiguous = all(
+        error is None for _, error in common_directories.values()
+    )
+    for common_directory, error in common_directories.values():
+        if common_directory is not None and error is None:
+            common_directory_counts[common_directory] = (
+                common_directory_counts.get(common_directory, 0) + 1
+            )
+
+    inspected_common_directories: set[Path] = set()
+    for name, relative_path, directory in targets:
+        label = f"{name} ({relative_path})"
+        common_directory, common_error = common_directories[directory.resolve()]
+        if common_error is not None:
+            rows.append(GitInventoryRow(label, error=common_error))
+            continue
+        assert common_directory is not None
+        if common_directory in inspected_common_directories:
+            continue
+        inspected_common_directories.add(common_directory)
+
+        branches, branch_error = repository_branches(directory)
+        worktrees, worktree_error = bounded_repository_worktree_entries(directory)
+        if branch_error is not None:
+            rows.append(GitInventoryRow(label, error=branch_error))
+            branches = []
+        if worktree_error is not None:
+            rows.append(GitInventoryRow(label, error=worktree_error))
+            worktrees = []
+
+        branch_worktrees = {
+            worktree.branch: worktree
+            for worktree in worktrees
+            if worktree.branch is not None
+        }
+        worktree_statuses = {
+            worktree.path: repository_git_status(worktree.path)
+            for worktree in worktrees
+        }
+        worktree_state_is_consistent = True
+        for worktree in worktrees:
+            status, _status_error = worktree_statuses[worktree.path]
+            if (
+                status is not None
+                and worktree.branch is not None
+                and status.branch != worktree.branch
+            ):
+                worktree_state_is_consistent = False
+                break
+        comparison_is_unambiguous = (
+            comparisons_are_unambiguous
+            and common_directory_counts[common_directory] == 1
+        )
+        comparison_deadline = monotonic() + STATUS_TIMEOUT_SECONDS
+        branch_names = {branch.name for branch in branches}
+
+        for branch in branches:
+            worktree = branch_worktrees.get(branch.name)
+            status: GitStatus | None = None
+            status_error: str | None = None
+            if worktree is not None:
+                status, status_error = worktree_statuses[worktree.path]
+                if status is not None and status.branch != branch.name:
+                    status_error = "worktree branch changed during inventory"
+            dirty = status.dirty if status is not None else None
+            comparison_status = GitStatus(
+                branch.name,
+                branch.upstream,
+                branch.ahead,
+                branch.behind,
+                dirty or 0,
+            )
+            status_is_known = worktree is None or (
+                status is not None and status.branch == branch.name
+            )
+            integrated = (
+                comparison_is_unambiguous
+                and worktree_state_is_consistent
+                and worktree_error is None
+                and status_is_known
+                and (worktree is None or worktree.path not in registered_paths)
+                and integrated_cleanup_candidate(
+                    directory, comparison_status, comparison_deadline
+                )
+            )
+            rows.append(
+                GitInventoryRow(
+                    label,
+                    branch=branch.name,
+                    worktree=worktree.path if worktree is not None else None,
+                    checkout=(
+                        "registered"
+                        if worktree is not None and worktree.path in registered_paths
+                        else "alternate" if worktree is not None else None
+                    ),
+                    upstream=branch.upstream,
+                    ahead=branch.ahead,
+                    behind=branch.behind,
+                    dirty=dirty,
+                    commit_timestamp=branch.commit_timestamp,
+                    error=status_error,
+                    integrated_cleanup_candidate=integrated,
+                )
+            )
+
+        for worktree in worktrees:
+            if worktree.branch is not None and worktree.branch in branch_names:
+                continue
+            status, status_error = worktree_statuses[worktree.path]
+            if (
+                status is not None
+                and worktree.branch is not None
+                and status.branch != worktree.branch
+            ):
+                status_error = "worktree branch changed during inventory"
+            rows.append(
+                GitInventoryRow(
+                    label,
+                    branch=worktree.branch or "(detached)",
+                    worktree=worktree.path,
+                    checkout=(
+                        "registered"
+                        if worktree.path in registered_paths
+                        else "alternate"
+                    ),
+                    dirty=status.dirty if status is not None else None,
+                    commit_timestamp=repository_commit_timestamp(
+                        directory, worktree.head
+                    ),
+                    error=status_error,
+                )
+            )
+    return rows
+
+
+def commit_age_days(timestamp: int | None, now: int) -> int | None:
+    if timestamp is None:
+        return None
+    return max(0, (now - timestamp) // 86_400)
+
+
+def commit_date(timestamp: int | None) -> str:
+    if timestamp is None:
+        return "—"
+    try:
+        return datetime.fromtimestamp(timestamp).astimezone().date().isoformat()
+    except (OSError, OverflowError, ValueError):
+        return "—"
+
+
+def git_inventory(
+    root: Path, manifest: dict[str, object], stale_after_days: int | None
+) -> bool:
+    print("=== GIT INVENTORY ===")
+    rows = git_inventory_rows(status_targets(root, manifest))
+    now = int(time())
+    success = True
+    for row in rows:
+        if row.branch is None:
+            print(f"{row.label} | ERROR: {row.error}")
+            success = False
+            continue
+        age = commit_age_days(row.commit_timestamp, now)
+        if age is None:
+            freshness = "unknown"
+        elif stale_after_days is None:
+            freshness = "unclassified"
+        elif age >= stale_after_days:
+            freshness = "stale"
+        else:
+            freshness = "current"
+        cleanup_candidate = (
+            " | integrated cleanup candidate"
+            if row.integrated_cleanup_candidate
+            else ""
+        )
+        error = f" | ERROR: {row.error}" if row.error is not None else ""
+        if row.error is not None:
+            success = False
+        print(
+            f"{row.label} | branch {row.branch} | "
+            f"worktree {row.worktree or '—'} | checkout {row.checkout or '—'} | "
+            f"upstream {row.upstream or '—'} | ahead {display_count(row.ahead)} | "
+            f"behind {display_count(row.behind)} | dirty {display_count(row.dirty)} | "
+            f"last {commit_date(row.commit_timestamp)} | "
+            f"age {f'{age}d' if age is not None else '—'} | freshness {freshness}"
+            f"{cleanup_candidate}{error}"
         )
     print()
     return success
@@ -1868,6 +2330,16 @@ def doctor_workspace(root: Path) -> None:
     print()
 
 
+def positive_integer(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be an integer") from error
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be greater than zero")
+    return parsed
+
+
 def parser() -> argparse.ArgumentParser:
     command = argparse.ArgumentParser(prog="project-workspace")
     subcommands = command.add_subparsers(dest="command", required=True)
@@ -1927,6 +2399,18 @@ def parser() -> argparse.ArgumentParser:
         help="status section to show",
     )
 
+    inventory = subcommands.add_parser(
+        "git-inventory", help="list every local branch and worktree"
+    )
+    inventory.add_argument(
+        "--workspace", type=Path, default=Path.cwd(), help="workspace root"
+    )
+    inventory.add_argument(
+        "--stale-after-days",
+        type=positive_integer,
+        help="classify branches at least this old as stale",
+    )
+
     sync = subcommands.add_parser(
         "sync", help="fetch, integrate, and publish repository work"
     )
@@ -1964,6 +2448,13 @@ def main() -> int:
             print_beads_counts(arguments.workspace, arguments.timeout)
         elif arguments.command == "status":
             succeeded = status_workspace(arguments.workspace, arguments.section)
+            return 0 if succeeded else 1
+        elif arguments.command == "git-inventory":
+            workspace_root = Path(os.path.abspath(arguments.workspace.expanduser()))
+            manifest, _readme = load_workspace_manifest(workspace_root)
+            succeeded = git_inventory(
+                workspace_root, manifest, arguments.stale_after_days
+            )
             return 0 if succeeded else 1
         elif arguments.command == "sync":
             succeeded = sync_workspace(

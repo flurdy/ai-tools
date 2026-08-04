@@ -38,6 +38,7 @@ project-workspace add-infrastructure /path/to/infrastructure
 make help
 make status
 make git-status
+make git-inventory
 make beads-status
 make all-status
 make sync
@@ -49,7 +50,12 @@ make doctor
 and workspace health across the root and every repository in `workspace.json`.
 The focused `git-status` and `beads-status` targets show one section only. Git status
 also discovers actionable alternate worktrees through Git metadata and reports their
-path, branch, dirty count, and upstream state without fetching. `make sync` and
+path, branch, dirty count, and upstream state without fetching. `make git-inventory`
+lists every local branch and worktree with checkout linkage and commit age; use
+`project-workspace git-inventory --workspace . --stale-after-days DAYS` to classify age
+against an explicit threshold. Without that option, freshness remains unclassified.
+Collection fails visibly above 1,000 branches or 200 worktrees per shared Git directory.
+`make sync` and
 `make sync-check` operate only on the workspace root and registered checkout paths;
 they never rebase or push alternate worktree branches implicitly. Beads stores remain
 independent and are never synchronized by status commands.

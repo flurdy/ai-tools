@@ -151,6 +151,7 @@ The generated Makefile provides:
 ```bash
 make status
 make git-status
+make git-inventory
 make beads-status
 make all-status
 make sync
@@ -183,6 +184,17 @@ command.
 Each section is titled and separated by a blank line, and Git and Beads both render one
 pipe-delimited row per line—one registered checkout or actionable alternate worktree per
 Git row, and one issue per Beads row—so the combined output stays scannable.
+
+`make git-inventory` is the opt-in complete local view. It lists every local branch and
+worktree once per shared Git common directory, associates checked-out branches with their
+registered or alternate worktree paths, and reports upstream, ahead/behind, dirty, last
+commit date, and age evidence. It remains local and read-only. Freshness is deliberately
+unclassified by default; run
+`project-workspace git-inventory --workspace PATH --stale-after-days DAYS` to label
+branches at or beyond an explicit positive threshold as `stale` and younger branches as
+`current`. Missing history stays `unknown`; age alone never removes branches or worktrees.
+Collection is capped at 1,000 branches and 200 worktrees per shared Git directory; larger
+inventories fail visibly instead of truncating or scanning without bound.
 
 ### Manual parallel member-worktree workflow
 
