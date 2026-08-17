@@ -5,7 +5,13 @@ import { execFileSync } from "node:child_process";
 import { hostname } from "node:os";
 import { dirname } from "node:path";
 import { BeadsCountsCache, fetchBeadsCounts, findBeadsRoot, formatBeadsCounts } from "./beads-status.ts";
-import { fetchCodexWeeklyQuota, isCodexQuotaStale, showsCodexQuota, type CodexWeeklyQuota } from "./codex-quota.ts";
+import {
+	codexQuotaDisplayState,
+	fetchCodexWeeklyQuota,
+	isCodexQuotaStale,
+	showsCodexQuota,
+	type CodexWeeklyQuota,
+} from "./codex-quota.ts";
 import { fetchGitDivergence, formatGitDivergence, GitDivergenceCache } from "./git-divergence.ts";
 import { activeModelLabel, modelLabel } from "./model-label.ts";
 import { DEFAULT_LEASE_OCCUPANCY_TIMEOUT_MS, probeWorktreeLeaseOccupancy, type WorktreeLeaseOccupancy } from "@flurdy/pi-session-mode/lease-observer";
@@ -324,6 +330,7 @@ export default function piStatusline(
 			const quotaTimeoutMs = envMilliseconds("PI_STATUSLINE_CODEX_QUOTA_TIMEOUT", 10_000, 1000);
 			const quotaAbort = new AbortController();
 			let codexQuota: CodexWeeklyQuota | undefined;
+			let codexQuotaLookupFailed = false;
 			let quotaRefreshing = false;
 			const openRouterRefreshMs = envMilliseconds("PI_STATUSLINE_OPENROUTER_CREDITS_TTL", 5 * 60_000, 60_000);
 			const openRouterStaleMs = envMilliseconds("PI_STATUSLINE_OPENROUTER_CREDITS_STALE", 15 * 60_000, 60_000);
@@ -375,8 +382,9 @@ export default function piStatusline(
 						timeoutMs: quotaTimeoutMs,
 						signal: quotaAbort.signal,
 					});
+					codexQuotaLookupFailed = false;
 				} catch {
-					// Keep the last successful snapshot; missing Codex/auth simply hides the segment.
+					if (!codexQuota) codexQuotaLookupFailed = true;
 				} finally {
 					quotaRefreshing = false;
 					if (!quotaAbort.signal.aborted) tui.requestRender();
@@ -420,7 +428,8 @@ export default function piStatusline(
 				const status = `${git.dirty ? "●" : ""}${git.untracked ? "…" : ""}${git.staged ? "✚" : ""}`;
 				let quota = "";
 				let quotaTable = "";
-				if (codexQuota && showsCodexQuota(ctx.model?.provider, quotaEnabled)) {
+				const quotaState = codexQuotaDisplayState(ctx.model?.provider, quotaEnabled, codexQuota, codexQuotaLookupFailed);
+				if (quotaState === "available" && codexQuota) {
 					const used = Math.round(codexQuota.usedPercent);
 					const stale = isCodexQuotaStale(codexQuota, Date.now(), quotaStaleMs);
 					const tone = codexQuotaTone(used);
@@ -431,6 +440,9 @@ export default function piStatusline(
 					quota = `${bar(used, 3, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, quotaColors)} ${label}`;
 					const reset = codexQuota.resetsAtMs === null ? "" : fmtQuotaReset(codexQuota.resetsAtMs);
 					quotaTable = `${bar(used, 6, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, quotaColors)} ${label}${reset ? theme.fg("dim", ` · ${reset}`) : ""}`;
+				} else if (quotaState === "unavailable") {
+					quota = theme.fg("dim", "GPT ?");
+					quotaTable = quota;
 				}
 				const openRouterCredits = openRouterCreditsCache?.credits;
 				const openRouterBalance = openRouterCredits

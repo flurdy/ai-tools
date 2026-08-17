@@ -179,7 +179,7 @@ The table footer discovers the nearest parent `.beads` workspace. At a validated
 
 For OpenAI-Codex models, the quota segment queries the authenticated Codex CLI's machine-readable `codex app-server` API (`account/rateLimits/read`). It stays hidden and skips lookups for other providers. It does not scrape the interactive `/status` screen, read Codex credential files, or run a model turn. Lookup runs asynchronously outside footer rendering, refreshes at a bounded interval, and retains the last successful snapshot when a later refresh fails. Data older than the configured stale interval—or whose reset time has passed—is rendered dim.
 
-The weekly bucket is identified by its approximately seven-day duration rather than by assuming it is always the API's primary or secondary window. The segment stays hidden when Codex is missing, unauthenticated, too old to support the endpoint, or returns no weekly bucket.
+The weekly bucket is identified by its approximately seven-day duration rather than by assuming it is always the API's primary or secondary window. When an enabled OpenAI-Codex model is active, an initial lookup failure renders a dim `GPT ?`; a later failure retains the last successful snapshot. The segment stays hidden for other providers and when the lookup is explicitly disabled.
 
 The displayed quota belongs to the account authenticated in the Codex CLI. It represents Pi's OpenAI-Codex allowance only when Pi and Codex are signed into the same ChatGPT account.
 

@@ -23,6 +23,19 @@ export function showsCodexQuota(provider: string | undefined, enabled = true): b
 	return enabled && provider === "openai-codex";
 }
 
+export type CodexQuotaDisplayState = "hidden" | "unavailable" | "available";
+
+export function codexQuotaDisplayState(
+	provider: string | undefined,
+	enabled: boolean,
+	quota: CodexWeeklyQuota | undefined,
+	lookupFailed: boolean,
+): CodexQuotaDisplayState {
+	if (!showsCodexQuota(provider, enabled)) return "hidden";
+	if (quota) return "available";
+	return lookupFailed ? "unavailable" : "hidden";
+}
+
 function asObject(value: unknown): JsonObject | undefined {
 	return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as JsonObject) : undefined;
 }

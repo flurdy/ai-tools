@@ -3,7 +3,13 @@ import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { fetchCodexWeeklyQuota, isCodexQuotaStale, selectCodexWeeklyQuota, showsCodexQuota } from "./codex-quota.ts";
+import {
+	codexQuotaDisplayState,
+	fetchCodexWeeklyQuota,
+	isCodexQuotaStale,
+	selectCodexWeeklyQuota,
+	showsCodexQuota,
+} from "./codex-quota.ts";
 import { modelLabel, shortModel } from "./model-label.ts";
 import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT, codexQuotaTone } from "./quota-display.ts";
 
@@ -21,6 +27,16 @@ test("shows quota in compact and table footer data only for enabled Codex models
 	assert.equal(showsCodexQuota("anthropic"), false);
 	assert.equal(showsCodexQuota("openrouter"), false);
 	assert.equal(showsCodexQuota(undefined), false);
+});
+
+test("distinguishes unavailable Codex quota from hidden and cached states", () => {
+	const quota = { usedPercent: 20, remainingPercent: 80, fetchedAtMs: 1000, resetsAtMs: 10_000 };
+
+	assert.equal(codexQuotaDisplayState("anthropic", true, undefined, true), "hidden");
+	assert.equal(codexQuotaDisplayState("openai-codex", false, undefined, true), "hidden");
+	assert.equal(codexQuotaDisplayState("openai-codex", true, undefined, false), "hidden");
+	assert.equal(codexQuotaDisplayState("openai-codex", true, undefined, true), "unavailable");
+	assert.equal(codexQuotaDisplayState("openai-codex", true, quota, true), "available");
 });
 
 test("renders quota bars without rounding usage upward", () => {
