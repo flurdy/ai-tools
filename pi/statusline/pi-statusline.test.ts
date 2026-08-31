@@ -10,6 +10,9 @@ function registeredHandlers(): Map<string, Handler> {
 		on(event: string, handler: Handler) {
 			handlers.set(event, handler);
 		},
+		getSessionName() {
+			return undefined;
+		},
 	} as never);
 	return handlers;
 }
@@ -68,4 +71,68 @@ test("wires continuing turns to threshold crossing without tool-loop spam", () =
 	turn?.({ turnIndex: 2, timestamp: 2 }, context("integration-turn", 100_000, notifications));
 
 	assert.equal(notifications.length, 1);
+});
+
+test("pins the session guard state in narrow and wide footer layouts", async () => {
+	const handlers = registeredHandlers();
+	let footerFactory: any;
+	let component: any;
+	let sessionMode = "session: implement";
+	const previous = {
+		k8s: process.env.PI_STATUSLINE_K8S_CONTEXT,
+		quota: process.env.PI_STATUSLINE_CODEX_QUOTA,
+		credits: process.env.PI_STATUSLINE_OPENROUTER_CREDITS,
+		beads: process.env.PI_STATUSLINE_BEADS,
+		divergence: process.env.PI_STATUSLINE_GIT_DIVERGENCE,
+	};
+	process.env.PI_STATUSLINE_K8S_CONTEXT = "0";
+	process.env.PI_STATUSLINE_CODEX_QUOTA = "0";
+	process.env.PI_STATUSLINE_OPENROUTER_CREDITS = "0";
+	process.env.PI_STATUSLINE_BEADS = "0";
+	process.env.PI_STATUSLINE_GIT_DIVERGENCE = "0";
+	try {
+		const ctx = {
+			cwd: "/tmp",
+			mode: "tui",
+			model: { provider: "test", id: "model", contextWindow: 1000 },
+			getContextUsage: () => ({ tokens: 0 }),
+			sessionManager: { getBranch: () => [] },
+			ui: {
+				setWidget() {},
+				setFooter(factory: any) { footerFactory = factory; },
+			},
+		};
+		await handlers.get("session_start")?.({}, ctx);
+		assert.ok(footerFactory);
+		component = footerFactory(
+			{ requestRender() {} },
+			{
+				fg: (_tone: string, text: string) => text,
+				bold: (text: string) => text,
+			},
+			{
+				getGitBranch: () => null,
+				getExtensionStatuses: () => new Map([["session-mode", sessionMode]]),
+				onBranchChange: () => () => undefined,
+			},
+		);
+		for (const state of ["implement", "plan", "conflict", "lost", "unguarded"]) {
+			sessionMode = `session: ${state}`;
+			assert.match(component.render(30).join("\n"), new RegExp(`session: ${state}`));
+			assert.match(component.render(120).join("\n"), new RegExp(`session: ${state}`));
+		}
+	} finally {
+		component?.dispose();
+		for (const [key, value] of Object.entries(previous)) {
+			const name = {
+				k8s: "PI_STATUSLINE_K8S_CONTEXT",
+				quota: "PI_STATUSLINE_CODEX_QUOTA",
+				credits: "PI_STATUSLINE_OPENROUTER_CREDITS",
+				beads: "PI_STATUSLINE_BEADS",
+				divergence: "PI_STATUSLINE_GIT_DIVERGENCE",
+			}[key] as string;
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
+	}
 });

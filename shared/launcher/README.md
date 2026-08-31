@@ -8,8 +8,10 @@ and Pi launchers.
 - `context-gather`: discovers the main checkout, existing worktrees, handoffs,
   branch state, and cached pull-request metadata before presenting the `fzf`
   picker. Handoffs show their `HH:MM` timestamp and are newest-first by full
-  timestamp. It keeps agent-specific picker capabilities such as Claude's fork
-  action behind `--agent`.
+  timestamp. Ctrl-P toggles the launcher's private initial-mode state without
+  closing `fzf`; Pi shows `implement`/`plan`, while Claude shows `auto`/`plan`.
+  It keeps agent-specific picker capabilities such as Claude's fork action behind
+  `--agent`.
 - `mkworktree`: creates or reuses a worktree and carries local project setup
   into it. It copies existing Claude and Pi project settings because a worktree
   can be opened by either agent.
@@ -70,7 +72,7 @@ Run the offline integration suite from the repository root or any directory:
 shared/launcher/test.sh
 ```
 
-It covers provider-specific picker keys, the shared PR cache, timestamped
-newest-first handoff ordering, copied-install agent detection, shared
+It covers provider-specific picker keys and mode translation, the shared PR cache,
+timestamped newest-first handoff ordering, copied-install agent detection, shared
 configuration provisioning, branch reuse, path spaces, slug collisions, and
 worktree creation failures.

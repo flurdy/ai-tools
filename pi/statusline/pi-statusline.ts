@@ -390,6 +390,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const usage = getUsage(ctx);
 				const k8sContext = getK8sContext();
 				const model = modelLabel(ctx.model?.provider, ctx.model?.id ?? "no-model");
+				const sessionMode = footerData.getExtensionStatuses().get("session-mode") ?? "";
 				const sessionName = pi.getSessionName();
 				const beadsCounts = beadsCache?.counts;
 				const effort = thinking ? `⚡${thinking === "high" ? "Hi" : thinking === "medium" ? "Md" : thinking.slice(0, 2)}` : "";
@@ -417,6 +418,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					host: theme.fg("accent", ` ${hostname().split(".")[0]}`),
 					k8s: k8sContext ? theme.fg("accent", `☸ ${k8sContext}`) : "",
 					agent: theme.fg("success", theme.bold("π")),
+					guard: sessionMode,
 					model: theme.fg("success", theme.bold(model)),
 					effort: effort ? theme.fg("accent", effort) : "",
 					session: sessionName ? theme.fg("accent", `◈ ${truncateToWidth(sessionName, 24, "…")}`) : "",
@@ -444,13 +446,13 @@ export default function piStatusline(pi: ExtensionAPI): void {
 
 			function compact(width: number): string[] {
 				const s = segments();
-				let cells = [s.clock, joinCells([s.agent, s.model, s.effort]), s.bars, s.quota, s.openRouterBalance, s.k8s, s.duration, s.path, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
+				let cells = [s.clock, joinCells([s.agent, s.guard, s.model, s.effort]), s.bars, s.quota, s.openRouterBalance, s.k8s, s.duration, s.path, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
 				let line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
-				cells = [joinCells([s.agent, s.model, s.effort]), s.bars, s.quota, s.openRouterBalance, s.k8s, s.duration, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
+				cells = [joinCells([s.agent, s.guard, s.model, s.effort]), s.bars, s.quota, s.openRouterBalance, s.k8s, s.duration, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
 				line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
-				cells = [s.agent, s.model, s.bars, s.k8s, s.branch, s.divergence, s.session].filter(Boolean);
+				cells = [s.agent, s.guard, s.model, s.bars, s.k8s, s.branch, s.divergence, s.session].filter(Boolean);
 				if (visibleWidth(joinCells(cells)) > width && s.divergence) cells = cells.filter((cell) => cell !== s.divergence);
 				return [truncateToWidth(joinCells(cells), width)];
 			}
@@ -459,7 +461,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const s = segments();
 				const border = (text: string) => theme.fg("border", text);
 				let row1 = [s.host, s.k8s, s.path, s.repo, s.branch, s.divergence, s.pr, s.beads, s.session].filter(Boolean);
-				const row2 = [s.agent, s.model, s.effort, s.ctx, s.quotaTable, s.openRouterBalance, s.cost, s.duration, s.clock].filter(Boolean);
+				const row2 = [s.agent, s.guard, s.model, s.effort, s.ctx, s.quotaTable, s.openRouterBalance, s.cost, s.duration, s.clock].filter(Boolean);
 
 				function widthsFor(cells: string[]): number[] {
 					return cells.map((cell) => visibleWidth(cell) + 2);

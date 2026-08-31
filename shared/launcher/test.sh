@@ -7,6 +7,7 @@ PL_GATHER="$ROOT/pi/launcher/pl-gather"
 CL_MKWORKTREE="$ROOT/claude/launcher/cl-mkworktree"
 PL_MKWORKTREE="$ROOT/pi/launcher/pl-mkworktree"
 PL_FUNCTION="$ROOT/pi/launcher/pl.fish"
+CL_FUNCTION="$ROOT/claude/launcher/cl.fish"
 
 if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
   echo "launcher tests require Bash 4+" >&2
@@ -25,6 +26,7 @@ mkdir -p "$repo" "$home" "$bin"
 # The Pi frontend pins a stable launcher baseline so temporary model-tier routes
 # in other sessions cannot leak into a new launch through Pi's persisted defaults.
 fish -n "$PL_FUNCTION"
+fish -n "$CL_FUNCTION"
 nonrepo="$tmp/nonrepo"
 mkdir -p "$nonrepo"
 pl_default=$(HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run' "$PL_FUNCTION" "$nonrepo" 2>/dev/null)
@@ -44,6 +46,14 @@ printf '%s\n' "$pl_configured" | grep -qF 'pi --model openai-codex/gpt-5.6-terra
 pl_override=$(HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run --model=anthropic/claude-sonnet-5 --thinking=medium' "$PL_FUNCTION" "$nonrepo" 2>/dev/null)
 printf '%s\n' "$pl_override" | grep -qF 'pi --model anthropic/claude-sonnet-5 --thinking medium' \
   || fail "Pi launcher overrides ignored"
+if HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --plan' "$PL_FUNCTION" "$nonrepo" 2>"$tmp/pl-unknown.err"; then
+  fail "Pi launcher silently accepted --plan"
+fi
+grep -q 'ctrl-p' "$tmp/pl-unknown.err" || fail "Pi unknown-mode guidance missing"
+if HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; cl --plan' "$CL_FUNCTION" "$nonrepo" 2>"$tmp/cl-unknown.err"; then
+  fail "Claude launcher silently accepted --plan"
+fi
+grep -q 'ctrl-p' "$tmp/cl-unknown.err" || fail "Claude unknown-mode guidance missing"
 
 git -C "$repo" init -q -b main
 git -C "$repo" config user.name "Launcher Test"
@@ -65,6 +75,34 @@ printf '%s\n' "$pl_continue" | grep -qxF 'pi --continue' || fail "Pi continue mo
 pl_continue_override=$(HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run --model=anthropic/claude-sonnet-5 --thinking=medium' "$PL_FUNCTION" "$repo")
 printf '%s\n' "$pl_continue_override" | grep -qxF 'pi --model anthropic/claude-sonnet-5 --thinking medium --continue' \
   || fail "Pi continue override was ignored"
+
+cat > "$home/.pi/bin/pl-gather" <<EOF
+#!/usr/bin/env bash
+printf 'worktree\\t%s\\tmain\\tcontinue\\t\\tplan\\n' '$repo'
+EOF
+pl_plan=$(HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run' "$PL_FUNCTION" "$repo")
+printf '%s\n' "$pl_plan" | grep -qxF 'pi --plan --continue' || fail "Pi picker plan mode was ignored"
+cat > "$home/.pi/bin/pl-gather" <<EOF
+#!/usr/bin/env bash
+printf 'worktree\\t%s\\tmain\\tcontinue\\t\\timplement\\n' '$repo'
+EOF
+pl_implement=$(HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run' "$PL_FUNCTION" "$repo")
+printf '%s\n' "$pl_implement" | grep -qxF 'pi --implement --continue' || fail "Pi picker implement mode was ignored"
+
+mkdir -p "$home/.claude/bin"
+cat > "$home/.claude/bin/cl-gather" <<EOF
+#!/usr/bin/env bash
+printf 'main\\t%s\\tmain\\tnew\\t\\tplan\\n' '$repo'
+EOF
+chmod +x "$home/.claude/bin/cl-gather"
+cl_plan=$(HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; cl --dry-run' "$CL_FUNCTION" "$repo")
+printf '%s\n' "$cl_plan" | grep -qxF 'claude --permission-mode plan' || fail "Claude picker plan mode was ignored"
+cat > "$home/.claude/bin/cl-gather" <<EOF
+#!/usr/bin/env bash
+printf 'main\\t%s\\tmain\\tnew\\t\\tauto\\n' '$repo'
+EOF
+cl_auto=$(HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; cl --dry-run' "$CL_FUNCTION" "$repo")
+printf '%s\n' "$cl_auto" | grep -qxF 'claude --permission-mode auto' || fail "Claude picker auto mode was ignored"
 
 mkdir -p \
   "$repo/.claude" \
@@ -137,6 +175,16 @@ expected_handoffs=$(printf '%s\n' \
   "handoff: early   (2026-07-15 00:30 · $repo)")
 [ "$handoff_rows" = "$expected_handoffs" ] || fail "handoffs were not timestamped and newest-first"
 
+# The picker mode is a stateful Ctrl-P toggle that does not close fzf.
+mode_file="$tmp/launch-mode"
+printf 'implement\n' > "$mode_file"
+mode_header=$("$PL_GATHER" --agent=pi --toggle-mode-file="$mode_file")
+[ "$(cat "$mode_file")" = plan ] || fail "Pi mode toggle did not select plan"
+printf '%s\n' "$mode_header" | grep -q 'mode=plan' || fail "Pi mode header did not show plan"
+mode_header=$("$PL_GATHER" --agent=pi --toggle-mode-file="$mode_file")
+[ "$(cat "$mode_file")" = implement ] || fail "Pi mode toggle did not return to implement"
+printf '%s\n' "$mode_header" | grep -q 'mode=implement' || fail "Pi mode header did not show implement"
+
 # Claude retains its fork capability; Pi does not advertise it.
 claude_desc=$(cd "$repo" && HOME="$home" XDG_CACHE_HOME="$tmp/cache" \
   GH_COUNT="$tmp/gh-count" PATH="$TEST_PATH" FZF_LOG="$tmp/cl.args" \
@@ -148,6 +196,10 @@ pi_desc=$(cd "$repo" && HOME="$home" XDG_CACHE_HOME="$tmp/cache" \
 [ "$(printf '%s' "$pi_desc" | cut -f4)" = new ] || fail "Pi default action changed"
 grep -q -- '--expect=ctrl-n,ctrl-r,ctrl-f,ctrl-w' "$tmp/cl.args" || fail "Claude keys changed"
 grep -q -- '--expect=ctrl-n,ctrl-r,ctrl-w' "$tmp/pl.args" || fail "Pi keys changed"
+grep -q -- 'ctrl-p:transform-header' "$tmp/cl.args" || fail "Claude mode toggle binding missing"
+grep -q -- 'ctrl-p:transform-header' "$tmp/pl.args" || fail "Pi mode toggle binding missing"
+[ "$(printf '%s' "$claude_desc" | cut -f6)" = auto ] || fail "Claude default mode missing"
+[ "$(printf '%s' "$pi_desc" | cut -f6)" = implement ] || fail "Pi default mode missing"
 if grep -q ctrl-f "$tmp/pl.args"; then fail "Pi advertised unsupported fork action"; fi
 
 # The documented cp install dereferences repo symlinks but preserves invocation

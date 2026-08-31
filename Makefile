@@ -13,6 +13,7 @@ help:
 apply:
 	mkdir -p "$(PI_EXTENSIONS_DIR)" "$(PI_THEMES_DIR)"
 	ln -sfn "$(CURDIR)/pi/statusline" "$(PI_EXTENSIONS_DIR)/flurdy-statusline"
+	ln -sfn "$(CURDIR)/pi/session-mode" "$(PI_EXTENSIONS_DIR)/flurdy-session-mode"
 	ln -sfn "$(CURDIR)/pi/kitty-tab-title/pi-kitty-tab-title.ts" "$(PI_EXTENSIONS_DIR)/flurdy-kitty-tab-title.ts"
 	ln -sfn "$(CURDIR)/pi/watch-loop" "$(PI_EXTENSIONS_DIR)/watch-loop"
 	ln -sfn "$(CURDIR)/pi/theme/flurdy-dark.json" "$(PI_THEMES_DIR)/flurdy-dark.json"
@@ -21,6 +22,7 @@ apply:
 
 verify-apply:
 	test "$$(readlink "$(PI_EXTENSIONS_DIR)/flurdy-statusline")" = "$(CURDIR)/pi/statusline"
+	test "$$(readlink "$(PI_EXTENSIONS_DIR)/flurdy-session-mode")" = "$(CURDIR)/pi/session-mode"
 	test "$$(readlink "$(PI_EXTENSIONS_DIR)/flurdy-kitty-tab-title.ts")" = "$(CURDIR)/pi/kitty-tab-title/pi-kitty-tab-title.ts"
 	test "$$(readlink "$(PI_EXTENSIONS_DIR)/watch-loop")" = "$(CURDIR)/pi/watch-loop"
 	test "$$(readlink "$(PI_THEMES_DIR)/flurdy-dark.json")" = "$(CURDIR)/pi/theme/flurdy-dark.json"

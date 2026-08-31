@@ -12,7 +12,8 @@ This repo is meant to be the shareable, curated version of tools that also live 
 | [Claude Kitty tab title](claude/kitty-tab-title/) | Claude Code | Hook script and settings fragment for showing repo/session state in Kitty tab titles. |
 | [Claude worktree co-tenancy](claude/worktree-cotenancy/) | Claude Code | Hook and statusline signal warning when two live sessions share a worktree, which the exit dialog can delete out from under one of them. |
 | [Codex Kitty tab title](codex/kitty-tab-title/) | Codex | Codex hook script and `hooks.json` for the same Kitty tab title workflow. |
-| [Pi statusline](pi/statusline/) | Pi | Pi extension for a responsive Bobthefish/Claude-Code-inspired footer with model, context, git, PR, cost, token, and cache signals. |
+| [Pi statusline](pi/statusline/) | Pi | Pi extension for a responsive Bobthefish/Claude-Code-inspired footer with model, session guard, context, git, PR, cost, token, and cache signals. |
+| [Pi session mode](pi/session-mode/) | Pi | Guarded plan mode plus a canonical Git-worktree writer lease for implementation sessions. |
 | [Pi watch loop](pi/watch-loop/) | Pi | In-memory protocol-v1 extension for bounded fixed or adaptive watch workflows inside one interactive session. |
 | [Pi Flurdy dark theme](pi/theme/) | Pi | High-contrast dark theme with clearly separated success green and warning amber. |
 | [Pi `APPEND_SYSTEM.md` example](pi/append-system/) | Pi | Opt-in appended system instructions for concise next steps and safe remote Git operations. |
@@ -43,7 +44,7 @@ The Kitty tab title write-up is at <https://flurdy.com/docs/kitty-ai-tabs/>.
 make apply
 ```
 
-This links the statusline, Kitty tab title, watch loop, and theme from the checkout into
+This links the statusline, session mode, Kitty tab title, watch loop, and theme from the checkout into
 `~/.pi/agent`. It does not install settings, launchers, `APPEND_SYSTEM.md`, or the standalone
 skill model router. Restart Pi after first linking an extension; `/reload` is sufficient for
 later source changes once Pi has loaded it.
@@ -61,6 +62,7 @@ codex/
   kitty-tab-title/
 pi/
   statusline/
+  session-mode/
   watch-loop/
   theme/
   append-system/
