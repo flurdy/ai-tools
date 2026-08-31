@@ -77,7 +77,7 @@ test("pins the session guard state in narrow and wide footer layouts", async () 
 	const handlers = registeredHandlers();
 	let footerFactory: any;
 	let component: any;
-	let sessionMode = "session: implement";
+	let sessionMode = "implement";
 	const previous = {
 		k8s: process.env.PI_STATUSLINE_K8S_CONTEXT,
 		quota: process.env.PI_STATUSLINE_CODEX_QUOTA,

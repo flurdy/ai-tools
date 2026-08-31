@@ -86,7 +86,7 @@ test("defaults to implement and acquires before reporting write authority", asyn
 	await pi.emit("session_start", ctx);
 	assert.deepEqual(acquisitions, ["acquire"]);
 	assert.equal(controller.state, "implement");
-	assert.equal(ctx.statuses.at(-1), "session: implement");
+	assert.equal(ctx.statuses.at(-1), "implement");
 	assert.deepEqual(pi.activeTools, ["read", "bash", "edit", "write", "questionnaire", "subagent"]);
 });
 
@@ -243,7 +243,7 @@ test("kill switch fails open with a prominent unguarded status", async () => {
 	assert.deepEqual(acquisitions, []);
 	assert.equal(controller.state, "unguarded");
 	assert.equal(pi.activeTools.includes("write"), true);
-	assert.equal(ctx.statuses.at(-1), "session: unguarded");
+	assert.equal(ctx.statuses.at(-1), "unguarded");
 });
 
 test("an already implementing session does not contend with its own lease", async () => {
@@ -268,7 +268,7 @@ test("reload lifecycle releases before reacquiring and exposes a lost race as co
 	assert.deepEqual(releases, ["release"]);
 	assert.deepEqual(acquisitions, ["acquire", "acquire"]);
 	assert.equal(controller.state, "implement-blocked");
-	assert.equal(ctx.statuses.at(-1), "session: conflict");
+	assert.equal(ctx.statuses.at(-1), "conflict");
 });
 
 test("shutdown releases the held lease, restores tools, and clears status", async () => {

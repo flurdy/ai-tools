@@ -21,12 +21,12 @@ export interface SessionModeController {
 }
 
 const STATE_LABELS: Record<SessionGuardState, string> = {
-	acquiring: "session: acquiring",
-	implement: "session: implement",
-	plan: "session: plan",
-	"implement-blocked": "session: conflict",
-	lost: "session: lost",
-	unguarded: "session: unguarded",
+	acquiring: "acquiring",
+	implement: "implement",
+	plan: "plan",
+	"implement-blocked": "conflict",
+	lost: "lost",
+	unguarded: "unguarded",
 };
 
 const STATE_TONES: Record<SessionGuardState, "success" | "warning" | "error"> = {
