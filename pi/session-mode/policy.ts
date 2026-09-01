@@ -48,7 +48,8 @@ const BEADS_DESTRUCTIVE_OR_REMOTE =
 	/\bbd\b[^\n;&|]*(?:\bdelete\b|\bpurge\b|\bmigrate\b|\bcleanup\b|\bdolt\s+(?:push|pull|fetch|reset|checkout|merge|remote)\b)/i;
 const SYSTEM_MUTATION =
 	/\b(?:sudo|su|kill|pkill|killall|reboot|shutdown)\b|\b(?:systemctl|service)\s+(?:\S+\s+)?(?:start|stop|restart|enable|disable)\b/i;
-const DISCARDED_STDERR_REDIRECT = /(?<![\w<>&])2>[ \t]*\/dev\/null(?![\w/.-])/g;
+const DISCARDED_OUTPUT_REDIRECT = /(?:\d+|&)?>>?[ \t]*\/dev\/null(?![\w/.-])/g;
+const FILE_DESCRIPTOR_DUPLICATION = /\d*>&(?:\d+|-)(?!\d)/g;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -212,7 +213,9 @@ function constantShellPayloads(command: string): string[] {
 
 function isObviousMutationAtDepth(command: string, depth: number): boolean {
 	if (depth < 4 && constantShellPayloads(command).some((payload) => isObviousMutationAtDepth(payload, depth + 1))) return true;
-	const inspectable = withoutQuotedText(command).replace(DISCARDED_STDERR_REDIRECT, " ");
+	const inspectable = withoutQuotedText(command)
+		.replace(DISCARDED_OUTPUT_REDIRECT, " ")
+		.replace(FILE_DESCRIPTOR_DUPLICATION, " ");
 	return (
 		/(^|[^<])>>?/.test(inspectable) ||
 		FILE_MUTATION.test(inspectable) ||

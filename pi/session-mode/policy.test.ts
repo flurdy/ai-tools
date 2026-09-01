@@ -127,27 +127,31 @@ test("does not mistake comparison operators, quoted prose, or read-only shell pa
 	}
 });
 
-test("permits discard-only error redirects in read-only diagnostics", () => {
+test("permits exact discard and file-descriptor redirects in read-only diagnostics", () => {
 	for (const command of [
 		"git worktree list --porcelain 2>/dev/null",
 		"bd -C /tmp/repo show ai-tools-1 2> /dev/null",
 		"find /tmp -type f 2>/dev/null | sort",
 		"ls -ld /run/user/1000/pi-session-guard-1000/*.lock 2>/dev/null",
 		"2>/dev/null rg session-mode pi",
+		"command -v lslocks >/dev/null && lslocks",
+		"printf done 1>/dev/null",
+		"printf done &>/dev/null",
+		"printf done 2>>/dev/null",
+		"printf done 3>/dev/null",
+		"printf done >/dev/null 2>&1",
+		"printf done 2>&1",
 	]) {
 		assert.equal(isObviousMutation(command), false, command);
 	}
 });
 
-test("continues to block non-stderr and non-discard redirects", () => {
+test("continues to block real and dynamic redirect targets", () => {
 	for (const command of [
-		"printf done >/dev/null",
-		"printf done 1>/dev/null",
-		"printf done &>/dev/null",
-		"printf done 2>>/dev/null",
-		"printf done 3>/dev/null",
 		"printf done 2>/dev/null.bak",
 		"printf done 2>/tmp/errors.log",
+		"printf done &>output.log",
+		"printf done 2>&$TARGET",
 		"cat input 2>/dev/null > output.txt",
 	]) {
 		assert.equal(isObviousMutation(command), true, command);

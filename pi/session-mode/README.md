@@ -46,7 +46,7 @@ Guarded states:
 
 The effective-agent check uses pi-subagents' installed resolver, including package, user, project, and settings overrides. It rejects unexpected tool sets, writer external-CLI adapters, and direct MCP tool grants. Missing or changed resolver/contracts fail closed for direct agent launches while management and ordinary read tools remain available.
 
-The Bash policy is intentionally bounded. Unknown commands are allowed, constant `sh`/`bash`-family `-c` payloads are inspected recursively, and quoted-text handling only reduces common redirect false positives. Tests pin representative false-positive and false-negative boundaries.
+The Bash policy is intentionally bounded. Unknown commands are allowed, constant `sh`/`bash`-family `-c` payloads are inspected recursively, and exact `/dev/null` output discards and file-descriptor duplication are allowed without treating real or dynamic redirect targets as safe. Quoted-text handling only reduces common redirect false positives. Tests pin representative false-positive and false-negative boundaries.
 
 ## Explicit boundaries
 
