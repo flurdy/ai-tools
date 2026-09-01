@@ -123,10 +123,18 @@ export function registerSessionMode(
 		void held.lost.then(async () => {
 			if (shuttingDown || lease !== held) return;
 			lease = undefined;
+			state = "lost";
 			guardTools();
 			setState(ctx, "lost");
 			await refreshReadOnlySubagents(ctx.cwd, ctx.model?.provider);
 			ctx.ui.notify("Worktree lease was lost. This session is now guarded.", "error");
+		}).catch(() => {
+			if (shuttingDown || state !== "lost") return;
+			try {
+				ctx.ui.setStatus("session-mode", ctx.ui.theme.fg(STATE_TONES.lost, STATE_LABELS.lost));
+			} catch {
+				// Lease loss is already enforced; status reporting is best effort.
+			}
 		});
 	}
 

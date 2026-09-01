@@ -400,6 +400,27 @@ test("contention and holder loss use the same guarded tool path", async () => {
 	assert.equal(lost.pi.activeTools.includes("write"), false);
 });
 
+test("lost-lease UI failures stay contained with write tools guarded", async () => {
+	let lose: (() => void) | undefined;
+	const lostLease: HeldWorktreeLease = {
+		kind: "held",
+		root: "/repo",
+		holderPid: 10,
+		lost: new Promise<void>((resolve) => (lose = resolve)),
+		async release() {},
+	};
+	const { pi, controller } = harness([lostLease]);
+	const ctx = context();
+	await pi.emit("session_start", ctx);
+	ctx.ui.setStatus = () => { throw new Error("UI unavailable"); };
+
+	lose?.();
+	await new Promise<void>((resolve) => setImmediate(resolve));
+
+	assert.equal(controller.state, "lost");
+	assert.equal(pi.activeTools.includes("write"), false);
+});
+
 test("headless plan mode guards without prompting", async () => {
 	const { pi, controller } = harness([]);
 	pi.planFlag = true;
