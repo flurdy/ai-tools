@@ -80,6 +80,59 @@ test("does not report held until the child completes the ready handshake", async
 	}
 });
 
+test("fails open after a timed-out holder releases the kernel lease", async () => {
+	const fixture = await gitRepo();
+	try {
+		const result = await acquireWorktreeLease(fixture.repo, {
+			runtimeDir: fixture.runtimeDir,
+			readyTimeoutMs: 50,
+			writeMetadata: () => new Promise(() => undefined),
+		});
+
+		assert.equal(result.kind, "unguarded");
+		if (result.kind === "unguarded") {
+			assert.equal(result.reason, "lease-error");
+			assert.match(result.detail ?? "", /ready handshake timed out/);
+		}
+
+		let replacement = await acquireWorktreeLease(fixture.repo, { runtimeDir: fixture.runtimeDir });
+		for (let attempt = 0; replacement.kind === "contended" && attempt < 20; attempt += 1) {
+			await delay(10);
+			replacement = await acquireWorktreeLease(fixture.repo, { runtimeDir: fixture.runtimeDir });
+		}
+		assert.equal(replacement.kind, "held");
+		if (replacement.kind === "held") await replacement.release();
+	} finally {
+		await fixture.cleanup();
+	}
+});
+
+test("fails open when holder metadata cannot be written", async () => {
+	const fixture = await gitRepo();
+	try {
+		const result = await acquireWorktreeLease(fixture.repo, {
+			runtimeDir: fixture.runtimeDir,
+			writeMetadata: async () => { throw new Error("metadata write refused"); },
+		});
+
+		assert.equal(result.kind, "unguarded");
+		if (result.kind === "unguarded") {
+			assert.equal(result.reason, "lease-error");
+			assert.equal(result.detail, "metadata write refused");
+		}
+
+		let replacement = await acquireWorktreeLease(fixture.repo, { runtimeDir: fixture.runtimeDir });
+		for (let attempt = 0; replacement.kind === "contended" && attempt < 20; attempt += 1) {
+			await delay(10);
+			replacement = await acquireWorktreeLease(fixture.repo, { runtimeDir: fixture.runtimeDir });
+		}
+		assert.equal(replacement.kind, "held");
+		if (replacement.kind === "held") await replacement.release();
+	} finally {
+		await fixture.cleanup();
+	}
+});
+
 test("does not report held when the holder exits during metadata persistence", async () => {
 	const fixture = await gitRepo();
 	try {

@@ -116,10 +116,10 @@ export async function acquireWorktreeLease(
 	const sessionId = options.sessionId ?? process.env.PI_SESSION_ID ?? `pid-${process.pid}`;
 	const writeMetadata = options.writeMetadata
 		?? ((path: string, contents: string) => writeFile(path, contents, { mode: 0o600 }));
-	const holderScript = 'if ! IFS= read -r command || [ "$command" != publish ]; then rm -f -- "$1"; exit 70; fi; mv -f -- "$1" "$2" || exit 71; printf "ready\\n"; cat >/dev/null';
+	const holderScript = 'if ! IFS= read -r command || [ "$command" != publish ]; then rm -f -- "$1"; exit 70; fi; mv -f -- "$1" "$2" || exit 71; printf "ready\\n"; exec cat >/dev/null';
 	const child = spawn(
 		flockCommand,
-		["-n", "-E", "75", lockPath, "sh", "-c", holderScript, "pi-session-guard", metadataTempPath, metadataPath],
+		["-n", "-F", "-E", "75", lockPath, "sh", "-c", holderScript, "pi-session-guard", metadataTempPath, metadataPath],
 		{ stdio: ["pipe", "pipe", "pipe"] },
 	);
 
@@ -143,14 +143,8 @@ export async function acquireWorktreeLease(
 		child.stdin.on("error", () => undefined);
 		child.stderr.on("data", (chunk) => (errorOutput += String(chunk)));
 		child.once("spawn", () => {
-			holderPid = child.pid;
-			if (holderPid === undefined) {
-				phase = "finished";
-				clearTimeout(readyTimer);
-				child.kill("SIGKILL");
-				resolve({ kind: "unguarded", reason: "lease-error", detail: "flock process has no pid" });
-				return;
-			}
+			// spawn precedes stdout data; flock -F and exec keep this PID as the lock holder.
+			holderPid = child.pid!;
 			const metadata: LeaseHolderMetadata = {
 				root: resolved.root,
 				pid: holderPid,
@@ -170,7 +164,6 @@ export async function acquireWorktreeLease(
 					cleanupTemp();
 					if (phase !== "acquiring") return;
 					phase = "finished";
-					releasing = true;
 					clearTimeout(readyTimer);
 					child.kill("SIGKILL");
 					resolve({ kind: "unguarded", reason: "lease-error", detail: error instanceof Error ? error.message : String(error) });
@@ -213,19 +206,13 @@ export async function acquireWorktreeLease(
 			if (phase !== "acquiring") return;
 			output += String(chunk);
 			if (!output.includes("\n") || output.split("\n", 1)[0] !== "ready") return;
-			if (holderPid === undefined) {
-				phase = "finished";
-				child.kill("SIGKILL");
-				resolve({ kind: "unguarded", reason: "lease-error", detail: "flock process has no pid" });
-				return;
-			}
 			phase = "held";
 			clearTimeout(readyTimer);
 			let releasePromise: Promise<void> | undefined;
 			resolve({
 				kind: "held",
 				root: resolved.root,
-				holderPid,
+				holderPid: holderPid!,
 				lost,
 				release() {
 					if (releasePromise) return releasePromise;
