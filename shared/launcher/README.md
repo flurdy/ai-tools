@@ -1,7 +1,8 @@
 # Shared Launcher Internals
 
 Provider-neutral context discovery and Git worktree creation used by the Claude
-and Pi launchers.
+and Pi launchers. This directory is the canonical implementation; live dotfiles
+helpers are dispatch shims selected through `AI_TOOLS_HOME`, not copied variants.
 
 ## Files
 
@@ -26,8 +27,11 @@ pi/launcher/pl-gather          -> shared/launcher/context-gather
 pi/launcher/pl-mkworktree      -> shared/launcher/mkworktree
 ```
 
-`context-gather` infers the agent when invoked through `cl-gather` or
-`pl-gather`. For direct use, pass it explicitly:
+`context-gather` emits a versioned seven-field descriptor:
+`type<TAB>path<TAB>branch<TAB>session<TAB>note<TAB>root<TAB>mode`. `root` is set
+only for a workspace-member handoff, so Fish frontends can switch Git context
+before creating or resolving a worktree. It infers the agent when invoked through
+`cl-gather` or `pl-gather`. For direct use, pass it explicitly:
 
 ```bash
 shared/launcher/context-gather --agent=claude --list
@@ -52,6 +56,9 @@ Both GNU/Linux and BSD/macOS `stat` forms are supported for cache timestamps.
   otherwise `../worktrees` relative to the main checkout.
 - `AI_HANDOFF_LIST`: optional path to the handoff listing script. The default is
   `~/.claude/skills/handoffs/scripts/list.sh`.
+- `AI_TOOLS_HOME`: canonical checkout used by dotfiles dispatch shims. It defaults
+  to `$XDG_DATA_HOME/ai-tools` (or `~/.local/share/ai-tools`); a legacy
+  `~/Code/flurdy/ai-tools` checkout is recognized for migration compatibility.
 - `XDG_CACHE_HOME`: PR metadata is shared by both launchers under
   `$XDG_CACHE_HOME/ai-launcher` (or `~/.cache/ai-launcher`).
 

@@ -29,9 +29,14 @@ function cl --description 'Claude launcher: pick a context (main/worktree/handof
         end
     end
 
-    # not a repo (e.g. a workspace dir of symlinked repos): there is no repo to
-    # build the worktree/handoff menu from — just launch claude here instead.
-    if not command git rev-parse --git-dir >/dev/null 2>&1
+    set -l desc (command $bin/cl-gather)
+    if test $status -ne 0
+        # A plain non-Git directory has no contexts to pick. Preserve the direct
+        # launch fallback, but only after gather has had a chance to find handoffs
+        # owned by this directory or one of its workspace members.
+        if command git rev-parse --git-dir >/dev/null 2>&1
+            return 1
+        end
         echo "cl: not a git repo — launching claude here" >&2
         set -l cargs
         test $chrome -eq 1; and set cargs $cargs --chrome
@@ -43,9 +48,6 @@ function cl --description 'Claude launcher: pick a context (main/worktree/handof
         command claude $cargs
         return
     end
-
-    set -l desc (command $bin/cl-gather)
-    or return 1
     set -l parts (string split \t -- $desc[1])
     test (count $parts) -ge 4; or return 1
     set -l type $parts[1]
@@ -54,8 +56,21 @@ function cl --description 'Claude launcher: pick a context (main/worktree/handof
     set -l session $parts[4]
     set -l note ''
     test (count $parts) -ge 5; and set note $parts[5]
+    set -l root ''
     set -l permission_mode ''
-    test (count $parts) -ge 6; and set permission_mode $parts[6]
+    if test (count $parts) -ge 7
+        set root $parts[6]
+        set permission_mode $parts[7]
+    else if test (count $parts) -ge 6
+        set permission_mode $parts[6]
+    end
+
+    # A handoff owned by a member of this multi-repo workspace: move into the
+    # owning repo up front, so the worktree lookup, cl-mkworktree, and the
+    # pruned-worktree fallback all act on that repo and not the workspace root.
+    if test -n "$root" -a -d "$root"
+        cd $root; or return 1
+    end
 
     # new worktree. A typed name goes through cl-mkworktree (which also copies the
     # settings.local.json permission allowlist into the worktree). A blank name falls

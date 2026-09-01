@@ -1,8 +1,11 @@
 function pl --description 'Pi launcher: pick a context (main/worktree/handoff/new) and start pi'
     set -l bin "$HOME/.pi/bin"
+    if not test -x "$bin/pl-gather"; and test -x "$HOME/.dotfiles/.pi/bin/pl-gather"
+        set bin "$HOME/.dotfiles/.pi/bin"
+    end
     set -l dry 0
     set -l default_model 'openai-codex/gpt-5.6-sol'
-    set -l default_thinking 'high'
+    set -l default_thinking high
     set -l config_path "$HOME/.pi/agent/pl-launcher.json"
     set -l model ''
     set -l thinking ''
@@ -69,9 +72,14 @@ function pl --description 'Pi launcher: pick a context (main/worktree/handoff/ne
         end
     end
 
-    # not a repo (e.g. a workspace dir of symlinked repos): there is no repo to
-    # build the worktree/handoff menu from — just launch pi here instead.
-    if not command git rev-parse --git-dir >/dev/null 2>&1
+    set -l desc (command $bin/pl-gather)
+    if test $status -ne 0
+        # A plain non-Git directory has no contexts to pick. Preserve the direct
+        # launch fallback, but only after gather has had a chance to find handoffs
+        # owned by this directory or one of its workspace members.
+        if command git rev-parse --git-dir >/dev/null 2>&1
+            return 1
+        end
         echo "pl: not a git repo — launching pi here" >&2
         test -n "$model"; or set model $default_model
         test -n "$thinking"; or set thinking $default_thinking
@@ -86,9 +94,6 @@ function pl --description 'Pi launcher: pick a context (main/worktree/handoff/ne
         command pi $pargs
         return
     end
-
-    set -l desc (command $bin/pl-gather)
-    or return 1
     set -l parts (string split \t -- $desc[1])
     test (count $parts) -ge 4; or return 1
     set -l type $parts[1]
@@ -97,8 +102,21 @@ function pl --description 'Pi launcher: pick a context (main/worktree/handoff/ne
     set -l session $parts[4]
     set -l note ''
     test (count $parts) -ge 5; and set note $parts[5]
+    set -l root ''
     set -l session_mode ''
-    test (count $parts) -ge 6; and set session_mode $parts[6]
+    if test (count $parts) -ge 7
+        set root $parts[6]
+        set session_mode $parts[7]
+    else if test (count $parts) -ge 6
+        set session_mode $parts[6]
+    end
+
+    # A handoff owned by a member of this multi-repo workspace: move into the
+    # owning repo up front, so the worktree lookup, cl-mkworktree, and the
+    # pruned-worktree fallback all act on that repo and not the workspace root.
+    if test -n "$root" -a -d "$root"
+        cd $root; or return 1
+    end
 
     if test "$type" = new
         read -P 'New worktree branch: ' branch

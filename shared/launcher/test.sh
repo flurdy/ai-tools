@@ -139,7 +139,17 @@ printf 'feature/a\t12\tapproved\n'
 EOF
 cat > "$bin/fzf" <<'EOF'
 #!/usr/bin/env bash
+set -euo pipefail
 printf '%s\n' "$*" > "$FZF_LOG"
+for argument in "$@"; do
+  case "$argument" in
+    --bind=ctrl-p:transform-header\(*)
+      transform=${argument#--bind=ctrl-p:transform-header(}
+      transform=${transform%)}
+      for ((i = 0; i < ${FZF_TOGGLE_COUNT:-0}; i += 1)); do eval "$transform" >/dev/null; done
+      ;;
+  esac
+done
 IFS= read -r first
 printf '%s\n%s\n' "${FZF_KEY:-}" "$first"
 EOF
@@ -201,6 +211,9 @@ mode_header=$("$PL_GATHER" --agent=pi --toggle-mode-file="$mode_file")
 [ "$(cat "$mode_file")" = restore ] || fail "Pi mode toggle did not return to restore"
 printf '%s\n' "$mode_header" | grep -q 'mode=restore' || fail "Pi mode header did not show restore"
 
+ln -s "$mode_file" "$tmp/mode-link"
+if "$PL_GATHER" --agent=pi --toggle-mode-file="$tmp/mode-link" >/dev/null 2>&1; then fail "symlinked mode state was accepted"; fi
+
 printf 'restore\n' > "$mode_file"
 "$CL_GATHER" --agent=claude --toggle-mode-file="$mode_file" >/dev/null
 [ "$(cat "$mode_file")" = plan ] || fail "Claude mode toggle did not select plan"
@@ -222,9 +235,25 @@ grep -q -- '--expect=ctrl-n,ctrl-r,ctrl-f,ctrl-w' "$tmp/cl.args" || fail "Claude
 grep -q -- '--expect=ctrl-n,ctrl-r,ctrl-w' "$tmp/pl.args" || fail "Pi keys changed"
 grep -q -- 'ctrl-p:transform-header' "$tmp/cl.args" || fail "Claude mode toggle binding missing"
 grep -q -- 'ctrl-p:transform-header' "$tmp/pl.args" || fail "Pi mode toggle binding missing"
-[ "$(printf '%s' "$claude_desc" | cut -f6)" = restore ] || fail "Claude restore mode missing"
-[ "$(printf '%s' "$pi_desc" | cut -f6)" = restore ] || fail "Pi restore mode missing"
+[ "$(printf '%s' "$claude_desc" | cut -f7)" = restore ] || fail "Claude restore mode missing"
+[ "$(printf '%s' "$pi_desc" | cut -f7)" = restore ] || fail "Pi restore mode missing"
 if grep -q ctrl-f "$tmp/pl.args"; then fail "Pi advertised unsupported fork action"; fi
+
+# Exercise the actual fzf Ctrl-P binding and ensure its descriptor reaches each
+# Fish frontend. The private mode file must be removed when the picker returns.
+ln -sfn "$PL_GATHER" "$home/.pi/bin/pl-gather"
+ln -sfn "$CL_GATHER" "$home/.claude/bin/cl-gather"
+pl_toggle=$(cd "$repo" && HOME="$home" PATH="$TEST_PATH" FZF_LOG="$tmp/pl-toggle.args" FZF_TOGGLE_COUNT=1 \
+  fish -c 'source "$argv[1]"; pl --dry-run' "$PL_FUNCTION")
+printf '%s\n' "$pl_toggle" | grep -q -- '--plan' || fail "Pi Ctrl-P did not reach Fish mode translation: $pl_toggle"
+cl_toggle=$(cd "$repo" && HOME="$home" PATH="$TEST_PATH" FZF_LOG="$tmp/cl-toggle.args" FZF_TOGGLE_COUNT=1 \
+  fish -c 'source "$argv[1]"; cl --dry-run' "$CL_FUNCTION")
+printf '%s\n' "$cl_toggle" | grep -qF 'claude --permission-mode plan' || fail "Claude Ctrl-P did not reach Fish mode translation: $cl_toggle"
+if find "$tmp" -name 'ai-launch-mode.*' -print -quit | grep -q .; then fail "picker mode tempfile was not cleaned up"; fi
+touch "$tmp/not-a-directory"
+if (cd "$repo" && HOME="$home" TMPDIR="$tmp/not-a-directory" PATH="$TEST_PATH" "$PL_GATHER" --agent=pi >/dev/null 2>&1); then
+  fail "picker continued after mode tempfile creation failed"
+fi
 
 # The documented cp install dereferences repo symlinks but preserves invocation
 # names, so agent inference still works.

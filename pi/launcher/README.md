@@ -23,9 +23,8 @@ For the live dotfiles layout:
 mkdir -p ~/.dotfiles/.config/fish/functions ~/.dotfiles/.pi/bin ~/.pi/bin ~/.pi/agent
 cp -f pl.fish ~/.dotfiles/.config/fish/functions/pl.fish
 test -f ~/.pi/agent/pl-launcher.json || cp -f pl-launcher.json.example ~/.pi/agent/pl-launcher.json
-# cp follows the repository symlinks and installs the shared helper contents.
-cp -f pl-gather pl-mkworktree ~/.dotfiles/.pi/bin/
-chmod +x ~/.dotfiles/.pi/bin/pl-gather ~/.dotfiles/.pi/bin/pl-mkworktree
+# Dotfiles helpers dispatch to this canonical checkout rather than copying it.
+export AI_TOOLS_HOME="$PWD"
 ln -sfn ~/.dotfiles/.pi/bin/pl-gather ~/.pi/bin/pl-gather
 ln -sfn ~/.dotfiles/.pi/bin/pl-mkworktree ~/.pi/bin/pl-mkworktree
 ```

@@ -21,9 +21,8 @@ It can launch from:
 ```bash
 mkdir -p ~/.config/fish/functions ~/.claude/bin
 cp cl.fish watchprs.fish watchrelease.fish ~/.config/fish/functions/
-# cp follows the repository symlinks and installs the shared helper contents.
-cp cl-gather cl-mkworktree ~/.claude/bin/
-chmod +x ~/.claude/bin/cl-gather ~/.claude/bin/cl-mkworktree
+# Dotfiles helpers dispatch to this canonical checkout rather than copying it.
+export AI_TOOLS_HOME="$PWD"
 ```
 
 ## Usage
