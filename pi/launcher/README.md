@@ -51,7 +51,7 @@ model; use `--model` and `--thinking` to override either value explicitly.
 
 Picker keys:
 
-- `ctrl-p`: cycle the displayed mode through `restore`, `plan`, and `implement` without closing the picker
+- `ctrl-p` (shown as `ctrl-p=mode`): cycle the displayed mode through `restore`, `plan`, and `implement` without closing the picker
 - `enter`: launch the selected row in the displayed mode (`main` starts fresh, worktrees continue, handoffs start fresh with the note loaded)
 - `ctrl-n`: force fresh Pi session
 - `ctrl-r`: Pi resume picker

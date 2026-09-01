@@ -61,7 +61,7 @@ function pl --description 'Pi launcher: pick a context (main/worktree/handoff/ne
                 echo '  pick a context via fzf, then launch pi there.'
                 echo "  fresh-session defaults: $default_model with $default_thinking thinking"
                 echo "  configure defaults in $config_path"
-                echo '  ctrl-p=cycle restore/plan/implement  enter=default session  ctrl-n=new  ctrl-r=resume-pick  ctrl-w=worktree'
+                echo '  ctrl-p=mode (cycle restore/plan/implement)  enter=default session  ctrl-n=new  ctrl-r=resume-pick  ctrl-w=worktree'
                 return 0
             case --plan --implement
                 echo "pl: choose the initial session mode with ctrl-p inside the launcher" >&2

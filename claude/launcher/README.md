@@ -37,7 +37,7 @@ cl --model=claude-sonnet-4-5
 
 Picker keys:
 
-- `ctrl-p`: cycle the displayed permission mode through `restore`, `plan`, and `auto` without closing the picker
+- `ctrl-p` (shown as `ctrl-p=mode`): cycle the displayed permission mode through `restore`, `plan`, and `auto` without closing the picker
 - `enter`: launch the selected row in the displayed permission mode
 - `ctrl-n`: force new session
 - `ctrl-r`: resume picker

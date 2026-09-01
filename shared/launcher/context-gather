@@ -53,9 +53,9 @@ esac
 picker_header() {
   local mode="$1"
   if [ "$supports_fork" = 1 ]; then
-    printf 'mode=%s  ctrl-p=toggle  enter=default  ctrl-n=new  ctrl-r=resume-pick  ctrl-f=fork  ctrl-w=worktree\n' "$mode"
+    printf 'mode=%s  ctrl-p=mode  enter=default  ctrl-n=new  ctrl-r=resume-pick  ctrl-f=fork  ctrl-w=worktree\n' "$mode"
   else
-    printf 'mode=%s  ctrl-p=toggle  enter=default  ctrl-n=new  ctrl-r=resume-pick  ctrl-w=worktree\n' "$mode"
+    printf 'mode=%s  ctrl-p=mode  enter=default  ctrl-n=new  ctrl-r=resume-pick  ctrl-w=worktree\n' "$mode"
   fi
 }
 

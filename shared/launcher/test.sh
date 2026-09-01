@@ -27,6 +27,10 @@ mkdir -p "$repo" "$home" "$bin"
 # in other sessions cannot leak into a new launch through Pi's persisted defaults.
 fish -n "$PL_FUNCTION"
 fish -n "$CL_FUNCTION"
+pl_help=$(HOME="$home" fish -c 'source "$argv[1]"; pl --help' "$PL_FUNCTION")
+cl_help=$(HOME="$home" fish -c 'source "$argv[1]"; cl --help' "$CL_FUNCTION")
+printf '%s\n' "$pl_help" | grep -q 'ctrl-p=mode ' || fail "Pi help did not label Ctrl-P as mode"
+printf '%s\n' "$cl_help" | grep -q 'ctrl-p=mode ' || fail "Claude help did not label Ctrl-P as mode"
 nonrepo="$tmp/nonrepo"
 mkdir -p "$nonrepo"
 pl_default=$(HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run' "$PL_FUNCTION" "$nonrepo" 2>/dev/null)
@@ -204,6 +208,7 @@ printf 'restore\n' > "$mode_file"
 mode_header=$("$PL_GATHER" --agent=pi --toggle-mode-file="$mode_file")
 [ "$(cat "$mode_file")" = plan ] || fail "Pi mode toggle did not select plan"
 printf '%s\n' "$mode_header" | grep -q 'mode=plan' || fail "Pi mode header did not show plan"
+printf '%s\n' "$mode_header" | grep -q 'ctrl-p=mode' || fail "Pi picker did not label Ctrl-P as mode"
 mode_header=$("$PL_GATHER" --agent=pi --toggle-mode-file="$mode_file")
 [ "$(cat "$mode_file")" = implement ] || fail "Pi mode toggle did not select implement"
 printf '%s\n' "$mode_header" | grep -q 'mode=implement' || fail "Pi mode header did not show implement"
@@ -215,8 +220,9 @@ ln -s "$mode_file" "$tmp/mode-link"
 if "$PL_GATHER" --agent=pi --toggle-mode-file="$tmp/mode-link" >/dev/null 2>&1; then fail "symlinked mode state was accepted"; fi
 
 printf 'restore\n' > "$mode_file"
-"$CL_GATHER" --agent=claude --toggle-mode-file="$mode_file" >/dev/null
+mode_header=$("$CL_GATHER" --agent=claude --toggle-mode-file="$mode_file")
 [ "$(cat "$mode_file")" = plan ] || fail "Claude mode toggle did not select plan"
+printf '%s\n' "$mode_header" | grep -q 'ctrl-p=mode' || fail "Claude picker did not label Ctrl-P as mode"
 "$CL_GATHER" --agent=claude --toggle-mode-file="$mode_file" >/dev/null
 [ "$(cat "$mode_file")" = auto ] || fail "Claude mode toggle did not select auto"
 "$CL_GATHER" --agent=claude --toggle-mode-file="$mode_file" >/dev/null
