@@ -18,7 +18,7 @@ Commands:
 
 The extension exposes `--plan` and `--implement` for launcher integration. `pl` provides the preferred Ctrl-P mode toggle. An explicit startup flag wins over restored branch state; otherwise the latest active-branch mode is restored.
 
-Footer states are `implement`, `plan`, `conflict`, `lost`, and `unguarded`. `acquiring` is shown while `/implement` waits for the lease handshake.
+The extension publishes full-text footer states: `implement`, `plan`, `conflict`, `lost`, and `unguarded`. `acquiring` is shown while `/implement` waits for the lease handshake. The companion statusline keeps those labels as its text fallback and normally maps them to `✅`, `🔍`, `⛔`, `💥`, `🚨`, and `⏳` respectively.
 
 ## Lease
 
@@ -30,6 +30,8 @@ The lease identity is the SHA-256 hash of `realpath(git rev-parse --show-topleve
 A fixed child runs under nonblocking `flock`, prints a ready handshake, and then waits on a parent-owned pipe. Pi reports `implement` only after that handshake and metadata write complete. Releasing the pipe, normal shutdown, or process death releases the kernel lock. Unexpected holder exit moves the session immediately to guarded `lost` state.
 
 Separate Git worktrees have separate canonical roots and can implement concurrently. A second session in the same worktree enters guarded `conflict` state and shows holder details when available.
+
+The companion statusline may inspect the same stable lock path through the kernel's live lock table. In plan mode it renders a separate `🔒` cell when another same-user session holds the worktree lease. This read-only, asynchronous observation never trusts holder JSON, never takes the lock, and disappears when inspection is unavailable.
 
 ## Guarded policy
 

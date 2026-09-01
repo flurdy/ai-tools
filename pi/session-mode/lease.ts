@@ -57,8 +57,12 @@ export function lockIdentity(root: string): string {
 	return createHash("sha256").update(root).digest("hex");
 }
 
-function defaultRuntimeDir(): string {
+export function worktreeLeaseRuntimeDir(): string {
 	return join(process.env.XDG_RUNTIME_DIR || tmpdir(), `pi-session-guard-${process.getuid?.() ?? "user"}`);
+}
+
+export function worktreeLeaseLockPath(root: string, runtimeDir = worktreeLeaseRuntimeDir()): string {
+	return join(runtimeDir, `${lockIdentity(root)}.lock`);
 }
 
 async function resolveGitRoot(cwd: string): Promise<{ root: string } | { reason: "non-git" | "git-unavailable"; detail?: string }> {
@@ -100,7 +104,7 @@ export async function acquireWorktreeLease(
 	const resolved = await resolveGitRoot(cwd);
 	if (!("root" in resolved)) return { kind: "unguarded", ...resolved };
 
-	const runtimeDir = options.runtimeDir ?? defaultRuntimeDir();
+	const runtimeDir = options.runtimeDir ?? worktreeLeaseRuntimeDir();
 	try {
 		await mkdir(runtimeDir, { recursive: true, mode: 0o700 });
 		await chmod(runtimeDir, 0o700);
@@ -109,7 +113,7 @@ export async function acquireWorktreeLease(
 	}
 
 	const identity = lockIdentity(resolved.root);
-	const lockPath = join(runtimeDir, `${identity}.lock`);
+	const lockPath = worktreeLeaseLockPath(resolved.root, runtimeDir);
 	const metadataPath = join(runtimeDir, `${identity}.json`);
 	const metadataTempPath = `${metadataPath}.${randomUUID()}.tmp`;
 	const flockCommand = options.flockCommand ?? "flock";

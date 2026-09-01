@@ -4,16 +4,16 @@ import piStatusline from "./pi-statusline.ts";
 
 type Handler = (event: any, context: any) => unknown;
 
-function registeredHandlers(): Map<string, Handler> {
+function registeredHandlers(dependencies?: unknown): Map<string, Handler> {
 	const handlers = new Map<string, Handler>();
 	piStatusline({
 		on(event: string, handler: Handler) {
 			handlers.set(event, handler);
 		},
 		getSessionName() {
-			return undefined;
+			return "layout-test-session";
 		},
-	} as never);
+	} as never, dependencies as never);
 	return handlers;
 }
 
@@ -73,23 +73,25 @@ test("wires continuing turns to threshold crossing without tool-loop spam", () =
 	assert.equal(notifications.length, 1);
 });
 
-test("pins the session guard state in narrow and wide footer layouts", async () => {
-	const handlers = registeredHandlers();
+test("pins emoji guard and plan occupancy cells in narrow and wide footer layouts", async () => {
+	const handlers = registeredHandlers({
+		probeLeaseOccupancy: async () => ({ kind: "held", root: "/tmp" }),
+	});
 	let footerFactory: any;
 	let component: any;
 	let sessionMode = "implement";
-	const previous = {
-		k8s: process.env.PI_STATUSLINE_K8S_CONTEXT,
-		quota: process.env.PI_STATUSLINE_CODEX_QUOTA,
-		credits: process.env.PI_STATUSLINE_OPENROUTER_CREDITS,
-		beads: process.env.PI_STATUSLINE_BEADS,
-		divergence: process.env.PI_STATUSLINE_GIT_DIVERGENCE,
-	};
-	process.env.PI_STATUSLINE_K8S_CONTEXT = "0";
-	process.env.PI_STATUSLINE_CODEX_QUOTA = "0";
-	process.env.PI_STATUSLINE_OPENROUTER_CREDITS = "0";
-	process.env.PI_STATUSLINE_BEADS = "0";
-	process.env.PI_STATUSLINE_GIT_DIVERGENCE = "0";
+	const environment = [
+		"PI_STATUSLINE_K8S_CONTEXT",
+		"PI_STATUSLINE_CODEX_QUOTA",
+		"PI_STATUSLINE_OPENROUTER_CREDITS",
+		"PI_STATUSLINE_BEADS",
+		"PI_STATUSLINE_GIT_DIVERGENCE",
+		"PI_STATUSLINE_GUARD_OCCUPANCY_SETTLE",
+		"PI_STATUSLINE",
+	] as const;
+	const previous = new Map(environment.map((name) => [name, process.env[name]]));
+	for (const name of environment.slice(0, 5)) process.env[name] = "0";
+	process.env.PI_STATUSLINE_GUARD_OCCUPANCY_SETTLE = "0";
 	try {
 		const ctx = {
 			cwd: "/tmp",
@@ -111,26 +113,43 @@ test("pins the session guard state in narrow and wide footer layouts", async () 
 				bold: (text: string) => text,
 			},
 			{
-				getGitBranch: () => null,
+				getGitBranch: () => "feature/statusline-layout-test",
 				getExtensionStatuses: () => new Map([["session-mode", sessionMode]]),
 				onBranchChange: () => () => undefined,
 			},
 		);
-		for (const state of ["acquiring", "implement", "plan", "conflict", "lost", "unguarded"]) {
-			sessionMode = `session: ${state}`;
-			assert.match(component.render(30).join("\n"), new RegExp(`session: ${state}`));
-			assert.match(component.render(120).join("\n"), new RegExp(`session: ${state}`));
+		const expected = new Map([
+			["acquiring", "⏳"],
+			["implement", "✅"],
+			["plan", "🔍"],
+			["conflict", "⛔"],
+			["lost", "💥"],
+			["unguarded", "🚨"],
+		]);
+		for (const [state, emoji] of expected) {
+			sessionMode = state;
+			process.env.PI_STATUSLINE = "compact";
+			assert.match(component.render(30).join("\n"), new RegExp(emoji));
+			process.env.PI_STATUSLINE = "table";
+			const wide = component.render(120);
+			assert.ok(wide.length > 1);
+			assert.match(wide.join("\n"), new RegExp(emoji));
 		}
+
+		sessionMode = "plan";
+		process.env.PI_STATUSLINE = "compact";
+		component.render(30);
+		await new Promise((resolve) => setImmediate(resolve));
+		assert.match(component.render(30).join("\n"), /🔍\s*│\s*🔒/);
+		process.env.PI_STATUSLINE = "table";
+		const occupiedTable = component.render(120);
+		assert.ok(occupiedTable.length > 1);
+		assert.match(occupiedTable.join("\n"), /🔍\s*│\s*🔒/);
+		sessionMode = "implement";
+		assert.doesNotMatch(component.render(120).join("\n"), /🔒/);
 	} finally {
 		component?.dispose();
-		for (const [key, value] of Object.entries(previous)) {
-			const name = {
-				k8s: "PI_STATUSLINE_K8S_CONTEXT",
-				quota: "PI_STATUSLINE_CODEX_QUOTA",
-				credits: "PI_STATUSLINE_OPENROUTER_CREDITS",
-				beads: "PI_STATUSLINE_BEADS",
-				divergence: "PI_STATUSLINE_GIT_DIVERGENCE",
-			}[key] as string;
+		for (const [name, value] of previous) {
 			if (value === undefined) delete process.env[name];
 			else process.env[name] = value;
 		}
