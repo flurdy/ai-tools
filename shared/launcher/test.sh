@@ -88,6 +88,12 @@ printf 'worktree\\t%s\\tmain\\tcontinue\\t\\timplement\\n' '$repo'
 EOF
 pl_implement=$(HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run' "$PL_FUNCTION" "$repo")
 printf '%s\n' "$pl_implement" | grep -qxF 'pi --implement --continue' || fail "Pi picker implement mode was ignored"
+cat > "$home/.pi/bin/pl-gather" <<EOF
+#!/usr/bin/env bash
+printf 'worktree\\t%s\\tmain\\tcontinue\\t\\trestore\\n' '$repo'
+EOF
+pl_restore=$(HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run' "$PL_FUNCTION" "$repo")
+printf '%s\n' "$pl_restore" | grep -qxF 'pi --continue' || fail "Pi picker restore mode overrode the saved mode"
 
 mkdir -p "$home/.claude/bin"
 cat > "$home/.claude/bin/cl-gather" <<EOF
@@ -103,6 +109,12 @@ printf 'main\\t%s\\tmain\\tnew\\t\\tauto\\n' '$repo'
 EOF
 cl_auto=$(HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; cl --dry-run' "$CL_FUNCTION" "$repo")
 printf '%s\n' "$cl_auto" | grep -qxF 'claude --permission-mode auto' || fail "Claude picker auto mode was ignored"
+cat > "$home/.claude/bin/cl-gather" <<EOF
+#!/usr/bin/env bash
+printf 'main\\t%s\\tmain\\tnew\\t\\trestore\\n' '$repo'
+EOF
+cl_restore=$(HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; cl --dry-run' "$CL_FUNCTION" "$repo")
+printf '%s\n' "$cl_restore" | grep -qxE 'claude[[:space:]]*' || fail "Claude picker restore mode overrode the saved mode"
 
 mkdir -p \
   "$repo/.claude" \
@@ -175,15 +187,27 @@ expected_handoffs=$(printf '%s\n' \
   "handoff: early   (2026-07-15 00:30 · $repo)")
 [ "$handoff_rows" = "$expected_handoffs" ] || fail "handoffs were not timestamped and newest-first"
 
-# The picker mode is a stateful Ctrl-P toggle that does not close fzf.
+# The picker mode is a stateful Ctrl-P cycle that does not close fzf. Restore
+# preserves a resumed session's saved mode; the other values are explicit.
 mode_file="$tmp/launch-mode"
-printf 'implement\n' > "$mode_file"
+printf 'restore\n' > "$mode_file"
 mode_header=$("$PL_GATHER" --agent=pi --toggle-mode-file="$mode_file")
 [ "$(cat "$mode_file")" = plan ] || fail "Pi mode toggle did not select plan"
 printf '%s\n' "$mode_header" | grep -q 'mode=plan' || fail "Pi mode header did not show plan"
 mode_header=$("$PL_GATHER" --agent=pi --toggle-mode-file="$mode_file")
-[ "$(cat "$mode_file")" = implement ] || fail "Pi mode toggle did not return to implement"
+[ "$(cat "$mode_file")" = implement ] || fail "Pi mode toggle did not select implement"
 printf '%s\n' "$mode_header" | grep -q 'mode=implement' || fail "Pi mode header did not show implement"
+mode_header=$("$PL_GATHER" --agent=pi --toggle-mode-file="$mode_file")
+[ "$(cat "$mode_file")" = restore ] || fail "Pi mode toggle did not return to restore"
+printf '%s\n' "$mode_header" | grep -q 'mode=restore' || fail "Pi mode header did not show restore"
+
+printf 'restore\n' > "$mode_file"
+"$CL_GATHER" --agent=claude --toggle-mode-file="$mode_file" >/dev/null
+[ "$(cat "$mode_file")" = plan ] || fail "Claude mode toggle did not select plan"
+"$CL_GATHER" --agent=claude --toggle-mode-file="$mode_file" >/dev/null
+[ "$(cat "$mode_file")" = auto ] || fail "Claude mode toggle did not select auto"
+"$CL_GATHER" --agent=claude --toggle-mode-file="$mode_file" >/dev/null
+[ "$(cat "$mode_file")" = restore ] || fail "Claude mode toggle did not return to restore"
 
 # Claude retains its fork capability; Pi does not advertise it.
 claude_desc=$(cd "$repo" && HOME="$home" XDG_CACHE_HOME="$tmp/cache" \
@@ -198,8 +222,8 @@ grep -q -- '--expect=ctrl-n,ctrl-r,ctrl-f,ctrl-w' "$tmp/cl.args" || fail "Claude
 grep -q -- '--expect=ctrl-n,ctrl-r,ctrl-w' "$tmp/pl.args" || fail "Pi keys changed"
 grep -q -- 'ctrl-p:transform-header' "$tmp/cl.args" || fail "Claude mode toggle binding missing"
 grep -q -- 'ctrl-p:transform-header' "$tmp/pl.args" || fail "Pi mode toggle binding missing"
-[ "$(printf '%s' "$claude_desc" | cut -f6)" = auto ] || fail "Claude default mode missing"
-[ "$(printf '%s' "$pi_desc" | cut -f6)" = implement ] || fail "Pi default mode missing"
+[ "$(printf '%s' "$claude_desc" | cut -f6)" = restore ] || fail "Claude restore mode missing"
+[ "$(printf '%s' "$pi_desc" | cut -f6)" = restore ] || fail "Pi restore mode missing"
 if grep -q ctrl-f "$tmp/pl.args"; then fail "Pi advertised unsupported fork action"; fi
 
 # The documented cp install dereferences repo symlinks but preserves invocation

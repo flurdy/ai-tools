@@ -18,7 +18,7 @@ function cl --description 'Claude launcher: pick a context (main/worktree/handof
             case --help -h
                 echo 'cl [--chrome|-C] [--model=ID] [--dry-run|-n] [--list]'
                 echo '  pick a context via fzf, then launch claude there.'
-                echo '  ctrl-p=toggle auto/plan  enter=default session  ctrl-n=new  ctrl-r=resume-pick  ctrl-f=fork  ctrl-w=worktree'
+                echo '  ctrl-p=cycle restore/plan/auto  enter=default session  ctrl-n=new  ctrl-r=resume-pick  ctrl-f=fork  ctrl-w=worktree'
                 return 0
             case --plan
                 echo "cl: choose the initial permission mode with ctrl-p inside the launcher" >&2
@@ -141,7 +141,10 @@ function cl --description 'Claude launcher: pick a context (main/worktree/handof
     set -l cargs
     test $chrome -eq 1; and set cargs $cargs --chrome
     test -n "$model"; and set cargs $cargs --model $model
-    test -n "$permission_mode"; and set cargs $cargs --permission-mode $permission_mode
+    switch $permission_mode
+        case plan auto
+            set cargs $cargs --permission-mode $permission_mode
+    end
     test $bare_w -eq 1; and set cargs $cargs -w
     switch $session
         case continue

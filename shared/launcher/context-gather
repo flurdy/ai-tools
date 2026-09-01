@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # context-gather: build a launch menu of contexts (main / worktrees / handoffs /
 # new), pick one via fzf, and emit a tab-delimited action descriptor:
-#     <type>\t<path>\t<branch>\t<session>\t<note>
+#     <type>\t<path>\t<branch>\t<session>\t<note>\t<mode>
 #   type:    main | wt | handoff | new
 #   session: new | continue | resume | handoff | worktree | fork
+#   mode:    restore | plan | implement (Pi) | auto (Claude)
 #
 # The invoking name selects the agent when installed as cl-gather or pl-gather.
 # Direct calls must pass --agent=claude or --agent=pi.
@@ -49,19 +50,22 @@ case "$agent" in
 esac
 
 picker_header() {
-  local mode="$1"
-  if [ "$supports_fork" = 1 ]; then
-    printf 'mode=%s  ctrl-p=toggle  enter=default  ctrl-n=new  ctrl-r=resume-pick  ctrl-f=fork  ctrl-w=worktree\n' "$mode"
-  else
-    printf 'mode=%s  ctrl-p=toggle  enter=default  ctrl-n=new  ctrl-r=resume-pick  ctrl-w=worktree\n' "$mode"
-  fi
+  local mode="$1" fork_key=""
+  [ "$supports_fork" = 1 ] && fork_key="  ctrl-f=fork"
+  printf 'mode=%s  ctrl-p=toggle  enter=default  ctrl-n=new  ctrl-r=resume-pick%s  ctrl-w=worktree\n' \
+    "$mode" "$fork_key"
 }
 
 # Internal fzf callback: mutate only this launcher's private state file and
 # print the replacement header. transform-header keeps the picker open.
 if [ -n "$TOGGLE_MODE_FILE" ]; then
-  current=$(cat "$TOGGLE_MODE_FILE" 2>/dev/null || printf '%s' "$default_mode")
-  if [ "$current" = plan ]; then next="$default_mode"; else next=plan; fi
+  current=$(cat "$TOGGLE_MODE_FILE" 2>/dev/null || printf 'restore')
+  case "$current" in
+    restore) next=plan ;;
+    plan) next="$default_mode" ;;
+    "$default_mode") next=restore ;;
+    *) next=restore ;;
+  esac
   printf '%s\n' "$next" > "$TOGGLE_MODE_FILE"
   picker_header "$next"
   exit 0
@@ -235,7 +239,7 @@ fi
 mode_file=$(mktemp "${TMPDIR:-/tmp}/ai-launch-mode.XXXXXX")
 cleanup_mode_file() { rm -f "$mode_file"; }
 trap cleanup_mode_file EXIT
-printf '%s\n' "$default_mode" > "$mode_file"
+printf 'restore\n' > "$mode_file"
 printf -v self_q '%q' "$0"
 printf -v agent_q '%q' "$agent"
 printf -v mode_file_q '%q' "$mode_file"
@@ -244,11 +248,11 @@ sel=$(printf '%s' "$rows" | fzf \
         --ansi --delimiter='\t' --with-nth=1 \
         --height=40% --reverse --no-multi \
         --prompt='launch ▸ ' \
-        --header="$(picker_header "$default_mode")" \
+        --header="$(picker_header restore)" \
         --bind="$mode_bind" \
         --expect="$expect")
 [ -z "$sel" ] && exit 1
-launch_mode=$(cat "$mode_file" 2>/dev/null || printf '%s' "$default_mode")
+launch_mode=$(cat "$mode_file" 2>/dev/null || printf 'restore')
 
 key=$(printf '%s\n' "$sel" | sed -n '1p')
 line=$(printf '%s\n' "$sel" | sed -n '2p')

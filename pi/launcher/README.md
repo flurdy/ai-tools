@@ -52,13 +52,13 @@ model; use `--model` and `--thinking` to override either value explicitly.
 
 Picker keys:
 
-- `ctrl-p`: toggle the displayed initial mode between `implement` and `plan` without closing the picker
+- `ctrl-p`: cycle the displayed mode through `restore`, `plan`, and `implement` without closing the picker
 - `enter`: launch the selected row in the displayed mode (`main` starts fresh, worktrees continue, handoffs start fresh with the note loaded)
 - `ctrl-n`: force fresh Pi session
 - `ctrl-r`: Pi resume picker
 - `ctrl-w`: start the row in a fresh worktree (prompts for a branch; a handoff row also seeds its note)
 
-The launcher translates the selected mode to the session-mode extension's underlying startup flag. `pl --plan` and `pl --implement` are intentionally rejected so the launcher's visible state remains authoritative; use Pi directly when testing extension flags.
+The default `restore` state passes no mode flag, preserving a resumed session's saved mode while a fresh session uses the extension's `implement` default. Explicit `plan` and `implement` selections translate to the corresponding startup flag. `pl --plan` and `pl --implement` are intentionally rejected so explicit choices remain visible in the picker; use Pi directly when testing extension flags.
 
 ## Runtime Assumptions
 

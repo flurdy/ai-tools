@@ -38,14 +38,14 @@ cl --model=claude-sonnet-4-5
 
 Picker keys:
 
-- `ctrl-p`: toggle the displayed initial permission mode between `auto` and `plan` without closing the picker
+- `ctrl-p`: cycle the displayed permission mode through `restore`, `plan`, and `auto` without closing the picker
 - `enter`: launch the selected row in the displayed permission mode
 - `ctrl-n`: force new session
 - `ctrl-r`: resume picker
 - `ctrl-f`: continue and fork session
 - `ctrl-w`: start the row in a fresh worktree (prompts for a branch; a handoff row also seeds its note)
 
-The launcher passes the selected value through Claude Code's `--permission-mode`. `cl --plan` is intentionally rejected so the launcher's visible mode remains authoritative.
+The default `restore` state passes no permission flag, preserving a resumed session's saved mode. Explicit `plan` and `auto` selections pass the corresponding `--permission-mode`. `cl --plan` is intentionally rejected so explicit choices remain visible in the picker.
 
 ## Watcher launchers
 

@@ -8,9 +8,10 @@ and Pi launchers.
 - `context-gather`: discovers the main checkout, existing worktrees, handoffs,
   branch state, and cached pull-request metadata before presenting the `fzf`
   picker. Handoffs show their `HH:MM` timestamp and are newest-first by full
-  timestamp. Ctrl-P toggles the launcher's private initial-mode state without
-  closing `fzf`; Pi shows `implement`/`plan`, while Claude shows `auto`/`plan`.
-  It keeps agent-specific picker capabilities such as Claude's fork action behind
+  timestamp. Ctrl-P cycles the launcher's private initial-mode state without
+  closing `fzf`: `restore` preserves a resumed session's saved mode, followed by
+  explicit `plan` and `implement` (Pi) or `auto` (Claude) choices. It keeps
+  agent-specific picker capabilities such as Claude's fork action behind
   `--agent`.
 - `mkworktree`: creates or reuses a worktree and carries local project setup
   into it. It copies existing Claude and Pi project settings because a worktree
