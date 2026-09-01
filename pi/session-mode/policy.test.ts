@@ -2,12 +2,79 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { guardedToolBlockReason, isObviousMutation } from "./policy.ts";
 
-test("blocks direct writes and known same-worktree child launch surfaces", () => {
+test("blocks direct writes while leaving reads available", () => {
 	assert.match(guardedToolBlockReason("edit") ?? "", /guarded session/i);
 	assert.match(guardedToolBlockReason("write") ?? "", /guarded session/i);
-	assert.match(guardedToolBlockReason("subagent") ?? "", /isolated worktree/i);
 	assert.equal(guardedToolBlockReason("read"), undefined);
 	assert.equal(guardedToolBlockReason("jira_issue"), undefined);
+});
+
+test("permits read-only subagent management and cancellation", () => {
+	for (const action of [
+		"list",
+		"get",
+		"models",
+		"children.list",
+		"guide",
+		"validate",
+		"status",
+		"debug.run",
+		"doctor",
+		"interrupt",
+		"stop",
+		"dismiss",
+	]) {
+		assert.equal(guardedToolBlockReason("subagent", { action }), undefined, action);
+	}
+});
+
+test("permits only verified direct read-only subagents", () => {
+	const options = { readOnlySubagents: new Set(["reviewer", "claude-code"]) };
+	assert.equal(guardedToolBlockReason("subagent", { agent: "reviewer", task: "Review" }, options), undefined);
+	assert.equal(guardedToolBlockReason("subagent", { agent: "claude-code", task: "Challenge" }, options), undefined);
+	assert.match(guardedToolBlockReason("subagent", { agent: "worker", task: "Review" }, options) ?? "", /not verified read-only/i);
+	assert.match(guardedToolBlockReason("subagent", { agent: "reviewer", gate: "git status" }, options) ?? "", /host gate/i);
+	assert.match(guardedToolBlockReason("subagent", { agent: "reviewer", output: "report.md" }, options) ?? "", /output path/i);
+	assert.match(guardedToolBlockReason("subagent", { agent: "reviewer", worktree: true }, options) ?? "", /worktree/i);
+	assert.match(guardedToolBlockReason("subagent", { agent: "reviewer", share: true }, options) ?? "", /remote sharing/i);
+});
+
+test("permits read-only supervisor inspection but blocks messages to children", () => {
+	assert.equal(guardedToolBlockReason("subagent_supervisor", { action: "status" }), undefined);
+	assert.match(guardedToolBlockReason("subagent_supervisor", { action: "reply", to: "worker", message: "continue" }) ?? "", /guarded session/i);
+});
+
+test("blocks writable subagent controls and dynamic workflows", () => {
+	for (const input of [
+		{ action: "create", agent: "reviewer" },
+		{ action: "resume", id: "run-1", message: "continue" },
+		{ action: "steer", id: "run-1", message: "edit it" },
+		{ workflowScript: "return runs.run('review', { agent: 'reviewer', task: 'Review' })" },
+		{ workflowScriptPath: "review.js" },
+	]) {
+		assert.match(guardedToolBlockReason("subagent", input, { readOnlySubagents: new Set(["reviewer"]) }) ?? "", /guarded session/i);
+	}
+});
+
+test("permits parallel composites only when every nested call is safe", () => {
+	const options = { readOnlySubagents: new Set(["reviewer"]) };
+	const safe = {
+		tool_uses: [
+			{ recipient_name: "functions.read", parameters: { path: "README.md" } },
+			{ recipient_name: "functions.web_search", parameters: { query: "Pi extensions" } },
+			{ recipient_name: "functions.subagent", parameters: { action: "status", id: "run-1" } },
+		],
+	};
+	assert.equal(guardedToolBlockReason("multi_tool_use.parallel", safe, options), undefined);
+
+	const blocked = {
+		tool_uses: [
+			...safe.tool_uses,
+			{ recipient_name: "functions.subagent", parameters: { agent: "worker", task: "Review" } },
+		],
+	};
+	assert.match(guardedToolBlockReason("multi_tool_use.parallel", blocked, options) ?? "", /nested call 4/i);
+	assert.match(guardedToolBlockReason("multi_tool_use.parallel", { tool_uses: "invalid" }, options) ?? "", /malformed/i);
 });
 
 test("blocks obvious file, package, Git, and remote Beads mutations", () => {
@@ -22,6 +89,10 @@ test("blocks obvious file, package, Git, and remote Beads mutations", () => {
 		"git commit -m done",
 		"git switch main",
 		"git remote set-url origin elsewhere",
+		"bash -c 'printf owned > tracked.txt'",
+		"sh -c \"git commit -m nope\"",
+		"bash -lc 'rm -f tracked.txt'",
+		"env bash -c 'npm install lodash'",
 		"bd delete ai-tools-1",
 		"bd dolt push",
 		"bd dolt pull",
@@ -44,11 +115,13 @@ test("permits reads and ordinary local Beads triage", () => {
 	}
 });
 
-test("does not mistake comparison operators or quoted prose for redirects", () => {
+test("does not mistake comparison operators, quoted prose, or read-only shell payloads for mutations", () => {
 	for (const command of [
 		"test 3 -gt 2",
 		"printf '%s\\n' 'render width > 80'",
+		"printf '%s\\n' 'bash -c \"rm file\"'",
 		"rg 'value >> 2' docs",
+		"bash -c 'git status --short'",
 	]) {
 		assert.equal(isObviousMutation(command), false, command);
 	}

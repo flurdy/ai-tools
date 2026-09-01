@@ -74,6 +74,7 @@ function harness(results: WorktreeLeaseResult[] = [held()], options: Partial<Ses
 			return result;
 		},
 		isDisabled: () => false,
+		readOnlySubagents: async () => new Set(),
 		...options,
 	};
 	const controller = registerSessionMode(pi as never, dependencies);
@@ -163,7 +164,7 @@ test("clean /plan transition does not emit a dirty-worktree warning", async () =
 	assert.doesNotMatch(ctx.notifications.map((n) => n.message).join("\n"), /dirty/i);
 });
 
-test("guarded state independently blocks hidden tools, mutating Bash, and subagents", async () => {
+test("guarded state independently blocks hidden tools, mutating Bash, and writer subagents", async () => {
 	const { pi } = harness([]);
 	const ctx = context();
 	pi.planFlag = true;
@@ -178,6 +179,37 @@ test("guarded state independently blocks hidden tools, mutating Bash, and subage
 	}
 	const [readResult] = await pi.emit("tool_call", ctx, { toolName: "read", input: { path: "x" } });
 	assert.equal(readResult, undefined);
+});
+
+test("guarded mode permits verified read-only delegation and inspected composites", async () => {
+	const { pi } = harness([], { readOnlySubagents: async () => new Set(["reviewer"]) });
+	const ctx = context();
+	pi.planFlag = true;
+	await pi.emit("session_start", ctx);
+
+	for (const [toolName, input] of [
+		["subagent", { action: "status", id: "run-1" }],
+		["subagent", { agent: "reviewer", task: "Review" }],
+		["multi_tool_use.parallel", { tool_uses: [
+			{ recipient_name: "functions.read", parameters: { path: "README.md" } },
+			{ recipient_name: "functions.web_search", parameters: { query: "Pi" } },
+		] }],
+	] as const) {
+		const [result] = await pi.emit("tool_call", ctx, { toolName, input });
+		assert.equal(result, undefined, toolName);
+	}
+
+	const [worker] = await pi.emit("tool_call", ctx, { toolName: "subagent", input: { agent: "worker", task: "Review" } });
+	assert.equal((worker as { block?: boolean })?.block, true);
+});
+
+test("guarded mode fails closed when read-only agent verification fails", async () => {
+	const { pi } = harness([], { readOnlySubagents: async () => { throw new Error("unavailable"); } });
+	const ctx = context();
+	pi.planFlag = true;
+	await pi.emit("session_start", ctx);
+	const [reviewer] = await pi.emit("tool_call", ctx, { toolName: "subagent", input: { agent: "reviewer", task: "Review" } });
+	assert.equal((reviewer as { block?: boolean })?.block, true);
 });
 
 test("keeps writes guarded until /implement finishes acquiring", async () => {
@@ -244,6 +276,8 @@ test("kill switch fails open with a prominent unguarded status", async () => {
 	assert.equal(controller.state, "unguarded");
 	assert.equal(pi.activeTools.includes("write"), true);
 	assert.equal(ctx.statuses.at(-1), "unguarded");
+	const [workflow] = await pi.emit("tool_call", ctx, { toolName: "subagent", input: { workflowScript: "return runs.run('writer', { agent: 'worker' })" } });
+	assert.equal(workflow, undefined);
 });
 
 test("an already implementing session does not contend with its own lease", async () => {

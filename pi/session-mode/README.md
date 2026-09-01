@@ -36,18 +36,24 @@ Separate Git worktrees have separate canonical roots and can implement concurren
 Guarded states:
 
 - hide and independently block `edit` and `write`;
-- block the known `subagent` and nested parallel-tool launch surfaces;
+- allow read-only subagent management, status, validation, and cancellation operations;
+- allow direct `reviewer`, `claude-code`, `codex-exec`, and `cursor-agent` calls only when pi-subagents resolves their effective tool or runner contracts as read-only;
+- block writer agents, resume/steer operations, explicit output paths, host gates, remote sharing, managed-worktree creation, and dynamic `workflowScript` launches;
+- recursively inspect `multi_tool_use.parallel` and allow it only when every nested call is independently permitted;
 - block obvious model Bash file, package, Git, system, and destructive/remote Beads mutations;
 - allow reads and ordinary local Beads triage, including local `.beads`/Dolt writes;
-- inject concise read-only guidance into the model system prompt.
+- inject concise guarded-mode guidance into the model system prompt.
 
-The Bash policy is intentionally bounded. Unknown commands are allowed, and quoted-text handling only reduces common redirect false positives. Tests pin representative false-positive and false-negative boundaries.
+The effective-agent check uses pi-subagents' installed resolver, including package, user, project, and settings overrides. It rejects unexpected tool sets, writer external-CLI adapters, and direct MCP tool grants. Missing or changed resolver/contracts fail closed for direct agent launches while management and ordinary read tools remain available.
+
+The Bash policy is intentionally bounded. Unknown commands are allowed, constant `sh`/`bash`-family `-c` payloads are inspected recursively, and quoted-text handling only reduces common redirect false positives. Tests pin representative false-positive and false-negative boundaries.
 
 ## Explicit boundaries
 
 - Typed `!` and `!!` Bash is not intercepted.
 - `--no-extensions` bypasses the guard. In pi-subagents, an explicit extension list or a `denyExtensions` capability ceiling can also result in `--no-extensions`; treat that as the same silent bypass.
-- Writer children must use isolated worktrees. A same-worktree child that loads the extension contends for the lease rather than inheriting authority.
+- Guarded mode does not yet allow dynamic multi-review `workflowScript` fan-out. That requires a pi-subagents pre-launch policy seam carrying each resolved child and host-step contract; display-only preflight lane metadata and script-text heuristics are not treated as authority.
+- Writer children remain blocked in guarded mode, including managed-worktree launches. Switch to `/implement` before launching writers. A same-worktree child that loads the extension contends for the lease rather than inheriting authority.
 - Trusted extensions run with user permissions and can bypass this policy.
 - Other agents, editors, terminals, machines, and direct filesystem activity do not share this lease.
 - Non-Git sessions acquire no cwd lock and remain visibly `unguarded`; a cwd lock would falsely imply protection for nested repositories.

@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { acquireWorktreeLease, type HeldWorktreeLease, type WorktreeLeaseResult } from "./lease.ts";
-import { guardedToolBlockReason, isObviousMutation } from "./policy.ts";
+import { guardedToolBlockReason } from "./policy.ts";
+import { verifiedReadOnlySubagents } from "./subagent-policy.ts";
 
 export type SessionMode = "implement" | "plan";
 export type SessionGuardState = "acquiring" | "implement" | "plan" | "implement-blocked" | "lost" | "unguarded";
@@ -13,6 +14,7 @@ interface PersistedSessionMode {
 export interface SessionModeDependencies {
 	acquireLease(cwd: string, options: { sessionId: string }): Promise<WorktreeLeaseResult>;
 	isDisabled(): boolean;
+	readOnlySubagents(cwd: string): Promise<ReadonlySet<string>>;
 }
 
 export interface SessionModeController {
@@ -52,12 +54,14 @@ export function registerSessionMode(
 	dependencies: SessionModeDependencies = {
 		acquireLease: (cwd, options) => acquireWorktreeLease(cwd, options),
 		isDisabled: () => process.env.PI_SESSION_GUARD === "0",
+		readOnlySubagents: (cwd) => verifiedReadOnlySubagents(cwd),
 	},
 ): SessionModeController {
 	let mode: SessionMode = "implement";
 	let state: SessionGuardState = "acquiring";
 	let lease: HeldWorktreeLease | undefined;
 	let toolsBeforeGuard: string[] | undefined;
+	let readOnlySubagents: ReadonlySet<string> = new Set();
 	let shuttingDown = false;
 
 	pi.registerFlag("plan", {
@@ -91,12 +95,21 @@ export function registerSessionMode(
 		pi.appendEntry("session-mode", { version: 1, mode } satisfies PersistedSessionMode);
 	}
 
+	async function refreshReadOnlySubagents(cwd: string): Promise<void> {
+		try {
+			readOnlySubagents = await dependencies.readOnlySubagents(cwd);
+		} catch {
+			readOnlySubagents = new Set();
+		}
+	}
+
 	function guardLostLease(ctx: ExtensionContext, held: HeldWorktreeLease): void {
-		void held.lost.then(() => {
+		void held.lost.then(async () => {
 			if (shuttingDown || lease !== held) return;
 			lease = undefined;
 			guardTools();
 			setState(ctx, "lost");
+			await refreshReadOnlySubagents(ctx.cwd);
 			ctx.ui.notify("Worktree lease was lost. This session is now guarded.", "error");
 		});
 	}
@@ -120,11 +133,13 @@ export function registerSessionMode(
 		if (result.kind === "held") {
 			lease = result;
 			guardLostLease(ctx, result);
+			readOnlySubagents = new Set();
 			restoreTools();
 			setState(ctx, "implement");
 			return;
 		}
 		if (result.kind === "contended") {
+			await refreshReadOnlySubagents(ctx.cwd);
 			setState(ctx, "implement-blocked");
 			const holder = result.holder ? ` Holder session: ${result.holder.sessionId} (pid ${result.holder.pid}).` : "";
 			ctx.ui.notify(`Another live session holds this worktree lease.${holder}`, "error");
@@ -168,6 +183,7 @@ export function registerSessionMode(
 			const held = lease;
 			lease = undefined;
 			if (held) await held.release();
+			await refreshReadOnlySubagents(ctx.cwd);
 			await warnIfDirty(ctx);
 			persistMode();
 		},
@@ -184,23 +200,14 @@ export function registerSessionMode(
 
 	pi.on("tool_call", (event) => {
 		if (state !== "plan" && state !== "implement-blocked" && state !== "lost" && state !== "acquiring") return;
-		const directReason = guardedToolBlockReason(event.toolName);
-		if (directReason) return { block: true, reason: directReason };
-		if (event.toolName === "bash") {
-			const command = (event.input as { command?: unknown }).command;
-			if (typeof command === "string" && isObviousMutation(command)) {
-				return {
-					block: true,
-					reason: "Guarded session: obvious source, Git, package, system, or remote Beads mutation blocked. Use /implement first.",
-				};
-			}
-		}
+		const reason = guardedToolBlockReason(event.toolName, event.input, { readOnlySubagents });
+		if (reason) return { block: true, reason };
 	});
 
 	pi.on("before_agent_start", (event) => {
 		if (state !== "plan" && state !== "implement-blocked" && state !== "lost") return;
 		return {
-			systemPrompt: `${event.systemPrompt}\n\n[GUARDED SESSION]\nDo not modify files or repository state. Read-only analysis and ordinary local Beads triage are allowed. Ask the user to switch to /implement before source changes.`,
+			systemPrompt: `${event.systemPrompt}\n\n[GUARDED SESSION]\nDo not modify files or repository state. Read-only analysis, ordinary local Beads triage, safe subagent management, and verified direct read-only reviewers are allowed. Dynamic subagent workflows and writer agents remain blocked. Ask the user to switch to /implement before source changes.`,
 		};
 	});
 
@@ -215,6 +222,7 @@ export function registerSessionMode(
 		}
 		if (mode === "plan") {
 			guardTools();
+			await refreshReadOnlySubagents(ctx.cwd);
 			setState(ctx, "plan");
 			return;
 		}
@@ -226,6 +234,7 @@ export function registerSessionMode(
 		const held = lease;
 		lease = undefined;
 		if (held) await held.release();
+		readOnlySubagents = new Set();
 		restoreTools();
 		ctx.ui.setStatus("session-mode", undefined);
 	});
