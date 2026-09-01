@@ -54,6 +54,33 @@ test("does not mistake comparison operators or quoted prose for redirects", () =
 	}
 });
 
+test("permits discard-only error redirects in read-only diagnostics", () => {
+	for (const command of [
+		"git worktree list --porcelain 2>/dev/null",
+		"bd -C /tmp/repo show ai-tools-1 2> /dev/null",
+		"find /tmp -type f 2>/dev/null | sort",
+		"ls -ld /run/user/1000/pi-session-guard-1000/*.lock 2>/dev/null",
+		"2>/dev/null rg session-mode pi",
+	]) {
+		assert.equal(isObviousMutation(command), false, command);
+	}
+});
+
+test("continues to block non-stderr and non-discard redirects", () => {
+	for (const command of [
+		"printf done >/dev/null",
+		"printf done 1>/dev/null",
+		"printf done &>/dev/null",
+		"printf done 2>>/dev/null",
+		"printf done 3>/dev/null",
+		"printf done 2>/dev/null.bak",
+		"printf done 2>/tmp/errors.log",
+		"cat input 2>/dev/null > output.txt",
+	]) {
+		assert.equal(isObviousMutation(command), true, command);
+	}
+});
+
 test("leaves unknown commands outside the bounded policy", () => {
 	assert.equal(isObviousMutation("custom-generator --apply"), false);
 });

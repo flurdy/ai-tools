@@ -21,6 +21,7 @@ const BEADS_DESTRUCTIVE_OR_REMOTE =
 	/\bbd\b[^\n;&|]*(?:\bdelete\b|\bpurge\b|\bmigrate\b|\bcleanup\b|\bdolt\s+(?:push|pull|fetch|reset|checkout|merge|remote)\b)/i;
 const SYSTEM_MUTATION =
 	/\b(?:sudo|su|kill|pkill|killall|reboot|shutdown)\b|\b(?:systemctl|service)\s+(?:\S+\s+)?(?:start|stop|restart|enable|disable)\b/i;
+const DISCARDED_STDERR_REDIRECT = /(?<![\w<>&])2>[ \t]*\/dev\/null(?![\w/.-])/g;
 
 export function guardedToolBlockReason(toolName: string): string | undefined {
 	return GUARDED_TOOL_REASONS.get(toolName);
@@ -57,7 +58,7 @@ function withoutQuotedText(command: string): string {
 }
 
 export function isObviousMutation(command: string): boolean {
-	const inspectable = withoutQuotedText(command);
+	const inspectable = withoutQuotedText(command).replace(DISCARDED_STDERR_REDIRECT, " ");
 	return (
 		/(^|[^<])>>?/.test(inspectable) ||
 		FILE_MUTATION.test(inspectable) ||
