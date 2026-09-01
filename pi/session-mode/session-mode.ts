@@ -62,6 +62,10 @@ export function registerSessionMode(
 	let lease: HeldWorktreeLease | undefined;
 	let toolsBeforeGuard: string[] | undefined;
 	let readOnlySubagents: ReadonlySet<string> = new Set();
+	let transitionGeneration = 0;
+	let inFlightAcquisition: Promise<WorktreeLeaseResult> | undefined;
+	let releaseBarrier: Promise<void> = Promise.resolve();
+	const releases = new WeakMap<HeldWorktreeLease, Promise<void>>();
 	let shuttingDown = false;
 
 	pi.registerFlag("plan", {
@@ -91,6 +95,15 @@ export function registerSessionMode(
 		toolsBeforeGuard = undefined;
 	}
 
+	function releaseHeld(held: HeldWorktreeLease): Promise<void> {
+		const existing = releases.get(held);
+		if (existing) return existing;
+		const release = held.release();
+		releaseBarrier = Promise.all([releaseBarrier, release]).then(() => undefined);
+		releases.set(held, releaseBarrier);
+		return releaseBarrier;
+	}
+
 	function persistMode(): void {
 		pi.appendEntry("session-mode", { version: 1, mode } satisfies PersistedSessionMode);
 	}
@@ -114,41 +127,75 @@ export function registerSessionMode(
 		});
 	}
 
-	async function enterImplement(ctx: ExtensionContext): Promise<void> {
+	function isCurrentImplement(generation: number): boolean {
+		return generation === transitionGeneration && mode === "implement" && state === "acquiring" && !shuttingDown;
+	}
+
+	function isCurrentPlan(generation: number): boolean {
+		return generation === transitionGeneration && mode === "plan" && !shuttingDown;
+	}
+
+	async function enterImplement(ctx: ExtensionContext): Promise<boolean> {
+		const generation = ++transitionGeneration;
 		mode = "implement";
 		if (dependencies.isDisabled()) {
 			const held = lease;
 			lease = undefined;
-			if (held) await held.release();
+			if (held) await releaseHeld(held);
+			if (generation !== transitionGeneration || mode !== "implement" || shuttingDown) return false;
 			restoreTools();
 			setState(ctx, "unguarded");
 			ctx.ui.notify("Session guard disabled by PI_SESSION_GUARD=0.", "warning");
-			return;
+			return true;
 		}
-		if (lease && state === "implement") return;
+		if (lease && state === "implement") return true;
 
 		guardTools();
 		setState(ctx, "acquiring");
-		const result = await dependencies.acquireLease(ctx.cwd, { sessionId: ctx.sessionManager.getSessionId() });
+		await releaseBarrier;
+		if (!isCurrentImplement(generation)) return false;
+		const acquisition = inFlightAcquisition
+			?? dependencies.acquireLease(ctx.cwd, { sessionId: ctx.sessionManager.getSessionId() });
+		inFlightAcquisition = acquisition;
+		let result: WorktreeLeaseResult;
+		try {
+			result = await acquisition;
+		} catch (error) {
+			if (inFlightAcquisition === acquisition) inFlightAcquisition = undefined;
+			throw error;
+		}
+
+		if (!isCurrentImplement(generation)) {
+			const newerImplementOwnsResult = mode === "implement" && state === "acquiring" && !shuttingDown;
+			if (!newerImplementOwnsResult) {
+				if (inFlightAcquisition === acquisition) inFlightAcquisition = undefined;
+				if (result.kind === "held") await releaseHeld(result);
+			}
+			return false;
+		}
+		if (inFlightAcquisition === acquisition) inFlightAcquisition = undefined;
+
 		if (result.kind === "held") {
 			lease = result;
 			guardLostLease(ctx, result);
 			readOnlySubagents = new Set();
 			restoreTools();
 			setState(ctx, "implement");
-			return;
+			return true;
 		}
 		if (result.kind === "contended") {
 			await refreshReadOnlySubagents(ctx.cwd);
+			if (!isCurrentImplement(generation)) return false;
 			setState(ctx, "implement-blocked");
 			const holder = result.holder ? ` Holder session: ${result.holder.sessionId} (pid ${result.holder.pid}).` : "";
 			ctx.ui.notify(`Another live session holds this worktree lease.${holder}`, "error");
-			return;
+			return true;
 		}
 
 		restoreTools();
 		setState(ctx, "unguarded");
 		ctx.ui.notify(`Session guard unavailable (${result.reason}). This session is unguarded.`, "error");
+		return true;
 	}
 
 	async function warnIfDirty(ctx: ExtensionContext): Promise<void> {
@@ -172,6 +219,7 @@ export function registerSessionMode(
 		description: "Enter guarded plan mode and release the worktree lease",
 		handler: async (_args, ctx) => {
 			if (rejectBusyTransition(ctx)) return;
+			const generation = ++transitionGeneration;
 			mode = "plan";
 			if (dependencies.isDisabled()) {
 				restoreTools();
@@ -182,10 +230,12 @@ export function registerSessionMode(
 			}
 			const held = lease;
 			lease = undefined;
-			if (held) await held.release();
+			if (held) await releaseHeld(held);
+			if (!isCurrentPlan(generation)) return;
 			await refreshReadOnlySubagents(ctx.cwd);
+			if (!isCurrentPlan(generation)) return;
 			await warnIfDirty(ctx);
-			persistMode();
+			if (isCurrentPlan(generation)) persistMode();
 		},
 	});
 
@@ -193,8 +243,7 @@ export function registerSessionMode(
 		description: "Acquire the worktree lease before enabling implementation tools",
 		handler: async (_args, ctx) => {
 			if (rejectBusyTransition(ctx)) return;
-			await enterImplement(ctx);
-			persistMode();
+			if (await enterImplement(ctx)) persistMode();
 		},
 	});
 
@@ -231,9 +280,21 @@ export function registerSessionMode(
 
 	pi.on("session_shutdown", async (_event, ctx) => {
 		shuttingDown = true;
+		transitionGeneration += 1;
+		const pendingAcquisition = inFlightAcquisition;
 		const held = lease;
 		lease = undefined;
-		if (held) await held.release();
+		if (held) await releaseHeld(held);
+		if (pendingAcquisition) {
+			try {
+				const result = await pendingAcquisition;
+				if (result.kind === "held") await releaseHeld(result);
+			} catch {
+				// Acquisition failure already leaves the session without write authority.
+			}
+			if (inFlightAcquisition === pendingAcquisition) inFlightAcquisition = undefined;
+		}
+		await releaseBarrier;
 		readOnlySubagents = new Set();
 		restoreTools();
 		ctx.ui.setStatus("session-mode", undefined);

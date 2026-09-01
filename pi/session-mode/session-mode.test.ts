@@ -229,6 +229,132 @@ test("keeps writes guarded until /implement finishes acquiring", async () => {
 	assert.equal(pi.activeTools.includes("write"), true);
 });
 
+test("a completed /plan transition supersedes a pending implement acquisition", async () => {
+	let resolveLease: ((result: WorktreeLeaseResult) => void) | undefined;
+	const pending = new Promise<WorktreeLeaseResult>((resolve) => (resolveLease = resolve));
+	const releases: string[] = [];
+	const { pi, controller } = harness([], { acquireLease: async () => pending });
+	const ctx = context();
+
+	const startup = pi.emit("session_start", ctx);
+	await Promise.resolve();
+	assert.equal(controller.state, "acquiring");
+
+	await pi.commands.get("plan")?.handler("", ctx);
+	assert.equal(controller.mode, "plan");
+	assert.equal(controller.state, "plan");
+	resolveLease?.(held(releases));
+	await startup;
+
+	assert.deepEqual(releases, ["release"]);
+	assert.equal(controller.mode, "plan");
+	assert.equal(controller.state, "plan");
+	assert.equal(pi.activeTools.includes("write"), false);
+});
+
+test("a superseded /implement command does not persist after /plan", async () => {
+	let resolveLease: ((result: WorktreeLeaseResult) => void) | undefined;
+	const pending = new Promise<WorktreeLeaseResult>((resolve) => (resolveLease = resolve));
+	const { pi } = harness([], { acquireLease: async () => pending });
+	pi.planFlag = true;
+	const ctx = context();
+	await pi.emit("session_start", ctx);
+
+	const implement = pi.commands.get("implement")?.handler("", ctx);
+	await Promise.resolve();
+	await pi.commands.get("plan")?.handler("", ctx);
+	resolveLease?.(held());
+	await implement;
+
+	assert.deepEqual(pi.appended, [
+		{ type: "session-mode", data: { version: 1, mode: "plan" } },
+	]);
+});
+
+test("a completed /plan transition supersedes pending contention diagnostics", async () => {
+	let refreshResolve: (() => void) | undefined;
+	const refresh = new Promise<void>((resolve) => (refreshResolve = resolve));
+	const { pi, controller } = harness([{ kind: "contended", root: "/repo" }], {
+		readOnlySubagents: async () => {
+			await refresh;
+			return new Set();
+		},
+	});
+	const ctx = context();
+
+	const startup = pi.emit("session_start", ctx);
+	await Promise.resolve();
+	await Promise.resolve();
+	const plan = pi.commands.get("plan")?.handler("", ctx);
+	refreshResolve?.();
+	await Promise.all([startup, plan]);
+
+	assert.equal(controller.mode, "plan");
+	assert.equal(controller.state, "plan");
+	assert.equal(pi.activeTools.includes("write"), false);
+});
+
+test("implement waits for an in-progress plan release before reacquiring", async () => {
+	let releaseResolve: (() => void) | undefined;
+	const releaseGate = new Promise<void>((resolve) => (releaseResolve = resolve));
+	let releaseFinished = false;
+	let acquisitionCount = 0;
+	const firstLease: HeldWorktreeLease = {
+		kind: "held",
+		root: "/repo",
+		holderPid: 123,
+		lost: new Promise(() => undefined),
+		async release() {
+			await releaseGate;
+			releaseFinished = true;
+		},
+	};
+	const { pi, controller } = harness([], {
+		acquireLease: async () => {
+			acquisitionCount += 1;
+			if (acquisitionCount === 1) return firstLease;
+			return releaseFinished ? held() : { kind: "contended", root: "/repo" };
+		},
+	});
+	const ctx = context();
+	await pi.emit("session_start", ctx);
+
+	const plan = pi.commands.get("plan")?.handler("", ctx);
+	await Promise.resolve();
+	const implement = pi.commands.get("implement")?.handler("", ctx);
+	await Promise.resolve();
+	releaseResolve?.();
+	await Promise.all([plan, implement]);
+
+	assert.equal(acquisitionCount, 2);
+	assert.equal(controller.mode, "implement");
+	assert.equal(controller.state, "implement");
+});
+
+test("concurrent implement transitions share one lease acquisition", async () => {
+	let resolveLease: ((result: WorktreeLeaseResult) => void) | undefined;
+	const pending = new Promise<WorktreeLeaseResult>((resolve) => (resolveLease = resolve));
+	let acquisitionCount = 0;
+	const { pi, controller } = harness([], {
+		acquireLease: async () => {
+			acquisitionCount += 1;
+			return pending;
+		},
+	});
+	const ctx = context();
+
+	const startup = pi.emit("session_start", ctx);
+	await Promise.resolve();
+	const command = pi.commands.get("implement")?.handler("", ctx);
+	await Promise.resolve();
+	assert.equal(acquisitionCount, 1);
+
+	resolveLease?.(held());
+	await Promise.all([startup, command]);
+	assert.equal(controller.state, "implement");
+	assert.equal(pi.activeTools.includes("write"), true);
+});
+
 test("contention and holder loss use the same guarded tool path", async () => {
 	const contended = harness([{ kind: "contended", root: "/repo", holder: { root: "/repo", pid: 9, parentPid: 8, sessionId: "other", startedAt: "now" } }]);
 	const contendedContext = context();
@@ -303,6 +429,29 @@ test("reload lifecycle releases before reacquiring and exposes a lost race as co
 	assert.deepEqual(acquisitions, ["acquire", "acquire"]);
 	assert.equal(controller.state, "implement-blocked");
 	assert.equal(ctx.statuses.at(-1), "conflict");
+});
+
+test("shutdown waits for a pending acquisition and releases its result", async () => {
+	let resolveLease: ((result: WorktreeLeaseResult) => void) | undefined;
+	const pending = new Promise<WorktreeLeaseResult>((resolve) => (resolveLease = resolve));
+	const releases: string[] = [];
+	const { pi } = harness([], { acquireLease: async () => pending });
+	pi.planFlag = true;
+	const ctx = context();
+	await pi.emit("session_start", ctx);
+
+	const transition = pi.commands.get("implement")?.handler("", ctx);
+	await Promise.resolve();
+	let shutdownFinished = false;
+	const shutdown = pi.emit("session_shutdown", ctx).then(() => { shutdownFinished = true; });
+	await new Promise<void>((resolve) => setImmediate(resolve));
+	const finishedBeforeAcquisition = shutdownFinished;
+	resolveLease?.(held(releases));
+	await Promise.all([transition, shutdown]);
+
+	assert.equal(finishedBeforeAcquisition, false);
+	assert.deepEqual(releases, ["release"]);
+	assert.deepEqual(pi.appended, []);
 });
 
 test("shutdown releases the held lease, restores tools, and clears status", async () => {
