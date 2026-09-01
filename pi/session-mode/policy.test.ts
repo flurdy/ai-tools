@@ -5,6 +5,7 @@ import { guardedToolBlockReason, isObviousMutation } from "./policy.ts";
 test("blocks direct writes while leaving reads available", () => {
 	assert.match(guardedToolBlockReason("edit") ?? "", /guarded session/i);
 	assert.match(guardedToolBlockReason("write") ?? "", /guarded session/i);
+	assert.match(guardedToolBlockReason("powershell") ?? "", /guarded session/i);
 	assert.equal(guardedToolBlockReason("read"), undefined);
 	assert.equal(guardedToolBlockReason("jira_issue"), undefined);
 });
@@ -37,6 +38,8 @@ test("permits only verified direct read-only subagents", () => {
 	assert.match(guardedToolBlockReason("subagent", { agent: "reviewer", output: "report.md" }, options) ?? "", /output path/i);
 	assert.match(guardedToolBlockReason("subagent", { agent: "reviewer", worktree: true }, options) ?? "", /worktree/i);
 	assert.match(guardedToolBlockReason("subagent", { agent: "reviewer", share: true }, options) ?? "", /remote sharing/i);
+	assert.match(guardedToolBlockReason("subagent", { agent: "reviewer", cwd: "../other" }, options) ?? "", /cwd/i);
+	assert.match(guardedToolBlockReason("subagent", { agent: "reviewer", agentScope: "user" }, options) ?? "", /agent scope/i);
 });
 
 test("permits read-only supervisor inspection but blocks messages to children", () => {
@@ -75,6 +78,20 @@ test("permits parallel composites only when every nested call is safe", () => {
 	};
 	assert.match(guardedToolBlockReason("multi_tool_use.parallel", blocked, options) ?? "", /nested call 4/i);
 	assert.match(guardedToolBlockReason("multi_tool_use.parallel", { tool_uses: "invalid" }, options) ?? "", /malformed/i);
+	assert.match(
+		guardedToolBlockReason("multi_tool_use.parallel", { tool_uses: [{ recipient_name: "functions.unknown_writer", parameters: {} }] }, options) ?? "",
+		/unknown nested tool/i,
+	);
+});
+
+
+test("fails closed at the parallel nesting limit", () => {
+	let nested: unknown = { recipient_name: "functions.read", parameters: { path: "README.md" } };
+	for (let depth = 0; depth < 5; depth += 1) nested = { recipient_name: "multi_tool_use.parallel", parameters: { tool_uses: [nested] } };
+	assert.match(
+		guardedToolBlockReason("multi_tool_use.parallel", { tool_uses: [nested] }) ?? "",
+		/excessively nested/i,
+	);
 });
 
 test("blocks obvious file, package, Git, and remote Beads mutations", () => {
@@ -89,10 +106,15 @@ test("blocks obvious file, package, Git, and remote Beads mutations", () => {
 		"git commit -m done",
 		"git switch main",
 		"git remote set-url origin elsewhere",
+		"git --git-dir=.git --work-tree=. add file.ts",
+		"git --git-dir='.git' --work-tree '.' add file.ts",
+		"git --no-optional-locks commit -m done",
 		"bash -c 'printf owned > tracked.txt'",
 		"sh -c \"git commit -m nope\"",
 		"bash -lc 'rm -f tracked.txt'",
 		"env bash -c 'npm install lodash'",
+		"bash --rcfile /tmp/empty -c 'rm -f tracked.txt'",
+		"exec 3<>tracked.txt",
 		"bd delete ai-tools-1",
 		"bd dolt push",
 		"bd dolt pull",
@@ -120,8 +142,10 @@ test("does not mistake comparison operators, quoted prose, or read-only shell pa
 		"test 3 -gt 2",
 		"printf '%s\\n' 'render width > 80'",
 		"printf '%s\\n' 'bash -c \"rm file\"'",
+		"printf '%s\\n' 'git --git-dir=.git add file.ts'",
 		"rg 'value >> 2' docs",
 		"bash -c 'git status --short'",
+		"bash --rcfile /tmp/empty -c 'git status --short'",
 	]) {
 		assert.equal(isObviousMutation(command), false, command);
 	}
@@ -149,6 +173,8 @@ test("permits exact discard and file-descriptor redirects in read-only diagnosti
 test("continues to block real and dynamic redirect targets", () => {
 	for (const command of [
 		"printf done 2>/dev/null.bak",
+		"printf done 2>/dev/null$TARGET",
+		"printf done 2>/dev/null~",
 		"printf done 2>/tmp/errors.log",
 		"printf done &>output.log",
 		"printf done 2>&$TARGET",
@@ -156,6 +182,12 @@ test("continues to block real and dynamic redirect targets", () => {
 	]) {
 		assert.equal(isObviousMutation(command), true, command);
 	}
+});
+
+test("fails closed when shell payload inspection exceeds its nesting limit", () => {
+	let command = "git status --short";
+	for (let depth = 0; depth < 5; depth += 1) command = `bash -c ${JSON.stringify(command)}`;
+	assert.equal(isObviousMutation(command), true);
 });
 
 test("leaves unknown commands outside the bounded policy", () => {

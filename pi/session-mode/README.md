@@ -35,18 +35,18 @@ Separate Git worktrees have separate canonical roots and can implement concurren
 
 Guarded states:
 
-- hide and independently block `edit` and `write`;
+- hide and independently block `edit` and `write`, and block the native `powershell` tool;
 - allow read-only subagent management, status, validation, and cancellation operations;
-- allow direct `reviewer`, `claude-code`, `codex-exec`, and `cursor-agent` calls only when pi-subagents resolves their effective tool or runner contracts as read-only;
-- block writer agents, resume/steer operations, explicit output paths, host gates, remote sharing, managed-worktree creation, and dynamic `workflowScript` launches;
-- recursively inspect `multi_tool_use.parallel` and allow it only when every nested call is independently permitted;
+- allow direct `reviewer`, `claude-code`, `codex-exec`, and `cursor-agent` calls only when pi-subagents resolves their effective tool or runner contracts as read-only in the active model-provider context;
+- block alternate child cwd/scope, writer agents, resume/steer operations, explicit output paths, host gates, remote sharing, managed-worktree creation, and dynamic `workflowScript` launches;
+- recursively inspect `multi_tool_use.parallel` and allow only named, input-checked read-only tools through a fail-closed nesting limit;
 - block obvious model Bash file, package, Git, system, and destructive/remote Beads mutations;
 - allow reads and ordinary local Beads triage, including local `.beads`/Dolt writes;
 - inject concise guarded-mode guidance into the model system prompt.
 
-The effective-agent check uses pi-subagents' installed resolver, including package, user, project, and settings overrides. It rejects unexpected tool sets, writer external-CLI adapters, and direct MCP tool grants. Missing or changed resolver/contracts fail closed for direct agent launches while management and ordinary read tools remain available.
+The effective-agent check uses pi-subagents' installed resolver, including package, user, project, settings, and active-provider overrides. It rejects unexpected tool sets, outputs, extensions, native runners, nested delegation, unpinned external-CLI commands, and direct MCP tool grants. A model change clears previous approval before provider-aware verification completes. Missing or changed resolver/contracts fail closed for direct agent launches while management and ordinary read tools remain available.
 
-The Bash policy is intentionally bounded. Unknown commands are allowed, constant `sh`/`bash`-family `-c` payloads are inspected recursively, and exact `/dev/null` output discards and file-descriptor duplication are allowed without treating real or dynamic redirect targets as safe. Quoted-text handling only reduces common redirect false positives. Tests pin representative false-positive and false-negative boundaries.
+The Bash policy is intentionally bounded. Unknown commands are allowed, constant `sh`/`bash`-family `-c` payloads are inspected recursively through a fail-closed nesting limit, and exact `/dev/null` output discards and file-descriptor duplication are allowed without treating real or dynamic redirect targets as safe. POSIX read-write (`<>`) redirects are mutations. Quoted-text handling only reduces common redirect false positives. Tests pin representative false-positive and false-negative boundaries.
 
 ## Explicit boundaries
 

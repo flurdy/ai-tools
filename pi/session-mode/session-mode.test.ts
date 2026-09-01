@@ -33,13 +33,14 @@ class FakePi {
 	}
 }
 
-function context(branch: any[] = []) {
+function context(branch: any[] = [], provider = "provider-a") {
 	const statuses: Array<string | undefined> = [];
 	const notifications: Array<{ message: string; level?: string }> = [];
 	const ctx = {
 		cwd: "/repo",
 		mode: "tui",
 		hasUI: true,
+		model: { provider },
 		idle: true,
 		isIdle: () => ctx.idle,
 		hasPendingMessages: () => false,
@@ -171,6 +172,7 @@ test("guarded state independently blocks hidden tools, mutating Bash, and writer
 	await pi.emit("session_start", ctx);
 	for (const [toolName, input] of [
 		["write", { path: "x", content: "x" }],
+		["powershell", { command: "Set-Content x nope" }],
 		["bash", { command: "git commit -m nope" }],
 		["subagent", { agent: "worker" }],
 	] as const) {
@@ -201,6 +203,24 @@ test("guarded mode permits verified read-only delegation and inspected composite
 
 	const [worker] = await pi.emit("tool_call", ctx, { toolName: "subagent", input: { agent: "worker", task: "Review" } });
 	assert.equal((worker as { block?: boolean })?.block, true);
+});
+
+test("model changes clear stale read-only agent approval before refreshing", async () => {
+	let resolveInitial: ((agents: ReadonlySet<string>) => void) | undefined;
+	const initial = new Promise<ReadonlySet<string>>((resolve) => (resolveInitial = resolve));
+	const { pi } = harness([], {
+		readOnlySubagents: async (_cwd, provider) => provider === "provider-a" ? initial : new Set(),
+	});
+	pi.planFlag = true;
+	const ctx = context();
+	const start = pi.emit("session_start", ctx);
+	await Promise.resolve();
+	await pi.emit("model_select", ctx, { model: { provider: "provider-b" } });
+	resolveInitial?.(new Set(["reviewer"]));
+	await start;
+
+	const [reviewer] = await pi.emit("tool_call", ctx, { toolName: "subagent", input: { agent: "reviewer", task: "Review" } });
+	assert.equal((reviewer as { block?: boolean })?.block, true);
 });
 
 test("guarded mode fails closed when read-only agent verification fails", async () => {

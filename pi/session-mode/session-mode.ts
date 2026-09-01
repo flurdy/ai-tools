@@ -14,7 +14,7 @@ interface PersistedSessionMode {
 export interface SessionModeDependencies {
 	acquireLease(cwd: string, options: { sessionId: string }): Promise<WorktreeLeaseResult>;
 	isDisabled(): boolean;
-	readOnlySubagents(cwd: string): Promise<ReadonlySet<string>>;
+	readOnlySubagents(cwd: string, preferredProvider?: string): Promise<ReadonlySet<string>>;
 }
 
 export interface SessionModeController {
@@ -54,7 +54,7 @@ export function registerSessionMode(
 	dependencies: SessionModeDependencies = {
 		acquireLease: (cwd, options) => acquireWorktreeLease(cwd, options),
 		isDisabled: () => process.env.PI_SESSION_GUARD === "0",
-		readOnlySubagents: (cwd) => verifiedReadOnlySubagents(cwd),
+		readOnlySubagents: (cwd, preferredProvider) => verifiedReadOnlySubagents(cwd, { preferredProvider }),
 	},
 ): SessionModeController {
 	let mode: SessionMode = "implement";
@@ -62,6 +62,7 @@ export function registerSessionMode(
 	let lease: HeldWorktreeLease | undefined;
 	let toolsBeforeGuard: string[] | undefined;
 	let readOnlySubagents: ReadonlySet<string> = new Set();
+	let readOnlySubagentGeneration = 0;
 	let transitionGeneration = 0;
 	let inFlightAcquisition: Promise<WorktreeLeaseResult> | undefined;
 	let releaseBarrier: Promise<void> = Promise.resolve();
@@ -108,11 +109,13 @@ export function registerSessionMode(
 		pi.appendEntry("session-mode", { version: 1, mode } satisfies PersistedSessionMode);
 	}
 
-	async function refreshReadOnlySubagents(cwd: string): Promise<void> {
+	async function refreshReadOnlySubagents(cwd: string, preferredProvider?: string): Promise<void> {
+		const generation = ++readOnlySubagentGeneration;
 		try {
-			readOnlySubagents = await dependencies.readOnlySubagents(cwd);
+			const verified = await dependencies.readOnlySubagents(cwd, preferredProvider);
+			if (generation === readOnlySubagentGeneration) readOnlySubagents = verified;
 		} catch {
-			readOnlySubagents = new Set();
+			if (generation === readOnlySubagentGeneration) readOnlySubagents = new Set();
 		}
 	}
 
@@ -122,7 +125,7 @@ export function registerSessionMode(
 			lease = undefined;
 			guardTools();
 			setState(ctx, "lost");
-			await refreshReadOnlySubagents(ctx.cwd);
+			await refreshReadOnlySubagents(ctx.cwd, ctx.model?.provider);
 			ctx.ui.notify("Worktree lease was lost. This session is now guarded.", "error");
 		});
 	}
@@ -184,7 +187,7 @@ export function registerSessionMode(
 			return true;
 		}
 		if (result.kind === "contended") {
-			await refreshReadOnlySubagents(ctx.cwd);
+			await refreshReadOnlySubagents(ctx.cwd, ctx.model?.provider);
 			if (!isCurrentImplement(generation)) return false;
 			setState(ctx, "implement-blocked");
 			const holder = result.holder ? ` Holder session: ${result.holder.sessionId} (pid ${result.holder.pid}).` : "";
@@ -232,7 +235,7 @@ export function registerSessionMode(
 			lease = undefined;
 			if (held) await releaseHeld(held);
 			if (!isCurrentPlan(generation)) return;
-			await refreshReadOnlySubagents(ctx.cwd);
+			await refreshReadOnlySubagents(ctx.cwd, ctx.model?.provider);
 			if (!isCurrentPlan(generation)) return;
 			await warnIfDirty(ctx);
 			if (isCurrentPlan(generation)) persistMode();
@@ -253,6 +256,11 @@ export function registerSessionMode(
 		if (reason) return { block: true, reason };
 	});
 
+	pi.on("model_select", (event, ctx) => {
+		readOnlySubagents = new Set();
+		void refreshReadOnlySubagents(ctx.cwd, event.model.provider);
+	});
+
 	pi.on("before_agent_start", (event) => {
 		if (state !== "plan" && state !== "implement-blocked" && state !== "lost") return;
 		return {
@@ -271,7 +279,7 @@ export function registerSessionMode(
 		}
 		if (mode === "plan") {
 			guardTools();
-			await refreshReadOnlySubagents(ctx.cwd);
+			await refreshReadOnlySubagents(ctx.cwd, ctx.model?.provider);
 			setState(ctx, "plan");
 			return;
 		}
@@ -295,6 +303,7 @@ export function registerSessionMode(
 			if (inFlightAcquisition === pendingAcquisition) inFlightAcquisition = undefined;
 		}
 		await releaseBarrier;
+		readOnlySubagentGeneration += 1;
 		readOnlySubagents = new Set();
 		restoreTools();
 		ctx.ui.setStatus("session-mode", undefined);

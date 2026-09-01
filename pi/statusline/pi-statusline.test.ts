@@ -116,7 +116,7 @@ test("pins the session guard state in narrow and wide footer layouts", async () 
 				onBranchChange: () => () => undefined,
 			},
 		);
-		for (const state of ["implement", "plan", "conflict", "lost", "unguarded"]) {
+		for (const state of ["acquiring", "implement", "plan", "conflict", "lost", "unguarded"]) {
 			sessionMode = `session: ${state}`;
 			assert.match(component.render(30).join("\n"), new RegExp(`session: ${state}`));
 			assert.match(component.render(120).join("\n"), new RegExp(`session: ${state}`));
