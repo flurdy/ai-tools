@@ -62,6 +62,8 @@ export function registerSessionMode(
 	let lease: HeldWorktreeLease | undefined;
 	let toolsBeforeGuard: string[] | undefined;
 	let readOnlySubagents: ReadonlySet<string> = new Set();
+	let readOnlySubagentDiscoveryFailed = false;
+	let readOnlySubagentWarningShown = false;
 	let readOnlySubagentGeneration = 0;
 	let transitionGeneration = 0;
 	let inFlightAcquisition: Promise<WorktreeLeaseResult> | undefined;
@@ -80,9 +82,32 @@ export function registerSessionMode(
 		default: false,
 	});
 
+	function warnReadOnlySubagentFailure(ctx: ExtensionContext): void {
+		if (
+			shuttingDown
+			|| !readOnlySubagentDiscoveryFailed
+			|| readOnlySubagentWarningShown
+			|| (state !== "plan" && state !== "implement-blocked" && state !== "lost")
+		) return;
+		readOnlySubagentWarningShown = true;
+		try {
+			ctx.ui.notify("Read-only subagent verification failed; direct agent launches remain blocked.", "warning");
+		} catch {
+			// Guarded policy remains fail-closed when UI reporting is unavailable.
+		}
+	}
+
 	function setState(ctx: ExtensionContext, next: SessionGuardState): void {
 		state = next;
 		ctx.ui.setStatus("session-mode", ctx.ui.theme.fg(STATE_TONES[next], STATE_LABELS[next]));
+		warnReadOnlySubagentFailure(ctx);
+	}
+
+	function resetReadOnlySubagentVerification(): void {
+		readOnlySubagentGeneration += 1;
+		readOnlySubagents = new Set();
+		readOnlySubagentDiscoveryFailed = false;
+		readOnlySubagentWarningShown = false;
 	}
 
 	function guardTools(): void {
@@ -109,14 +134,21 @@ export function registerSessionMode(
 		pi.appendEntry("session-mode", { version: 1, mode } satisfies PersistedSessionMode);
 	}
 
-	async function refreshReadOnlySubagents(cwd: string, preferredProvider?: string): Promise<void> {
+	async function refreshReadOnlySubagents(ctx: ExtensionContext, preferredProvider?: string): Promise<void> {
 		const generation = ++readOnlySubagentGeneration;
 		try {
-			const verified = await dependencies.readOnlySubagents(cwd, preferredProvider);
-			if (generation === readOnlySubagentGeneration) readOnlySubagents = verified;
+			const verified = await dependencies.readOnlySubagents(ctx.cwd, preferredProvider);
+			if (generation === readOnlySubagentGeneration) {
+				readOnlySubagents = verified;
+				readOnlySubagentDiscoveryFailed = false;
+			}
 		} catch {
-			if (generation === readOnlySubagentGeneration) readOnlySubagents = new Set();
+			if (generation === readOnlySubagentGeneration) {
+				readOnlySubagents = new Set();
+				readOnlySubagentDiscoveryFailed = true;
+			}
 		}
+		if (generation === readOnlySubagentGeneration) warnReadOnlySubagentFailure(ctx);
 	}
 
 	function guardLostLease(ctx: ExtensionContext, held: HeldWorktreeLease): void {
@@ -126,7 +158,7 @@ export function registerSessionMode(
 			state = "lost";
 			guardTools();
 			setState(ctx, "lost");
-			await refreshReadOnlySubagents(ctx.cwd, ctx.model?.provider);
+			await refreshReadOnlySubagents(ctx, ctx.model?.provider);
 			ctx.ui.notify("Worktree lease was lost. This session is now guarded.", "error");
 		}).catch(() => {
 			if (shuttingDown || state !== "lost") return;
@@ -155,6 +187,7 @@ export function registerSessionMode(
 			if (held) await releaseHeld(held);
 			if (generation !== transitionGeneration || mode !== "implement" || shuttingDown) return false;
 			restoreTools();
+			resetReadOnlySubagentVerification();
 			setState(ctx, "unguarded");
 			ctx.ui.notify("Session guard disabled by PI_SESSION_GUARD=0.", "warning");
 			return true;
@@ -189,13 +222,13 @@ export function registerSessionMode(
 		if (result.kind === "held") {
 			lease = result;
 			guardLostLease(ctx, result);
-			readOnlySubagents = new Set();
+			resetReadOnlySubagentVerification();
 			restoreTools();
 			setState(ctx, "implement");
 			return true;
 		}
 		if (result.kind === "contended") {
-			await refreshReadOnlySubagents(ctx.cwd, ctx.model?.provider);
+			await refreshReadOnlySubagents(ctx, ctx.model?.provider);
 			if (!isCurrentImplement(generation)) return false;
 			setState(ctx, "implement-blocked");
 			const holder = result.holder ? ` Holder session: ${result.holder.sessionId} (pid ${result.holder.pid}).` : "";
@@ -204,6 +237,7 @@ export function registerSessionMode(
 		}
 
 		restoreTools();
+		resetReadOnlySubagentVerification();
 		setState(ctx, "unguarded");
 		ctx.ui.notify(`Session guard unavailable (${result.reason}). This session is unguarded.`, "error");
 		return true;
@@ -234,6 +268,7 @@ export function registerSessionMode(
 			mode = "plan";
 			if (dependencies.isDisabled()) {
 				restoreTools();
+				resetReadOnlySubagentVerification();
 				setState(ctx, "unguarded");
 			} else {
 				guardTools();
@@ -243,7 +278,7 @@ export function registerSessionMode(
 			lease = undefined;
 			if (held) await releaseHeld(held);
 			if (!isCurrentPlan(generation)) return;
-			await refreshReadOnlySubagents(ctx.cwd, ctx.model?.provider);
+			await refreshReadOnlySubagents(ctx, ctx.model?.provider);
 			if (!isCurrentPlan(generation)) return;
 			await warnIfDirty(ctx);
 			if (isCurrentPlan(generation)) persistMode();
@@ -266,7 +301,8 @@ export function registerSessionMode(
 
 	pi.on("model_select", (event, ctx) => {
 		readOnlySubagents = new Set();
-		void refreshReadOnlySubagents(ctx.cwd, event.model.provider);
+		readOnlySubagentDiscoveryFailed = false;
+		void refreshReadOnlySubagents(ctx, event.model.provider);
 	});
 
 	pi.on("before_agent_start", (event) => {
@@ -281,13 +317,14 @@ export function registerSessionMode(
 		mode = pi.getFlag("plan") === true ? "plan" : pi.getFlag("implement") === true ? "implement" : (restoredMode(ctx) ?? "implement");
 		if (dependencies.isDisabled()) {
 			restoreTools();
+			resetReadOnlySubagentVerification();
 			setState(ctx, "unguarded");
 			ctx.ui.notify("Session guard disabled by PI_SESSION_GUARD=0.", "warning");
 			return;
 		}
 		if (mode === "plan") {
 			guardTools();
-			await refreshReadOnlySubagents(ctx.cwd, ctx.model?.provider);
+			await refreshReadOnlySubagents(ctx, ctx.model?.provider);
 			setState(ctx, "plan");
 			return;
 		}
@@ -311,8 +348,7 @@ export function registerSessionMode(
 			if (inFlightAcquisition === pendingAcquisition) inFlightAcquisition = undefined;
 		}
 		await releaseBarrier;
-		readOnlySubagentGeneration += 1;
-		readOnlySubagents = new Set();
+		resetReadOnlySubagentVerification();
 		restoreTools();
 		ctx.ui.setStatus("session-mode", undefined);
 	});

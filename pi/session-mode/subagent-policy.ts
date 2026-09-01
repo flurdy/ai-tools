@@ -19,6 +19,7 @@ export interface ResolvedSubagentDefinition {
 		type?: unknown;
 		adapter?: unknown;
 		command?: unknown;
+		promptDelivery?: unknown;
 	} | unknown;
 	output?: unknown;
 	outputMode?: unknown;
@@ -43,21 +44,27 @@ function agentDirFromEnvironment(): string {
 
 async function discoverEffectiveAgents(cwd: string, agentDir: string, preferredProvider?: string): Promise<ResolvedSubagentDefinition[]> {
 	const modulePath = path.join(agentDir, "npm", "node_modules", "pi-subagents", "src", "agents", "agents.ts");
-	const module = await import(pathToFileURL(modulePath).href) as {
-		discoverAgents?: (cwd: string, scope: "both", preferredProvider?: string) => { agents?: unknown };
-	};
-	const agents = module.discoverAgents?.(cwd, "both", preferredProvider).agents;
-	if (!Array.isArray(agents)) throw new Error("pi-subagents discovery API returned no agents");
+	const module = await import(pathToFileURL(modulePath).href) as { discoverAgents?: unknown };
+	if (typeof module.discoverAgents !== "function") throw new Error("pi-subagents discovery API is unavailable");
+	const result = module.discoverAgents(cwd, "both", preferredProvider) as { agents?: unknown; scope?: unknown } | undefined;
+	if (!result || !Array.isArray(result.agents) || result.scope !== "both") {
+		throw new Error("pi-subagents discovery API returned an incompatible result");
+	}
+	const agents = result.agents;
 	return agents as ResolvedSubagentDefinition[];
+}
+
+function hasConfiguredArrayAuthority(value: unknown): boolean {
+	return value !== undefined && (!Array.isArray(value) || value.length > 0);
 }
 
 function hasAuthorityBeyondReadOnlyContract(agent: ResolvedSubagentDefinition): boolean {
 	return agent.output !== undefined
 		|| agent.outputMode !== undefined
-		|| (Array.isArray(agent.extensions) && agent.extensions.length > 0)
-		|| (Array.isArray(agent.subagentOnlyExtensions) && agent.subagentOnlyExtensions.length > 0)
-		|| agent.allowNestedSubagents === true
-		|| (agent.mcpDirectTools !== undefined && (!Array.isArray(agent.mcpDirectTools) || agent.mcpDirectTools.length > 0));
+		|| hasConfiguredArrayAuthority(agent.extensions)
+		|| hasConfiguredArrayAuthority(agent.subagentOnlyExtensions)
+		|| (agent.allowNestedSubagents !== undefined && agent.allowNestedSubagents !== false)
+		|| hasConfiguredArrayAuthority(agent.mcpDirectTools);
 }
 
 function isReadOnlyContract(name: string, agent: ResolvedSubagentDefinition): boolean {
@@ -70,24 +77,25 @@ function isReadOnlyContract(name: string, agent: ResolvedSubagentDefinition): bo
 	}
 	const expected = EXTERNAL_READ_ONLY_ADAPTERS.get(name);
 	if (!expected || !agent.runner || typeof agent.runner !== "object") return false;
-	const runner = agent.runner as { type?: unknown; adapter?: unknown; command?: unknown };
-	return runner.type === "external-cli" && runner.adapter === expected.adapter && runner.command === expected.command && agent.tools === undefined;
+	const runner = agent.runner as { type?: unknown; adapter?: unknown; command?: unknown; promptDelivery?: unknown };
+	if (Object.keys(runner).some((key) => key !== "type" && key !== "adapter" && key !== "command" && key !== "promptDelivery")) return false;
+	return runner.type === "external-cli"
+		&& runner.adapter === expected.adapter
+		&& runner.command === expected.command
+		&& (runner.promptDelivery === undefined || runner.promptDelivery === "stdin")
+		&& agent.tools === undefined;
 }
 
 export async function verifiedReadOnlySubagents(
 	cwd: string,
 	options: ReadOnlySubagentDiscoveryOptions = {},
 ): Promise<ReadonlySet<string>> {
-	try {
-		const agentDir = options.agentDir ?? agentDirFromEnvironment();
-		const agents = await (options.discoverAgents ?? ((target, provider) => discoverEffectiveAgents(target, agentDir, provider)))(cwd, options.preferredProvider);
-		const verified = new Set<string>();
-		for (const name of READ_ONLY_AGENT_NAMES) {
-			const agent = agents.find((candidate) => candidate.name === name);
-			if (agent && isReadOnlyContract(name, agent)) verified.add(name);
-		}
-		return verified;
-	} catch {
-		return new Set();
+	const agentDir = options.agentDir ?? agentDirFromEnvironment();
+	const agents = await (options.discoverAgents ?? ((target, provider) => discoverEffectiveAgents(target, agentDir, provider)))(cwd, options.preferredProvider);
+	const verified = new Set<string>();
+	for (const name of READ_ONLY_AGENT_NAMES) {
+		const agent = agents.find((candidate) => candidate.name === name);
+		if (agent && isReadOnlyContract(name, agent)) verified.add(name);
 	}
+	return verified;
 }

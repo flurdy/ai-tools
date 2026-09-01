@@ -245,13 +245,33 @@ test("model changes clear stale read-only agent approval before refreshing", asy
 	assert.equal((reviewer as { block?: boolean })?.block, true);
 });
 
-test("guarded mode fails closed when read-only agent verification fails", async () => {
-	const { pi } = harness([], { readOnlySubagents: async () => { throw new Error("unavailable"); } });
+test("guarded mode fails closed and warns once per episode when read-only agent verification fails", async () => {
+	const { pi } = harness([held()], { readOnlySubagents: async () => { throw new Error("unavailable"); } });
 	const ctx = context();
 	pi.planFlag = true;
 	await pi.emit("session_start", ctx);
 	const [reviewer] = await pi.emit("tool_call", ctx, { toolName: "subagent", input: { agent: "reviewer", task: "Review" } });
 	assert.equal((reviewer as { block?: boolean })?.block, true);
+	assert.equal(ctx.notifications.filter((notification) => /read-only subagent verification failed/i.test(notification.message)).length, 1);
+
+	await pi.emit("model_select", ctx, { model: { provider: "provider-b" } });
+	await new Promise<void>((resolve) => setImmediate(resolve));
+	assert.equal(ctx.notifications.filter((notification) => /read-only subagent verification failed/i.test(notification.message)).length, 1);
+
+	await pi.commands.get("implement")?.handler("", ctx);
+	await pi.commands.get("plan")?.handler("", ctx);
+	assert.equal(ctx.notifications.filter((notification) => /read-only subagent verification failed/i.test(notification.message)).length, 2);
+});
+
+test("guarded mode does not warn when discovery succeeds without approved agents", async () => {
+	const { pi } = harness([], { readOnlySubagents: async () => new Set() });
+	const ctx = context();
+	pi.planFlag = true;
+	await pi.emit("session_start", ctx);
+
+	const [reviewer] = await pi.emit("tool_call", ctx, { toolName: "subagent", input: { agent: "reviewer", task: "Review" } });
+	assert.equal((reviewer as { block?: boolean })?.block, true);
+	assert.doesNotMatch(ctx.notifications.map((notification) => notification.message).join("\n"), /verification failed/i);
 });
 
 test("keeps writes guarded until /implement finishes acquiring", async () => {
