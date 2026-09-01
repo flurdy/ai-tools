@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmod, mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -75,6 +75,86 @@ test("does not report held until the child completes the ready handshake", async
 		const result = await acquisition;
 		assert.equal(result.kind, "held");
 		if (result.kind === "held") await result.release();
+	} finally {
+		await fixture.cleanup();
+	}
+});
+
+test("does not report held when the holder exits during metadata persistence", async () => {
+	const fixture = await gitRepo();
+	try {
+		await mkdir(fixture.runtimeDir, { recursive: true });
+		const wrapper = join(fixture.runtimeDir, "exiting-flock");
+		await writeFile(wrapper, "#!/bin/sh\nsleep 0.01\n");
+		await chmod(wrapper, 0o700);
+
+		let metadataStartedResolve: (() => void) | undefined;
+		let metadataCompleteResolve: (() => void) | undefined;
+		const metadataStarted = new Promise<void>((resolve) => (metadataStartedResolve = resolve));
+		const metadataComplete = new Promise<void>((resolve) => (metadataCompleteResolve = resolve));
+		const acquisition = acquireWorktreeLease(fixture.repo, {
+			runtimeDir: fixture.runtimeDir,
+			flockCommand: wrapper,
+			async writeMetadata(path, contents) {
+				await writeFile(path, contents, { mode: 0o600 });
+				metadataStartedResolve?.();
+				await metadataComplete;
+			},
+		});
+
+		await metadataStarted;
+		await delay(50);
+		metadataCompleteResolve?.();
+		const result = await acquisition;
+		assert.equal(result.kind, "unguarded");
+		if (result.kind === "unguarded") {
+			assert.equal(result.reason, "lease-error");
+			assert.match(result.detail ?? "", /exited before ready/);
+		}
+	} finally {
+		await fixture.cleanup();
+	}
+});
+
+test("an expired holder cannot overwrite newer holder metadata", async () => {
+	const fixture = await gitRepo();
+	try {
+		await mkdir(fixture.runtimeDir, { recursive: true });
+		const wrapper = join(fixture.runtimeDir, "exiting-flock");
+		await writeFile(wrapper, "#!/bin/sh\nsleep 0.01\n");
+		await chmod(wrapper, 0o700);
+
+		let metadataStartedResolve: (() => void) | undefined;
+		let metadataCompleteResolve: (() => void) | undefined;
+		const metadataStarted = new Promise<void>((resolve) => (metadataStartedResolve = resolve));
+		const metadataComplete = new Promise<void>((resolve) => (metadataCompleteResolve = resolve));
+		const expiredAcquisition = acquireWorktreeLease(fixture.repo, {
+			runtimeDir: fixture.runtimeDir,
+			flockCommand: wrapper,
+			sessionId: "expired",
+			async writeMetadata(path, contents) {
+				metadataStartedResolve?.();
+				await metadataComplete;
+				await writeFile(path, contents, { mode: 0o600 });
+			},
+		});
+
+		await metadataStarted;
+		await delay(50);
+		const current = await acquireWorktreeLease(fixture.repo, {
+			runtimeDir: fixture.runtimeDir,
+			sessionId: "current",
+		});
+		assert.equal(current.kind, "held");
+
+		metadataCompleteResolve?.();
+		const expired = await expiredAcquisition;
+		assert.equal(expired.kind, "unguarded");
+		const root = await realpath(fixture.repo);
+		const metadataPath = join(fixture.runtimeDir, `${lockIdentity(root)}.json`);
+		const metadata = JSON.parse(await readFile(metadataPath, "utf8")) as { sessionId?: string };
+		assert.equal(metadata.sessionId, "current");
+		if (current.kind === "held") await current.release();
 	} finally {
 		await fixture.cleanup();
 	}

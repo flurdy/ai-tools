@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, realpath, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,6 +30,7 @@ export interface AcquireWorktreeLeaseOptions {
 	flockCommand?: string;
 	sessionId?: string;
 	readyTimeoutMs?: number;
+	writeMetadata?(path: string, contents: string): Promise<void>;
 }
 
 interface CommandResult {
@@ -92,12 +93,6 @@ async function readHolder(path: string): Promise<LeaseHolderMetadata | undefined
 	return undefined;
 }
 
-async function unlinkOwnedMetadata(path: string, sessionId: string, pid: number): Promise<void> {
-	const holder = await readHolder(path);
-	if (holder?.sessionId !== sessionId || holder.pid !== pid) return;
-	await unlink(path).catch(() => undefined);
-}
-
 export async function acquireWorktreeLease(
 	cwd: string,
 	options: AcquireWorktreeLeaseOptions = {},
@@ -116,32 +111,75 @@ export async function acquireWorktreeLease(
 	const identity = lockIdentity(resolved.root);
 	const lockPath = join(runtimeDir, `${identity}.lock`);
 	const metadataPath = join(runtimeDir, `${identity}.json`);
+	const metadataTempPath = `${metadataPath}.${randomUUID()}.tmp`;
 	const flockCommand = options.flockCommand ?? "flock";
 	const sessionId = options.sessionId ?? process.env.PI_SESSION_ID ?? `pid-${process.pid}`;
+	const writeMetadata = options.writeMetadata
+		?? ((path: string, contents: string) => writeFile(path, contents, { mode: 0o600 }));
+	const holderScript = 'if ! IFS= read -r command || [ "$command" != publish ]; then rm -f -- "$1"; exit 70; fi; mv -f -- "$1" "$2" || exit 71; printf "ready\\n"; cat >/dev/null';
 	const child = spawn(
 		flockCommand,
-		["-n", "-E", "75", lockPath, "sh", "-c", 'printf "ready\\n"; cat >/dev/null'],
+		["-n", "-E", "75", lockPath, "sh", "-c", holderScript, "pi-session-guard", metadataTempPath, metadataPath],
 		{ stdio: ["pipe", "pipe", "pipe"] },
 	);
 
 	return new Promise<WorktreeLeaseResult>((resolve) => {
 		let output = "";
 		let errorOutput = "";
+		let holderPid: number | undefined;
 		let phase: "acquiring" | "held" | "finished" = "acquiring";
 		let releasing = false;
 		let lostResolve: (() => void) | undefined;
 		const lost = new Promise<void>((done) => (lostResolve = done));
+		const cleanupTemp = () => void unlink(metadataTempPath).catch(() => undefined);
 		const readyTimer = setTimeout(() => {
 			if (phase !== "acquiring") return;
 			phase = "finished";
+			cleanupTemp();
 			child.kill("SIGKILL");
 			resolve({ kind: "unguarded", reason: "lease-error", detail: "flock ready handshake timed out" });
 		}, options.readyTimeoutMs ?? 2000);
 
+		child.stdin.on("error", () => undefined);
 		child.stderr.on("data", (chunk) => (errorOutput += String(chunk)));
+		child.once("spawn", () => {
+			holderPid = child.pid;
+			if (holderPid === undefined) {
+				phase = "finished";
+				clearTimeout(readyTimer);
+				child.kill("SIGKILL");
+				resolve({ kind: "unguarded", reason: "lease-error", detail: "flock process has no pid" });
+				return;
+			}
+			const metadata: LeaseHolderMetadata = {
+				root: resolved.root,
+				pid: holderPid,
+				parentPid: process.pid,
+				sessionId,
+				startedAt: new Date().toISOString(),
+			};
+			void writeMetadata(metadataTempPath, `${JSON.stringify(metadata)}\n`)
+				.then(() => {
+					if (phase !== "acquiring") {
+						cleanupTemp();
+						return;
+					}
+					child.stdin.write("publish\n");
+				})
+				.catch((error) => {
+					cleanupTemp();
+					if (phase !== "acquiring") return;
+					phase = "finished";
+					releasing = true;
+					clearTimeout(readyTimer);
+					child.kill("SIGKILL");
+					resolve({ kind: "unguarded", reason: "lease-error", detail: error instanceof Error ? error.message : String(error) });
+				});
+		});
 		child.once("error", (error: NodeJS.ErrnoException) => {
 			if (phase !== "acquiring") return;
 			phase = "finished";
+			cleanupTemp();
 			clearTimeout(readyTimer);
 			resolve({
 				kind: "unguarded",
@@ -158,6 +196,7 @@ export async function acquireWorktreeLease(
 			}
 			if (phase !== "acquiring") return;
 			phase = "finished";
+			cleanupTemp();
 			clearTimeout(readyTimer);
 			if (code === 75) {
 				void readHolder(metadataPath).then((holder) => resolve({ kind: "contended", root: resolved.root, holder }));
@@ -174,50 +213,34 @@ export async function acquireWorktreeLease(
 			if (phase !== "acquiring") return;
 			output += String(chunk);
 			if (!output.includes("\n") || output.split("\n", 1)[0] !== "ready") return;
-			phase = "held";
-			clearTimeout(readyTimer);
-			const holderPid = child.pid;
 			if (holderPid === undefined) {
 				phase = "finished";
 				child.kill("SIGKILL");
 				resolve({ kind: "unguarded", reason: "lease-error", detail: "flock process has no pid" });
 				return;
 			}
-			const metadata: LeaseHolderMetadata = {
+			phase = "held";
+			clearTimeout(readyTimer);
+			let releasePromise: Promise<void> | undefined;
+			resolve({
+				kind: "held",
 				root: resolved.root,
-				pid: holderPid,
-				parentPid: process.pid,
-				sessionId,
-				startedAt: new Date().toISOString(),
-			};
-			void writeFile(metadataPath, `${JSON.stringify(metadata)}\n`, { mode: 0o600 })
-				.then(() => {
-					let releasePromise: Promise<void> | undefined;
-					resolve({
-						kind: "held",
-						root: resolved.root,
-						holderPid,
-						lost,
-						release() {
-							if (releasePromise) return releasePromise;
-							releasing = true;
-							releasePromise = new Promise<void>((done) => {
-								if (phase === "finished") {
-									void unlinkOwnedMetadata(metadataPath, sessionId, holderPid).finally(done);
-									return;
-								}
-								child.once("close", () => void unlinkOwnedMetadata(metadataPath, sessionId, holderPid).finally(done));
-								child.stdin.end();
-							});
-							return releasePromise;
-						},
-					});
-				})
-				.catch((error) => {
+				holderPid,
+				lost,
+				release() {
+					if (releasePromise) return releasePromise;
 					releasing = true;
-					child.stdin.end();
-					resolve({ kind: "unguarded", reason: "lease-error", detail: error instanceof Error ? error.message : String(error) });
-				});
+					releasePromise = new Promise<void>((done) => {
+						if (phase === "finished") {
+							done();
+							return;
+						}
+						child.once("close", done);
+						child.stdin.end();
+					});
+					return releasePromise;
+				},
+			});
 		});
 	});
 }
