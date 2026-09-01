@@ -42,8 +42,9 @@ function context(branch: any[] = [], provider = "provider-a") {
 		hasUI: true,
 		model: { provider },
 		idle: true,
+		pendingMessages: false,
 		isIdle: () => ctx.idle,
-		hasPendingMessages: () => false,
+		hasPendingMessages: () => ctx.pendingMessages,
 		sessionManager: { getBranch: () => branch, getSessionId: () => "session-1" },
 		ui: {
 			theme: { fg: (_tone: string, text: string) => text },
@@ -135,6 +136,27 @@ test("rejects both mode changes while Pi is busy", async () => {
 	const planContext = context();
 	await plan.pi.emit("session_start", planContext);
 	planContext.idle = false;
+	await plan.pi.commands.get("implement")?.handler("", planContext);
+	assert.equal(plan.controller.state, "plan");
+	assert.deepEqual(plan.acquisitions, []);
+	assert.equal(plan.pi.appended.length, 0);
+});
+
+test("rejects both mode changes while messages are pending", async () => {
+	const implement = harness();
+	const implementContext = context();
+	await implement.pi.emit("session_start", implementContext);
+	implementContext.pendingMessages = true;
+	await implement.pi.commands.get("plan")?.handler("", implementContext);
+	assert.equal(implement.controller.state, "implement");
+	assert.equal(implement.pi.appended.length, 0);
+	assert.match(implementContext.notifications.at(-1)?.message ?? "", /busy/i);
+
+	const plan = harness([]);
+	plan.pi.planFlag = true;
+	const planContext = context();
+	await plan.pi.emit("session_start", planContext);
+	planContext.pendingMessages = true;
 	await plan.pi.commands.get("implement")?.handler("", planContext);
 	assert.equal(plan.controller.state, "plan");
 	assert.deepEqual(plan.acquisitions, []);
