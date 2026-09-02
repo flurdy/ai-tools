@@ -114,8 +114,8 @@ async function readHolder(path: string): Promise<LeaseHolderMetadata | undefined
 		const value = JSON.parse(await readFile(path, "utf8")) as Partial<LeaseHolderMetadata>;
 		if (
 			typeof value.root === "string" &&
-			typeof value.pid === "number" &&
-			typeof value.parentPid === "number" &&
+			typeof value.pid === "number" && Number.isSafeInteger(value.pid) && value.pid > 0 &&
+			typeof value.parentPid === "number" && Number.isSafeInteger(value.parentPid) && value.parentPid > 0 &&
 			typeof value.sessionId === "string" &&
 			typeof value.startedAt === "string"
 		) {

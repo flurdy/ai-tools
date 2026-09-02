@@ -40,6 +40,35 @@ test("uses one stable identity for canonical and symlinked worktree paths", asyn
 	}
 });
 
+test("rejects unsafe diagnostic holder pid values", async () => {
+	const fixture = await gitRepo();
+	try {
+		const held = await acquireWorktreeLease(fixture.repo, { runtimeDir: fixture.runtimeDir, sessionId: "holder" });
+		assert.equal(held.kind, "held");
+		try {
+			const root = await realpath(fixture.repo);
+			const metadataPath = join(fixture.runtimeDir, `${lockIdentity(root)}.json`);
+			for (const fields of [
+				'"pid":1.5,"parentPid":1',
+				'"pid":-1,"parentPid":1',
+				'"pid":1e999,"parentPid":1',
+				'"pid":1,"parentPid":1.5',
+				'"pid":1,"parentPid":-1',
+				'"pid":1,"parentPid":1e999',
+			]) {
+				await writeFile(metadataPath, `{"root":"${root}",${fields},"sessionId":"holder","startedAt":"now"}\n`);
+				const contender = await acquireWorktreeLease(fixture.repo, { runtimeDir: fixture.runtimeDir, sessionId: "contender" });
+				assert.equal(contender.kind, "contended");
+				if (contender.kind === "contended") assert.equal(contender.holder, undefined);
+			}
+		} finally {
+			if (held.kind === "held") await held.release();
+		}
+	} finally {
+		await fixture.cleanup();
+	}
+});
+
 test("releases the kernel lease when the holder exits", async () => {
 	const fixture = await gitRepo();
 	try {
