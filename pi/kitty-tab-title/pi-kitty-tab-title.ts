@@ -13,6 +13,7 @@ const DEFAULT_REPO = "pi";
 const SESSION_NAME_MAX_LENGTH = 24;
 const roleBySession = new Map<string, string>();
 const stateBySession = new Map<string, string>();
+const questionBlockedSessions = new Set<string>();
 
 function keepSessionNameCharacter(character: string): boolean {
 	const codePoint = character.codePointAt(0) ?? 0;
@@ -290,6 +291,17 @@ export function registerPiKittyTabTitle(
 		return;
 	}
 
+	let activeContext: ExtensionContext | undefined;
+	const renderTitle = (
+		ctx: ExtensionContext,
+		state: string,
+		evidence = "",
+		sessionName = pi.getSessionName(),
+	): void => {
+		activeContext = ctx;
+		const visibleState = questionBlockedSessions.has(safeSessionKey(ctx)) ? "❓" : state;
+		writeTitle(`${buildLabel(ctx, evidence, sessionName)}·${visibleState}`);
+	};
 	const updateTitle = (
 		ctx: ExtensionContext,
 		state: string,
@@ -297,14 +309,26 @@ export function registerPiKittyTabTitle(
 		sessionName = pi.getSessionName(),
 	): void => {
 		stateBySession.set(safeSessionKey(ctx), state);
-		writeTitle(`${buildLabel(ctx, evidence, sessionName)}·${state}`);
+		renderTitle(ctx, state, evidence, sessionName);
 	};
+
+	pi.events.on("rpiv:ask-user:blocked", (payload) => {
+		if (
+			!activeContext ||
+			typeof payload !== "object" ||
+			payload === null ||
+			typeof (payload as { active?: unknown }).active !== "boolean"
+		) return;
+		const key = safeSessionKey(activeContext);
+		if ((payload as { active: boolean }).active) questionBlockedSessions.add(key);
+		else questionBlockedSessions.delete(key);
+		renderTitle(activeContext, stateBySession.get(key) ?? "💭");
+	});
 
 	pi.on("session_start", (_event, ctx) => updateTitle(ctx, "🌱"));
 	pi.on("session_info_changed", (event, ctx) => {
 		const state = stateBySession.get(safeSessionKey(ctx)) ?? "🌱";
-		stateBySession.set(safeSessionKey(ctx), state);
-		writeTitle(`${buildLabel(ctx, "", event.name)}·${state}`);
+		renderTitle(ctx, state, "", event.name);
 	});
 
 	pi.on("input", (event, ctx) => updateTitle(ctx, "💭", event.text));
@@ -312,13 +336,22 @@ export function registerPiKittyTabTitle(
 	pi.on("tool_execution_start", (event, ctx) =>
 		updateTitle(ctx, "⚙️", `${event.toolName}\n${JSON.stringify(event.args ?? {})}`),
 	);
-	pi.on("tool_execution_end", (_event, ctx) => updateTitle(ctx, "💭"));
+	pi.on("tool_execution_end", (_event, ctx) => {
+		questionBlockedSessions.delete(safeSessionKey(ctx));
+		updateTitle(ctx, "💭");
+	});
 	pi.on("session_before_compact", (_event, ctx) => updateTitle(ctx, "🧹"));
 	pi.on("session_compact", (_event, ctx) => updateTitle(ctx, "💭"));
-	pi.on("agent_end", (_event, ctx) => updateTitle(ctx, "✅"));
-	pi.on("session_shutdown", (_event, ctx) => {
+	pi.on("agent_end", (_event, ctx) => {
+		questionBlockedSessions.delete(safeSessionKey(ctx));
 		updateTitle(ctx, "✅");
-		stateBySession.delete(safeSessionKey(ctx));
+	});
+	pi.on("session_shutdown", (_event, ctx) => {
+		const key = safeSessionKey(ctx);
+		questionBlockedSessions.delete(key);
+		updateTitle(ctx, "✅");
+		stateBySession.delete(key);
+		if (activeContext && safeSessionKey(activeContext) === key) activeContext = undefined;
 	});
 }
 

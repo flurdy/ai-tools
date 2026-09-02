@@ -83,6 +83,67 @@ test("unnamed main sessions retain Beads and closed-marker fallbacks", () => {
 	}
 });
 
+test("structured question state overrides lifecycle and survives session rename", () => {
+	const root = mkdtempSync(join(tmpdir(), "pi-kitty-title-question-"));
+	try {
+		git(["init", "-q", "-b", "main"], root);
+		git(["checkout", "-q", "-b", "fix/AB-42-title"], root);
+		const handlers = new Map<string, (event: any, ctx: any) => void>();
+		const customHandlers = new Map<string, (payload: unknown) => void>();
+		let sessionName: string | undefined;
+		const titles: string[] = [];
+		const pi = {
+			on: (event: string, handler: (payload: any, ctx: any) => void) => handlers.set(event, handler),
+			events: {
+				on: (event: string, handler: (payload: unknown) => void) => {
+					customHandlers.set(event, handler);
+					return () => customHandlers.delete(event);
+				},
+			},
+			getSessionName: () => sessionName,
+		};
+		registerPiKittyTabTitle(pi as any, (title) => titles.push(title));
+		const ctx = context(root);
+
+		handlers.get("tool_execution_start")?.(
+			{ type: "tool_execution_start", toolName: "ask_user_question", args: {} },
+			ctx,
+		);
+		customHandlers.get("rpiv:ask-user:blocked")?.({ active: true });
+		sessionName = "Question pending";
+		handlers.get("session_info_changed")?.(
+			{ type: "session_info_changed", name: sessionName },
+			ctx,
+		);
+		customHandlers.get("rpiv:ask-user:blocked")?.({ active: false });
+		handlers.get("tool_execution_end")?.(
+			{ type: "tool_execution_end", toolName: "ask_user_question" },
+			ctx,
+		);
+
+		assert.match(titles[0] ?? "", /\/AB-42·⚙️$/);
+		assert.match(titles[1] ?? "", /\/AB-42·❓$/);
+		assert.match(titles[2] ?? "", /\/Question-pending·❓$/);
+		assert.match(titles[3] ?? "", /\/Question-pending·⚙️$/);
+		assert.match(titles[4] ?? "", /\/Question-pending·💭$/);
+
+		customHandlers.get("rpiv:ask-user:blocked")?.({ active: true });
+		handlers.get("tool_execution_end")?.(
+			{ type: "tool_execution_end", toolName: "ask_user_question" },
+			ctx,
+		);
+		assert.match(titles[5] ?? "", /\/Question-pending·❓$/);
+		assert.match(titles[6] ?? "", /\/Question-pending·💭$/);
+
+		customHandlers.get("rpiv:ask-user:blocked")?.({ active: true });
+		handlers.get("agent_end")?.({ type: "agent_end" }, ctx);
+		assert.match(titles[7] ?? "", /\/Question-pending·❓$/);
+		assert.match(titles[8] ?? "", /\/Question-pending·✅$/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("session_info_changed refreshes immediately and clearing restores fallback state", () => {
 	const root = mkdtempSync(join(tmpdir(), "pi-kitty-title-events-"));
 	try {
@@ -93,6 +154,7 @@ test("session_info_changed refreshes immediately and clearing restores fallback 
 		const titles: string[] = [];
 		const pi = {
 			on: (event: string, handler: (payload: any, ctx: any) => void) => handlers.set(event, handler),
+			events: { on: () => () => undefined },
 			getSessionName: () => sessionName,
 		};
 		registerPiKittyTabTitle(pi as any, (title) => titles.push(title));
@@ -140,6 +202,7 @@ test("Orca override enables this writer only after explicit conflict resolution"
 		registerPiKittyTabTitle(
 			{
 				on: (event: string, handler: (payload: any, ctx: any) => void) => handlers.set(event, handler),
+				events: { on: () => () => undefined },
 				getSessionName: () => "Orca resolved",
 			} as any,
 			(title) => titles.push(title),

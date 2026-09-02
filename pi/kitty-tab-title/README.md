@@ -36,6 +36,7 @@ Then restart Pi or run `/reload`. Session-name refresh requires Pi 0.82.1 or new
 - `🌱` session started
 - `💭` user prompt / thinking
 - `⚙️` tool running
+- `❓` waiting for structured human input
 - `🧹` compacting
 - `✅` turn or session finished
 
@@ -70,6 +71,16 @@ then set `PI_KITTY_TITLE_ALLOW_ORCA=1` for that session to acknowledge the confl
 `flurdy-kitty-tab-title.ts`. Do not set the override while both writers are loaded.
 
 ## Runtime behavior
+
+The extension listens for the optional `rpiv:ask-user:blocked` event emitted by
+`@juicesharp/rpiv-ask-user-question`. While its `active` payload is true, `❓` overrides the normal
+lifecycle marker; answering, cancelling, failure, or tool completion restores the underlying state.
+There is no import or runtime dependency on that package, so the title extension works unchanged
+when the question package is absent.
+
+The question tool also emits terminal BEL when it opens. Kitty may independently prefix an
+unfocused tab with its configured `bell_on_tab` symbol; that attention marker is separate from the
+`❓` lifecycle state and is not title corruption.
 
 The extension uses `kitten @ set-tab-title`, falls back to `kitten @ --to unix:@kitty`, and also
 writes OSC title escapes to `/dev/tty`. Over SSH it writes Kitty remote-control escapes to
