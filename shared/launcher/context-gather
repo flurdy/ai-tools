@@ -291,11 +291,14 @@ if ! printf 'restore\n' >"$mode_file"; then
   echo "$prog: failed to initialize mode state" >&2
   exit 1
 fi
-printf -v self_q '%q' "$0"
-printf -v agent_q '%q' "$agent"
-printf -v mode_file_q '%q' "$mode_file"
-mode_bind="ctrl-p:transform-header($self_q --agent=$agent_q --toggle-mode-file=$mode_file_q)"
-sel=$(printf '%s' "$rows" | fzf \
+# Keep path values out of fzf's action grammar and let its child shell expand
+# them only as quoted environment variables; Bash %q is not valid in Fish.
+mode_bind='ctrl-p:transform-header("$AI_LAUNCH_MODE_CALLBACK" --agent="$AI_LAUNCH_MODE_AGENT" --toggle-mode-file="$AI_LAUNCH_MODE_FILE")'
+sel=$(printf '%s' "$rows" | \
+        AI_LAUNCH_MODE_CALLBACK="$0" \
+        AI_LAUNCH_MODE_AGENT="$agent" \
+        AI_LAUNCH_MODE_FILE="$mode_file" \
+        fzf \
         --ansi --delimiter='\t' --with-nth=1 \
         --height=40% --reverse --no-multi \
         --prompt='launch ▸ ' \

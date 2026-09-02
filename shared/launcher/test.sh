@@ -150,7 +150,9 @@ for argument in "$@"; do
     --bind=ctrl-p:transform-header\(*)
       transform=${argument#--bind=ctrl-p:transform-header(}
       transform=${transform%)}
-      for ((i = 0; i < ${FZF_TOGGLE_COUNT:-0}; i += 1)); do eval "$transform" >/dev/null; done
+      for ((i = 0; i < ${FZF_TOGGLE_COUNT:-0}; i += 1)); do
+        "${SHELL:-/bin/sh}" -c "$transform" >/dev/null 2>&1 || true
+      done
       ;;
   esac
 done
@@ -239,8 +241,8 @@ pi_desc=$(cd "$repo" && HOME="$home" XDG_CACHE_HOME="$tmp/cache" \
 [ "$(printf '%s' "$pi_desc" | cut -f4)" = new ] || fail "Pi default action changed"
 grep -q -- '--expect=ctrl-n,ctrl-r,ctrl-f,ctrl-w' "$tmp/cl.args" || fail "Claude keys changed"
 grep -q -- '--expect=ctrl-n,ctrl-r,ctrl-w' "$tmp/pl.args" || fail "Pi keys changed"
-grep -q -- 'ctrl-p:transform-header' "$tmp/cl.args" || fail "Claude mode toggle binding missing"
-grep -q -- 'ctrl-p:transform-header' "$tmp/pl.args" || fail "Pi mode toggle binding missing"
+grep -qF -- 'ctrl-p:transform-header("$AI_LAUNCH_MODE_CALLBACK"' "$tmp/cl.args" || fail "Claude mode toggle binding is not value-independent"
+grep -qF -- 'ctrl-p:transform-header("$AI_LAUNCH_MODE_CALLBACK"' "$tmp/pl.args" || fail "Pi mode toggle binding is not value-independent"
 [ "$(printf '%s' "$claude_desc" | cut -f7)" = restore ] || fail "Claude restore mode missing"
 [ "$(printf '%s' "$pi_desc" | cut -f7)" = restore ] || fail "Pi restore mode missing"
 if grep -q ctrl-f "$tmp/pl.args"; then fail "Pi advertised unsupported fork action"; fi
@@ -249,10 +251,13 @@ if grep -q ctrl-f "$tmp/pl.args"; then fail "Pi advertised unsupported fork acti
 # Fish frontend. The private mode file must be removed when the picker returns.
 ln -sfn "$PL_GATHER" "$home/.pi/bin/pl-gather"
 ln -sfn "$CL_GATHER" "$home/.claude/bin/cl-gather"
-pl_toggle=$(cd "$repo" && HOME="$home" PATH="$TEST_PATH" FZF_LOG="$tmp/pl-toggle.args" FZF_TOGGLE_COUNT=1 \
+mode_tmp="$tmp/mode (1)'"$'\n'" f i\$les"
+mkdir -p "$mode_tmp"
+fish_path=$(command -v fish)
+pl_toggle=$(cd "$repo" && HOME="$home" TMPDIR="$mode_tmp" SHELL="$fish_path" PATH="$TEST_PATH" FZF_LOG="$tmp/pl-toggle.args" FZF_TOGGLE_COUNT=1 \
   fish -c 'source "$argv[1]"; pl --dry-run' "$PL_FUNCTION")
 printf '%s\n' "$pl_toggle" | grep -q -- '--plan' || fail "Pi Ctrl-P did not reach Fish mode translation: $pl_toggle"
-cl_toggle=$(cd "$repo" && HOME="$home" PATH="$TEST_PATH" FZF_LOG="$tmp/cl-toggle.args" FZF_TOGGLE_COUNT=1 \
+cl_toggle=$(cd "$repo" && HOME="$home" TMPDIR="$mode_tmp" SHELL="$fish_path" PATH="$TEST_PATH" FZF_LOG="$tmp/cl-toggle.args" FZF_TOGGLE_COUNT=1 \
   fish -c 'source "$argv[1]"; cl --dry-run' "$CL_FUNCTION")
 printf '%s\n' "$cl_toggle" | grep -qF 'claude --permission-mode plan' || fail "Claude Ctrl-P did not reach Fish mode translation: $cl_toggle"
 if find "$tmp" -name 'ai-launch-mode.*' -print -quit | grep -q .; then fail "picker mode tempfile was not cleaned up"; fi
