@@ -233,6 +233,58 @@ test("permits separate Git worktrees and reacquires after a clean release", asyn
 	}
 });
 
+test("injects the timeout-bounded one-shot Git root lookup", async () => {
+	let request: { command: string; args: string[]; timeoutMs: number } | undefined;
+	const result = await acquireWorktreeLease("/repo", {
+		gitCommand: "custom-git",
+		gitTimeoutMs: 321,
+		exec: async (command, args, options) => {
+			request = { command, args, timeoutMs: options.timeoutMs };
+			return { code: 128, stdout: "", stderr: "not a repository" };
+		},
+	});
+	assert.deepEqual(request, {
+		command: "custom-git",
+		args: ["-C", "/repo", "rev-parse", "--show-toplevel"],
+		timeoutMs: 321,
+	});
+	assert.deepEqual(result, { kind: "unguarded", reason: "non-git" });
+});
+
+test("fails open when the Git root executor rejects or is unavailable", async () => {
+	const rejected = await acquireWorktreeLease("/repo", {
+		exec: async () => { throw new Error("executor failed"); },
+	});
+	assert.deepEqual(rejected, { kind: "unguarded", reason: "git-unavailable", detail: "executor failed" });
+
+	const missing = await acquireWorktreeLease("/repo", { gitCommand: "/definitely/missing/git" });
+	assert.deepEqual(missing, { kind: "unguarded", reason: "git-unavailable" });
+});
+
+test("times out the default Git root lookup", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "pi-session-mode-git-timeout-"));
+	try {
+		const slowGit = join(directory, "slow-git");
+		await writeFile(slowGit, "#!/bin/sh\nexec sleep 10\n");
+		await chmod(slowGit, 0o700);
+		const result = await acquireWorktreeLease(directory, {
+			gitCommand: slowGit,
+			gitTimeoutMs: 10,
+		});
+		try {
+			assert.equal(result.kind, "unguarded");
+			if (result.kind === "unguarded") {
+				assert.equal(result.reason, "git-unavailable");
+				assert.equal(result.detail, "git root lookup timed out after 10ms");
+			}
+		} finally {
+			if (result.kind === "held") await result.release();
+		}
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
+});
+
 test("does not claim protection outside Git or when flock is unavailable", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pi-session-mode-nongit-"));
 	try {

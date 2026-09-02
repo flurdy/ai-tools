@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, realpath, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -25,31 +25,44 @@ export type WorktreeLeaseResult =
 	| { kind: "contended"; root: string; holder?: LeaseHolderMetadata }
 	| { kind: "unguarded"; reason: "non-git" | "git-unavailable" | "flock-unavailable" | "lease-error"; detail?: string };
 
+export interface LeaseExecOptions {
+	timeoutMs: number;
+}
+
+export interface LeaseCommandResult {
+	code: number | null;
+	stdout: string;
+	stderr: string;
+	error?: NodeJS.ErrnoException & { killed?: boolean; signal?: string };
+}
+
+export type LeaseExec = (command: string, args: string[], options: LeaseExecOptions) => Promise<LeaseCommandResult>;
+
 export interface AcquireWorktreeLeaseOptions {
 	runtimeDir?: string;
 	flockCommand?: string;
+	gitCommand?: string;
+	gitTimeoutMs?: number;
+	exec?: LeaseExec;
 	sessionId?: string;
 	readyTimeoutMs?: number;
 	writeMetadata?(path: string, contents: string): Promise<void>;
 }
 
-interface CommandResult {
-	code: number | null;
-	stdout: string;
-	stderr: string;
-	error?: NodeJS.ErrnoException;
-}
-
-function run(command: string, args: string[]): Promise<CommandResult> {
+function defaultExec(command: string, args: string[], options: LeaseExecOptions): Promise<LeaseCommandResult> {
 	return new Promise((resolve) => {
-		const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
-		let stdout = "";
-		let stderr = "";
-		let error: NodeJS.ErrnoException | undefined;
-		child.stdout.on("data", (chunk) => (stdout += String(chunk)));
-		child.stderr.on("data", (chunk) => (stderr += String(chunk)));
-		child.once("error", (value) => (error = value as NodeJS.ErrnoException));
-		child.once("close", (code) => resolve({ code, stdout, stderr, error }));
+		const child = execFile(command, args, {
+			encoding: "utf8",
+			timeout: options.timeoutMs,
+			windowsHide: true,
+		}, (error, stdout, stderr) => {
+			resolve({
+				code: typeof error?.code === "number" ? error.code : child.exitCode,
+				stdout,
+				stderr,
+				...(error ? { error: error as NodeJS.ErrnoException } : {}),
+			});
+		});
 	});
 }
 
@@ -65,12 +78,29 @@ export function worktreeLeaseLockPath(root: string, runtimeDir = worktreeLeaseRu
 	return join(runtimeDir, `${lockIdentity(root)}.lock`);
 }
 
-async function resolveGitRoot(cwd: string): Promise<{ root: string } | { reason: "non-git" | "git-unavailable"; detail?: string }> {
-	const result = await run("git", ["-C", cwd, "rev-parse", "--show-toplevel"]);
+async function resolveGitRoot(
+	cwd: string,
+	options: AcquireWorktreeLeaseOptions,
+): Promise<{ root: string } | { reason: "non-git" | "git-unavailable"; detail?: string }> {
+	const configuredTimeoutMs = options.gitTimeoutMs ?? 2000;
+	const timeoutMs = Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0 ? configuredTimeoutMs : 2000;
+	let result: LeaseCommandResult;
+	try {
+		result = await (options.exec ?? defaultExec)(
+			options.gitCommand ?? "git",
+			["-C", cwd, "rev-parse", "--show-toplevel"],
+			{ timeoutMs },
+		);
+	} catch (error) {
+		return { reason: "git-unavailable", detail: error instanceof Error ? error.message : String(error) };
+	}
 	if (result.error?.code === "ENOENT") return { reason: "git-unavailable" };
+	if (result.error?.killed && result.error.signal === "SIGTERM") {
+		return { reason: "git-unavailable", detail: `git root lookup timed out after ${timeoutMs}ms` };
+	}
 	if (result.code !== 0) {
 		if (result.code === 128) return { reason: "non-git" };
-		return { reason: "git-unavailable", detail: result.stderr.trim() || `git exited ${result.code}` };
+		return { reason: "git-unavailable", detail: result.stderr.trim() || result.error?.message || `git exited ${result.code}` };
 	}
 	try {
 		return { root: await realpath(result.stdout.trim()) };
@@ -101,7 +131,7 @@ export async function acquireWorktreeLease(
 	cwd: string,
 	options: AcquireWorktreeLeaseOptions = {},
 ): Promise<WorktreeLeaseResult> {
-	const resolved = await resolveGitRoot(cwd);
+	const resolved = await resolveGitRoot(cwd, options);
 	if (!("root" in resolved)) return { kind: "unguarded", ...resolved };
 
 	const runtimeDir = options.runtimeDir ?? worktreeLeaseRuntimeDir();
