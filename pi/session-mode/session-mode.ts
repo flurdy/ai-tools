@@ -22,22 +22,13 @@ export interface SessionModeController {
 	readonly state: SessionGuardState;
 }
 
-const STATE_LABELS: Record<SessionGuardState, string> = {
-	acquiring: "acquiring",
-	implement: "implement",
-	plan: "plan",
-	"implement-blocked": "conflict",
-	lost: "lost",
-	unguarded: "unguarded",
-};
-
-const STATE_TONES: Record<SessionGuardState, "success" | "warning" | "error"> = {
-	acquiring: "warning",
-	implement: "success",
-	plan: "warning",
-	"implement-blocked": "error",
-	lost: "error",
-	unguarded: "error",
+const STATE_META: Record<SessionGuardState, { label: string; tone: "success" | "warning" | "error" }> = {
+	acquiring: { label: "acquiring", tone: "warning" },
+	implement: { label: "implement", tone: "success" },
+	plan: { label: "plan", tone: "warning" },
+	"implement-blocked": { label: "conflict", tone: "error" },
+	lost: { label: "lost", tone: "error" },
+	unguarded: { label: "unguarded", tone: "error" },
 };
 
 function restoredMode(ctx: ExtensionContext): SessionMode | undefined {
@@ -99,7 +90,8 @@ export function registerSessionMode(
 
 	function setState(ctx: ExtensionContext, next: SessionGuardState): void {
 		state = next;
-		ctx.ui.setStatus("session-mode", ctx.ui.theme.fg(STATE_TONES[next], STATE_LABELS[next]));
+		const { label, tone } = STATE_META[next];
+		ctx.ui.setStatus("session-mode", ctx.ui.theme.fg(tone, label));
 		warnReadOnlySubagentFailure(ctx);
 	}
 
@@ -119,6 +111,12 @@ export function registerSessionMode(
 		if (toolsBeforeGuard === undefined) return;
 		pi.setActiveTools(toolsBeforeGuard);
 		toolsBeforeGuard = undefined;
+	}
+
+	function enterUnguarded(ctx: ExtensionContext): void {
+		restoreTools();
+		resetReadOnlySubagentVerification();
+		setState(ctx, "unguarded");
 	}
 
 	function releaseHeld(held: HeldWorktreeLease): Promise<void> {
@@ -163,7 +161,7 @@ export function registerSessionMode(
 		}).catch(() => {
 			if (shuttingDown || state !== "lost") return;
 			try {
-				ctx.ui.setStatus("session-mode", ctx.ui.theme.fg(STATE_TONES.lost, STATE_LABELS.lost));
+				ctx.ui.setStatus("session-mode", ctx.ui.theme.fg(STATE_META.lost.tone, STATE_META.lost.label));
 			} catch {
 				// Lease loss is already enforced; status reporting is best effort.
 			}
@@ -186,9 +184,7 @@ export function registerSessionMode(
 			lease = undefined;
 			if (held) await releaseHeld(held);
 			if (generation !== transitionGeneration || mode !== "implement" || shuttingDown) return false;
-			restoreTools();
-			resetReadOnlySubagentVerification();
-			setState(ctx, "unguarded");
+			enterUnguarded(ctx);
 			ctx.ui.notify("Session guard disabled by PI_SESSION_GUARD=0.", "warning");
 			return true;
 		}
@@ -236,9 +232,7 @@ export function registerSessionMode(
 			return true;
 		}
 
-		restoreTools();
-		resetReadOnlySubagentVerification();
-		setState(ctx, "unguarded");
+		enterUnguarded(ctx);
 		ctx.ui.notify(`Session guard unavailable (${result.reason}). This session is unguarded.`, "error");
 		return true;
 	}
@@ -267,9 +261,7 @@ export function registerSessionMode(
 			const generation = ++transitionGeneration;
 			mode = "plan";
 			if (dependencies.isDisabled()) {
-				restoreTools();
-				resetReadOnlySubagentVerification();
-				setState(ctx, "unguarded");
+				enterUnguarded(ctx);
 			} else {
 				guardTools();
 				setState(ctx, "plan");
@@ -316,9 +308,7 @@ export function registerSessionMode(
 		shuttingDown = false;
 		mode = pi.getFlag("plan") === true ? "plan" : pi.getFlag("implement") === true ? "implement" : (restoredMode(ctx) ?? "implement");
 		if (dependencies.isDisabled()) {
-			restoreTools();
-			resetReadOnlySubagentVerification();
-			setState(ctx, "unguarded");
+			enterUnguarded(ctx);
 			ctx.ui.notify("Session guard disabled by PI_SESSION_GUARD=0.", "warning");
 			return;
 		}

@@ -15,12 +15,7 @@ export interface ResolvedSubagentDefinition {
 	source?: unknown;
 	tools?: unknown;
 	mcpDirectTools?: unknown;
-	runner?: {
-		type?: unknown;
-		adapter?: unknown;
-		command?: unknown;
-		promptDelivery?: unknown;
-	} | unknown;
+	runner?: unknown;
 	output?: unknown;
 	outputMode?: unknown;
 	extensions?: unknown;
