@@ -11,7 +11,8 @@ It can launch from:
 
 ## Files
 
-- `pl.fish`: Pi-specific Fish frontend users run as `pl`.
+- `pl.fish`: Pi-specific Fish frontend users run as `pl`; it scopes optional
+  keyring-backed Atlassian credentials to the launched Pi process.
 - `pl-gather`: symlink to the [shared context picker](../../shared/launcher/).
 - `pl-mkworktree`: symlink to the shared worktree creator.
 
@@ -58,6 +59,18 @@ Picker keys:
 - `ctrl-w`: start the row in a fresh worktree (prompts for a branch; a handoff row also seeds its note)
 
 The default `restore` state passes no mode flag, preserving a resumed session's saved mode while a fresh session uses the extension's `implement` default. Explicit `plan` and `implement` selections translate to the corresponding startup flag. `pl --plan` and `pl --implement` are intentionally rejected so explicit choices remain visible in the picker; use Pi directly when testing extension flags.
+
+## Atlassian credentials
+
+When no `ATLASSIAN_*` variable is already set, `pl` can reuse the private Jira
+metadata in `${JIRA_MCP_ENV:-~/.dotprivate/jira-mcp.env}`. The file provides
+`ATLASSIAN_SITE_NAME`, `ATLASSIAN_USER_EMAIL`, and `JIRA_MCP_KEYRING_PROJECT`;
+`pl` resolves `atlassian-api-token` through `secret-api-key` and exports the
+normalized Atlassian variables only to the launched Pi process. The token is not
+persisted, printed, or placed in process arguments. Missing metadata, tooling, or
+tokens simply leaves Atlassian tools unauthenticated without blocking Pi.
+
+Direct `pi` invocations do not use this integration.
 
 ## Runtime Assumptions
 

@@ -1,3 +1,39 @@
+function __pl_launch_pi --description 'Launch Pi with optional keyring-backed Atlassian credentials'
+    if set -q ATLASSIAN_BASE_URL; or set -q ATLASSIAN_DOMAIN; or set -q ATLASSIAN_EMAIL; or set -q ATLASSIAN_API_TOKEN
+        command pi $argv
+        return
+    end
+
+    set -l env_file "$HOME/.dotprivate/jira-mcp.env"
+    set -q JIRA_MCP_ENV; and set env_file "$JIRA_MCP_ENV"
+    if test -r "$env_file"; and command -sq bash; and command -sq secret-api-key
+        set -l metadata (command bash -c '
+            set -eu
+            . "$1"
+            : "${ATLASSIAN_SITE_NAME:?}"
+            : "${ATLASSIAN_USER_EMAIL:?}"
+            : "${JIRA_MCP_KEYRING_PROJECT:?}"
+            printf "%s\n%s\n%s\n" "$ATLASSIAN_SITE_NAME" "$ATLASSIAN_USER_EMAIL" "$JIRA_MCP_KEYRING_PROJECT"
+        ' bash "$env_file" 2>/dev/null)
+        if test $status -eq 0; and test (count $metadata) -eq 3
+            set -l token (command secret-api-key lookup atlassian-api-token "$metadata[3]" 2>/dev/null)
+            if test $status -eq 0; and test -n "$token"
+                if string match -qr '^https?://' -- "$metadata[1]"
+                    set -fx ATLASSIAN_BASE_URL (string replace -r '/+$' '' -- "$metadata[1]")
+                else
+                    set -l domain "$metadata[1]"
+                    string match -q '*.atlassian.net' -- "$domain"; or set domain "$domain.atlassian.net"
+                    set -fx ATLASSIAN_DOMAIN "$domain"
+                end
+                set -fx ATLASSIAN_EMAIL "$metadata[2]"
+                set -fx ATLASSIAN_API_TOKEN "$token"
+            end
+        end
+    end
+
+    command pi $argv
+end
+
 function pl --description 'Pi launcher: pick a context (main/worktree/handoff/new) and start pi'
     set -l bin "$HOME/.pi/bin"
     if not test -x "$bin/pl-gather"; and test -x "$HOME/.dotfiles/.pi/bin/pl-gather"
@@ -91,7 +127,7 @@ function pl --description 'Pi launcher: pick a context (main/worktree/handoff/ne
             echo "pi $pargs   # from "(pwd)
             return 0
         end
-        command pi $pargs
+        __pl_launch_pi $pargs
         return
     end
     set -l parts (string split \t -- $desc[1])
@@ -207,8 +243,8 @@ function pl --description 'Pi launcher: pick a context (main/worktree/handoff/ne
         end
         echo "pl: ↳ loading handoff $note" >&2
         echo "pl:   (if it doesn't auto-load, read $note)" >&2
-        command pi $pargs $seed
+        __pl_launch_pi $pargs $seed
     else
-        command pi $pargs
+        __pl_launch_pi $pargs
     end
 end

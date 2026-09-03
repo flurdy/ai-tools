@@ -50,6 +50,74 @@ printf '%s\n' "$pl_configured" | grep -qF 'pi --model openai-codex/gpt-5.6-terra
 pl_override=$(HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run --model=anthropic/claude-sonnet-5 --thinking=medium' "$PL_FUNCTION" "$nonrepo" 2>/dev/null)
 printf '%s\n' "$pl_override" | grep -qF 'pi --model anthropic/claude-sonnet-5 --thinking medium' \
   || fail "Pi launcher overrides ignored"
+
+# The Pi launcher injects Atlassian credentials only into the child process. It
+# reuses the private metadata consumed by jira-mcp and resolves the token from
+# the keyring without printing it, putting it in argv, or leaking it afterward.
+cat > "$bin/pi" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" > "$PI_CAPTURE.args"
+env | grep '^ATLASSIAN_' | sort > "$PI_CAPTURE.env" || :
+EOF
+cat > "$bin/secret-api-key" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" > "$KEYRING_LOG"
+[ "${SECRET_FAIL:-0}" != 1 ] || exit 1
+printf 'fake-atlassian-token\n'
+EOF
+chmod +x "$bin/pi" "$bin/secret-api-key"
+mkdir -p "$home/.dotprivate"
+cat > "$home/.dotprivate/jira-mcp.env" <<'EOF'
+ATLASSIAN_SITE_NAME=example-site
+ATLASSIAN_USER_EMAIL=launcher-test@example.com
+JIRA_MCP_KEYRING_PROJECT=example-project
+EOF
+TEST_PATH="$bin:/usr/bin:/bin"
+PI_CAPTURE="$tmp/pi-auth" KEYRING_LOG="$tmp/keyring.log" HOME="$home" PATH="$TEST_PATH" \
+  fish -c 'source "$argv[1]"; cd "$argv[2]"; pl; set -q ATLASSIAN_API_TOKEN; and echo leaked; true' \
+  "$PL_FUNCTION" "$nonrepo" >"$tmp/pl-auth.out" 2>"$tmp/pl-auth.err"
+grep -qxF 'ATLASSIAN_DOMAIN=example-site.atlassian.net' "$tmp/pi-auth.env" || fail "Pi Atlassian domain missing"
+grep -qxF 'ATLASSIAN_EMAIL=launcher-test@example.com' "$tmp/pi-auth.env" || fail "Pi Atlassian email missing"
+grep -qxF 'ATLASSIAN_API_TOKEN=fake-atlassian-token' "$tmp/pi-auth.env" || fail "Pi Atlassian token missing"
+grep -qxF 'lookup atlassian-api-token example-project' "$tmp/keyring.log" || fail "Pi Atlassian keyring lookup changed"
+if grep -qF 'fake-atlassian-token' "$tmp/pi-auth.args" "$tmp/pl-auth.out" "$tmp/pl-auth.err"; then
+  fail "Pi Atlassian token was exposed"
+fi
+if grep -qF 'leaked' "$tmp/pl-auth.out"; then fail "Pi Atlassian token leaked into the launcher shell"; fi
+
+rm -f "$tmp/keyring.log"
+SECRET_FAIL=1 PI_CAPTURE="$tmp/pi-auth-failed" KEYRING_LOG="$tmp/keyring.log" HOME="$home" PATH="$TEST_PATH" \
+  fish -c 'source "$argv[1]"; cd "$argv[2]"; pl' "$PL_FUNCTION" "$nonrepo" \
+  >"$tmp/pl-auth-failed.out" 2>"$tmp/pl-auth-failed.err"
+[ -f "$tmp/pi-auth-failed.env" ] || fail "Pi did not launch after Atlassian keyring failure"
+if grep -q '^ATLASSIAN_' "$tmp/pi-auth-failed.env"; then fail "Pi received partial Atlassian environment"; fi
+if grep -qF 'fake-atlassian-token' "$tmp/pl-auth-failed.out" "$tmp/pl-auth-failed.err"; then
+  fail "Pi Atlassian failure exposed a token"
+fi
+
+mv -f "$home/.dotprivate/jira-mcp.env" "$home/.dotprivate/jira-mcp.env.disabled"
+rm -f "$tmp/keyring.log"
+PI_CAPTURE="$tmp/pi-auth-missing" KEYRING_LOG="$tmp/keyring.log" HOME="$home" PATH="$TEST_PATH" \
+  fish -c 'source "$argv[1]"; cd "$argv[2]"; pl' "$PL_FUNCTION" "$nonrepo" >/dev/null 2>&1
+[ -f "$tmp/pi-auth-missing.env" ] || fail "Pi did not launch without Atlassian metadata"
+if grep -q '^ATLASSIAN_' "$tmp/pi-auth-missing.env"; then fail "Pi received Atlassian environment without metadata"; fi
+[ ! -e "$tmp/keyring.log" ] || fail "Missing Atlassian metadata triggered a keyring lookup"
+mv -f "$home/.dotprivate/jira-mcp.env.disabled" "$home/.dotprivate/jira-mcp.env"
+
+rm -f "$tmp/keyring.log"
+PI_CAPTURE="$tmp/pi-auth-preset" KEYRING_LOG="$tmp/keyring.log" HOME="$home" PATH="$TEST_PATH" \
+  ATLASSIAN_DOMAIN=preset.atlassian.net ATLASSIAN_EMAIL=preset@example.com ATLASSIAN_API_TOKEN=preset-token \
+  fish -c 'source "$argv[1]"; cd "$argv[2]"; pl' "$PL_FUNCTION" "$nonrepo" >/dev/null 2>&1
+grep -qxF 'ATLASSIAN_API_TOKEN=preset-token' "$tmp/pi-auth-preset.env" || fail "Preset Atlassian environment was not preserved"
+[ ! -e "$tmp/keyring.log" ] || fail "Preset Atlassian environment triggered a keyring lookup"
+
+rm -f "$tmp/keyring.log"
+HOME="$home" PATH="$TEST_PATH" KEYRING_LOG="$tmp/keyring.log" \
+  fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run' "$PL_FUNCTION" "$nonrepo" >/dev/null 2>&1
+[ ! -e "$tmp/keyring.log" ] || fail "Pi dry-run accessed the Atlassian keyring"
+
 if HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --plan' "$PL_FUNCTION" "$nonrepo" 2>"$tmp/pl-unknown.err"; then
   fail "Pi launcher silently accepted --plan"
 fi
