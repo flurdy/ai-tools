@@ -8,4 +8,5 @@ __pycache__/
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db
+.beads/dolt/
 .beads-credential-key
