@@ -91,7 +91,7 @@ function pl --description 'Pi launcher: pick a context (main/worktree/handoff/ne
                 set name (string replace -- '--name=' '' $a)
             case --list
                 command $bin/pl-gather --list
-                return 0
+                return $status
             case --help -h
                 echo 'pl [--model=ID] [--thinking=LEVEL] [--name=NAME] [--dry-run|-n] [--list]'
                 echo '  pick a context via fzf, then launch pi there.'

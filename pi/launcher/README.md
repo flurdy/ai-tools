@@ -43,6 +43,10 @@ pl --thinking=high
 pl --name='ticket work'
 ```
 
+`pl --list` prints context rows without opening the picker and preserves the
+gatherer's exit status (1 when a non-Git directory has no contexts). Ordinary
+`pl` still falls back to launching Pi directly in that directory.
+
 `pl` pins fresh sessions to the defaults in `~/.pi/agent/pl-launcher.json` so they
 remain stable when extensions temporarily change Pi's persisted defaults. Copy
 `pl-launcher.json.example` to that path to configure a model and thinking level; its default

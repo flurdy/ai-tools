@@ -319,6 +319,18 @@ if grep -q ctrl-f "$tmp/pl.args"; then fail "Pi advertised unsupported fork acti
 # Fish frontend. The private mode file must be removed when the picker returns.
 ln -sfn "$PL_GATHER" "$home/.pi/bin/pl-gather"
 ln -sfn "$CL_GATHER" "$home/.claude/bin/cl-gather"
+
+# --list preserves both successful rows and the real gather's no-context status.
+pl_list=$(cd "$repo" && HOME="$home" XDG_CACHE_HOME="$tmp/cache" \
+  GH_COUNT="$tmp/gh-count" PATH="$TEST_PATH" \
+  fish -c 'source "$argv[1]"; pl --list' "$PL_FUNCTION")
+[ "$pl_list" = "$pl_rows" ] || fail "Pi --list changed successful gather output"
+list_status=0
+(cd "$nonrepo" && HOME="$home" PATH="$TEST_PATH" \
+  fish -c 'source "$argv[1]"; pl --list' "$PL_FUNCTION") >"$tmp/pl-list.out" || list_status=$?
+[ "$list_status" -eq 1 ] || fail "Pi --list swallowed no-context failure: $list_status"
+[ ! -s "$tmp/pl-list.out" ] || fail "Pi --list launched instead of listing"
+
 mode_tmp="$tmp/mode (1)'"$'\n'" f i\$les"
 mkdir -p "$mode_tmp"
 fish_path=$(command -v fish)
