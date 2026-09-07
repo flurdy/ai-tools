@@ -8,7 +8,7 @@ import { BeadsCountsCache, fetchBeadsCounts, findBeadsRoot, formatBeadsCounts } 
 import { fetchCodexWeeklyQuota, isCodexQuotaStale, showsCodexQuota, type CodexWeeklyQuota } from "./codex-quota.ts";
 import { fetchGitDivergence, formatGitDivergence, GitDivergenceCache } from "./git-divergence.ts";
 import { activeModelLabel, modelLabel } from "./model-label.ts";
-import { probeWorktreeLeaseOccupancy, type WorktreeLeaseOccupancy } from "../session-mode/lease-observer.ts";
+import { DEFAULT_LEASE_OCCUPANCY_TIMEOUT_MS, probeWorktreeLeaseOccupancy, type WorktreeLeaseOccupancy } from "../session-mode/lease-observer.ts";
 import { OpenRouterCostAdvisory, openRouterAdvisoryConfig, sharedOpenRouterAdvisoryState } from "./openrouter-advisory.ts";
 import { createOpenRouterCreditsCache, openRouterCreditsApiKey } from "./openrouter-credits.ts";
 import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT, codexQuotaTone } from "./quota-display.ts";
@@ -353,7 +353,7 @@ export default function piStatusline(
 					ttlMs: gitDivergenceRefreshMs,
 					onChange: () => tui.requestRender(),
 				});
-			const leaseOccupancyTimeoutMs = envMilliseconds("PI_STATUSLINE_GUARD_OCCUPANCY_TIMEOUT", 500, 100);
+			const leaseOccupancyTimeoutMs = envMilliseconds("PI_STATUSLINE_GUARD_OCCUPANCY_TIMEOUT", DEFAULT_LEASE_OCCUPANCY_TIMEOUT_MS, 100);
 			const leaseOccupancyCache = process.env.PI_STATUSLINE_GUARD_OCCUPANCY === "0"
 				? undefined
 				: new LeaseOccupancyCache({

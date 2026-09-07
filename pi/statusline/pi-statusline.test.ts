@@ -73,9 +73,13 @@ test("wires continuing turns to threshold crossing without tool-loop spam", () =
 	assert.equal(notifications.length, 1);
 });
 
-test("pins emoji guard and plan occupancy cells in narrow and wide footer layouts", async () => {
+async function verifyGuardLayout(configuredTimeout: string | undefined, expectedTimeout: number) {
+	const probeOptions: { timeoutMs: number; signal: AbortSignal }[] = [];
 	const handlers = registeredHandlers({
-		probeLeaseOccupancy: async () => ({ kind: "held", root: "/tmp" }),
+		probeLeaseOccupancy: async (_cwd: string, options: { timeoutMs: number; signal: AbortSignal }) => {
+			probeOptions.push(options);
+			return { kind: "held", root: "/tmp" };
+		},
 	});
 	let footerFactory: any;
 	let component: any;
@@ -87,11 +91,14 @@ test("pins emoji guard and plan occupancy cells in narrow and wide footer layout
 		"PI_STATUSLINE_BEADS",
 		"PI_STATUSLINE_GIT_DIVERGENCE",
 		"PI_STATUSLINE_GUARD_OCCUPANCY_SETTLE",
+		"PI_STATUSLINE_GUARD_OCCUPANCY_TIMEOUT",
 		"PI_STATUSLINE",
 	] as const;
 	const previous = new Map(environment.map((name) => [name, process.env[name]]));
 	for (const name of environment.slice(0, 5)) process.env[name] = "0";
 	process.env.PI_STATUSLINE_GUARD_OCCUPANCY_SETTLE = "0";
+	if (configuredTimeout === undefined) delete process.env.PI_STATUSLINE_GUARD_OCCUPANCY_TIMEOUT;
+	else process.env.PI_STATUSLINE_GUARD_OCCUPANCY_TIMEOUT = configuredTimeout;
 	try {
 		const ctx = {
 			cwd: "/tmp",
@@ -141,6 +148,11 @@ test("pins emoji guard and plan occupancy cells in narrow and wide footer layout
 		component.render(30);
 		await new Promise((resolve) => setImmediate(resolve));
 		assert.match(component.render(30).join("\n"), /🔍\s*│\s*🔒/);
+		assert.ok(probeOptions.length > 0);
+		for (const options of probeOptions) {
+			assert.equal(options.timeoutMs, expectedTimeout);
+			assert.ok(options.signal instanceof AbortSignal);
+		}
 		process.env.PI_STATUSLINE = "table";
 		const occupiedTable = component.render(120);
 		assert.ok(occupiedTable.length > 1);
@@ -154,4 +166,8 @@ test("pins emoji guard and plan occupancy cells in narrow and wide footer layout
 			else process.env[name] = value;
 		}
 	}
-});
+}
+
+for (const [configuredTimeout, expectedTimeout] of [[undefined, 2000], ["150", 150], ["100", 100], ["50", 2000], ["invalid", 2000]] as const) {
+	test(`pins guard layouts and occupancy deadline (${configuredTimeout ?? "default"})`, () => verifyGuardLayout(configuredTimeout, expectedTimeout));
+}

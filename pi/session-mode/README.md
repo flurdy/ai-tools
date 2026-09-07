@@ -33,6 +33,12 @@ Separate Git worktrees have separate canonical roots and can implement concurren
 
 The companion statusline may inspect the same stable lock path through the kernel's live lock table. In plan mode it renders a separate `🔒` cell when another same-user session holds the worktree lease. This read-only, asynchronous observation never trusts holder JSON, never takes the lock, and disappears when inspection is unavailable.
 
+The observer and statusline share a 2000 ms per-command default for Git and `lslocks`. Whole-system
+lock scans can exceed 500 ms; the larger deadline accommodates those scans without treating a
+killed command as evidence that the worktree is free. Explicit timeouts and cancellation remain
+supported. Slower scans still return unavailable, with timeout diagnostics; this does not bound
+scan cost or guarantee availability on every host.
+
 ## Guarded policy
 
 Guarded states:

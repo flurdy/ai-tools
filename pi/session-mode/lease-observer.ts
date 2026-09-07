@@ -2,6 +2,8 @@ import { execFile } from "node:child_process";
 import { readFile, realpath } from "node:fs/promises";
 import { worktreeLeaseLockPath } from "./lease.ts";
 
+export const DEFAULT_LEASE_OCCUPANCY_TIMEOUT_MS = 2000;
+
 export type WorktreeLeaseOccupancy =
 	| { kind: "held" | "free"; root: string }
 	| { kind: "unavailable"; reason: string };
@@ -20,14 +22,16 @@ interface CommandOutput {
 }
 
 function runCommand(command: string, args: string[], options: ProbeWorktreeLeaseOccupancyOptions): Promise<CommandOutput> {
+	const timeoutMs = options.timeoutMs ?? DEFAULT_LEASE_OCCUPANCY_TIMEOUT_MS;
 	return new Promise((resolve, reject) => {
 		execFile(command, args, {
 			encoding: "utf8",
-			timeout: options.timeoutMs ?? 500,
+			timeout: timeoutMs,
 			windowsHide: true,
 			signal: options.signal,
 		}, (error, stdout) => {
-			if (error) reject(error);
+			if (error?.killed && error.signal === "SIGTERM") reject(new Error(`${command} timed out after ${timeoutMs}ms`));
+			else if (error) reject(error);
 			else resolve({ stdout });
 		});
 	});

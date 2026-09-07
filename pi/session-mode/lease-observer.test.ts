@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { acquireWorktreeLease, lockIdentity } from "./lease.ts";
-import { probeWorktreeLeaseOccupancy } from "./lease-observer.ts";
+import { probeWorktreeLeaseOccupancy, type ProbeWorktreeLeaseOccupancyOptions } from "./lease-observer.ts";
 
 async function gitRepo(): Promise<{ repo: string; runtimeDir: string; cleanup: () => Promise<void> }> {
 	const root = await mkdtemp(join(tmpdir(), "pi-lease-observer-"));
@@ -16,6 +16,62 @@ async function gitRepo(): Promise<{ repo: string; runtimeDir: string; cleanup: (
 	execFileSync("git", ["-C", repo, "init", "-q", "-b", "main"]);
 	return { repo, runtimeDir, cleanup: () => rm(root, { recursive: true, force: true }) };
 }
+
+async function scriptedProbe(script: (lockPath: string) => string, options: ProbeWorktreeLeaseOccupancyOptions = {}) {
+	const fixture = await gitRepo();
+	try {
+		await mkdir(fixture.runtimeDir);
+		const lockPath = join(fixture.runtimeDir, `${lockIdentity(fixture.repo)}.lock`);
+		await writeFile(lockPath, "");
+		const command = join(fixture.runtimeDir, "scripted-lslocks");
+		await writeFile(command, `#!${process.execPath}\n${script(lockPath)}\n`, { mode: 0o700 });
+		return await probeWorktreeLeaseOccupancy(fixture.repo, {
+			runtimeDir: fixture.runtimeDir,
+			lslocksCommand: command,
+			...options,
+		});
+	} finally {
+		await fixture.cleanup();
+	}
+}
+
+test("default deadline still stops a stalled lock scan", async () => {
+	const result = await scriptedProbe(() => `setTimeout(() => process.stdout.write('{"locks":[]}'), 3000);`);
+	assert.equal(result.kind, "unavailable");
+	if (result.kind === "unavailable") assert.match(result.reason, /scripted-lslocks timed out after 2000ms$/);
+});
+
+test("missing commands and nonzero exits never become free, even with valid stdout", async () => {
+	for (const script of ["process.exit(2);", `process.stdout.write('{"locks":[]}'); process.exitCode = 2;`]) {
+		assert.equal((await scriptedProbe(() => script)).kind, "unavailable");
+	}
+	assert.equal((await scriptedProbe(() => "", { lslocksCommand: "/nonexistent/pi-test-lslocks" })).kind, "unavailable");
+});
+
+test("invalid lock responses stay unavailable", async () => {
+	for (const locks of [null, {}, [null], ["invalid"], [0]]) {
+		assert.equal((await scriptedProbe(() => `console.log(${JSON.stringify(JSON.stringify({ locks }))});`)).kind, "unavailable");
+	}
+	for (const pid of [0, -1, 1.5, "123", null]) {
+		const result = await scriptedProbe((path) => `console.log(${JSON.stringify(JSON.stringify({ locks: [{ path, type: "FLOCK", mode: "WRITE", pid }] }))});`);
+		assert.equal(result.kind, "unavailable");
+	}
+});
+
+test("cancellation remains unavailable before and during a probe", async () => {
+	const preAborted = new AbortController();
+	preAborted.abort();
+	assert.equal((await scriptedProbe(() => "", { signal: preAborted.signal })).kind, "unavailable");
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), 100);
+	try {
+		const result = await scriptedProbe(() => `setTimeout(() => process.stdout.write('{"locks":[]}'), 3000);`, { signal: controller.signal });
+		assert.equal(result.kind, "unavailable");
+		if (result.kind === "unavailable") assert.match(result.reason, /abort/i);
+	} finally {
+		clearTimeout(timer);
+	}
+});
 
 test("observes the authoritative flock without trusting metadata or creating a lock", async () => {
 	const fixture = await gitRepo();
@@ -50,6 +106,22 @@ test("observes the authoritative flock without trusting metadata or creating a l
 	}
 });
 
+test("allows a lock scan longer than 500 ms with the default deadline", async () => {
+	const fixture = await gitRepo();
+	try {
+		await mkdir(fixture.runtimeDir);
+		await writeFile(join(fixture.runtimeDir, `${lockIdentity(fixture.repo)}.lock`), "");
+		const command = join(fixture.runtimeDir, "delayed-lslocks");
+		await writeFile(command, `#!${process.execPath}\nsetTimeout(() => process.stdout.write('{"locks":[]}'), 1200);\n`, { mode: 0o700 });
+		assert.deepEqual(await probeWorktreeLeaseOccupancy(fixture.repo, {
+			runtimeDir: fixture.runtimeDir,
+			lslocksCommand: command,
+		}), { kind: "free", root: fixture.repo });
+	} finally {
+		await fixture.cleanup();
+	}
+});
+
 test("hides non-Git, unavailable, malformed, and timed-out occupancy probes", async () => {
 	const directory = await mkdtemp(join(tmpdir(), "pi-lease-observer-errors-"));
 	try {
@@ -72,11 +144,13 @@ test("hides non-Git, unavailable, malformed, and timed-out occupancy probes", as
 			const slow = join(directory, "slow-lslocks");
 			await writeFile(slow, "#!/bin/sh\nexec sleep 10\n");
 			await chmod(slow, 0o700);
-			assert.equal((await probeWorktreeLeaseOccupancy(fixture.repo, {
+			const timedOut = await probeWorktreeLeaseOccupancy(fixture.repo, {
 				runtimeDir: fixture.runtimeDir,
 				lslocksCommand: slow,
-				timeoutMs: 10,
-			})).kind, "unavailable");
+				timeoutMs: 100,
+			});
+			assert.equal(timedOut.kind, "unavailable");
+			if (timedOut.kind === "unavailable") assert.equal(timedOut.reason, `${slow} timed out after 100ms`);
 		} finally {
 			await fixture.cleanup();
 		}

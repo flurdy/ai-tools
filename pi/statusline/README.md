@@ -32,7 +32,7 @@ Then restart Pi, or run `/reload` from an existing Pi session. The lease-occupan
 - `PI_STATUSLINE_GUARD_EMOJI=0` — show the session guard's full text label instead of its compact emoji.
 - `PI_STATUSLINE_GUARD_OCCUPANCY=0` — hide the plan-mode indicator for a worktree lease held by another session.
 - `PI_STATUSLINE_GUARD_OCCUPANCY_TTL=5000` — worktree-lease occupancy cache interval in milliseconds (minimum one second).
-- `PI_STATUSLINE_GUARD_OCCUPANCY_TIMEOUT=500` — per-command timeout for bounded Git and kernel-lock inspection in milliseconds (minimum 100 ms).
+- `PI_STATUSLINE_GUARD_OCCUPANCY_TIMEOUT=2000` — per-command timeout for bounded Git and kernel-lock inspection in milliseconds, shared with the observer default. Overrides must be at least 100 ms; invalid or smaller values fall back to the default.
 - `PI_STATUSLINE_GUARD_OCCUPANCY_SETTLE=500` — delay before the first plan-mode occupancy check, allowing the current session's lease release to finish; `0` disables the delay.
 - `PI_STATUSLINE_LAST_PROMPT=0` — hide the active-run/latest-prompt widget above the editor (recommended when prompts may be visible to others).
 - `PI_STATUSLINE_K8S_CONTEXT=0` — hide the current `kubectl` context (shown by default when available).
