@@ -5,22 +5,28 @@ repositories. The workspace owns cross-project context and Beads tracking; linke
 repositories retain their implementation, history, and local instructions.
 
 The CLI provides non-destructive workspace initialisation, explicit source registration,
-local status and health views, and consent-gated branch synchronisation. Refresh,
-removal, and broader repository lifecycle management remain out of scope until real
-workspace use demonstrates a need.
+local status and health views, and branch synchronisation with consent for rebases.
+Refresh, relinking, removal, renaming, and role-specific behaviour remain out of scope
+until repeated workspace use demonstrates a need.
 
 Run the focused test suite with `make test` from this directory.
 
-## Supported environment
+## Supported environment and lifecycle
 
-The v1 pilot supports modern Unix-like systems with Python 3.10+, Git 2.28+,
+The runtime requirements are a modern Unix-like system with Python 3.10+, Git 2.28+,
 Beads (`bd`), Bash, Make, and filesystem symlinks. Native Windows, environments
 without symlink support, copied standalone executables, package-manager installs, and
 self-update are not supported.
 
 The supported installation is a user-owned executable symlink to a checkout of this
 repository. The CLI resolves its templates relative to the symlink's real target, so the
-script and `templates/` directory must remain together in that checkout.
+script and `templates/` directory must remain together in that checkout. Multiple local
+workspaces use this model with and without optional mgit configuration; that same-machine
+evidence supports the current installation contract, not cross-machine portability or a
+release-distribution commitment. Independent packaging, a version command, self-update,
+and multi-runtime compatibility CI remain deferred until a concrete installation or
+runtime-support need justifies them. Current checks run on the local runtime, not a matrix
+of every supported version.
 
 ## Run the CLI
 
@@ -83,8 +89,9 @@ project-workspace add-repo ~/Code/example-api
 ```
 
 The first registered repository receives the `primary` role; later repositories receive
-the `service` role. Register infrastructure repositories or configuration directories
-separately:
+the `service` role. These roles are descriptive: no command gives `primary` different
+behaviour. Keep that boundary until repeated consumer needs establish operational semantics.
+Register infrastructure repositories or configuration directories separately:
 
 ```bash
 project-workspace add-infrastructure ~/Code/example-deploy
@@ -137,9 +144,12 @@ infrastructure-specific material remains authoritative in its own repository.
 
 Manifest v1 records local relative topology, not repository remotes or reconstruction
 metadata. Moving a workspace together with sources at the same relative paths preserves
-its links. Cloning the workspace Git repository alone does not: check out each source and
-infrastructure dependency at the recorded relative target, restore or sync the workspace
-Beads store through a supported Dolt remote or backup, and recreate optional mgit
+its links; this has been exercised only as a same-machine whole-layout relocation. A real
+second-machine onboarding or repeated independent relocation that requires manual link
+repair remains the trigger to reconsider source identity or a relink command. Cloning the
+workspace Git repository alone does not create a complete workspace: check out each source
+and infrastructure dependency at the recorded relative target, restore or sync the
+workspace Beads store through a supported Dolt remote or backup, and recreate optional mgit
 configuration when the installed skill path changes.
 
 `project-workspace` deliberately does not clone, discover, relink, or synchronize those
