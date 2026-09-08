@@ -12,6 +12,7 @@ This repo is meant to be the shareable, curated version of tools that also live 
 | [Claude artifact-hygiene gate](claude/artifact-hygiene-gate/) | Claude Code | Audits detected Bash `git push` commands and denies findings or incomplete coverage. |
 | [Claude Kitty tab title](claude/kitty-tab-title/) | Claude Code | Hook script and settings fragment for showing repo/session state in Kitty tab titles. |
 | [Claude worktree co-tenancy](claude/worktree-cotenancy/) | Claude Code | Hook and statusline signal warning when two live sessions share a worktree, which the exit dialog can delete out from under one of them. |
+| [Codex artifact-hygiene gate](codex/artifact-hygiene-gate/) | Codex | Reuses the canonical push audit through Codex `PreToolUse(Bash)`. |
 | [Codex Kitty tab title](codex/kitty-tab-title/) | Codex | Codex hook script and `hooks.json` for the same Kitty tab title workflow. |
 | [Pi statusline](pi/statusline/) | Pi | Pi extension for a responsive Bobthefish/Claude-Code-inspired footer with model, session guard, context, git, PR, cost, token, and cache signals. |
 | [Pi session mode](pi/session-mode/) | Pi | Guarded plan mode plus a canonical Git-worktree writer lease for implementation sessions. |
@@ -61,6 +62,7 @@ claude/
   worktree-cotenancy/
   launcher/
 codex/
+  artifact-hygiene-gate/
   kitty-tab-title/
 pi/
   statusline/

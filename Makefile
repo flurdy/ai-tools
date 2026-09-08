@@ -7,12 +7,13 @@ PI_THEMES_DIR ?= $(PI_AGENT_DIR)/themes
 .PHONY: help apply verify-apply check
 
 help:
-	@echo "make check         Test the Claude artifact-hygiene push gate"
+	@echo "make check         Test the Claude and Codex artifact-hygiene gates"
 	@echo "make apply         Link reviewed local Pi resources into $(PI_AGENT_DIR)"
 	@echo "make verify-apply  Verify the managed Pi resource links"
 
 check:
 	$(MAKE) -C claude/artifact-hygiene-gate test
+	$(MAKE) -C codex/artifact-hygiene-gate test
 
 apply:
 	mkdir -p "$(PI_EXTENSIONS_DIR)" "$(PI_THEMES_DIR)"
