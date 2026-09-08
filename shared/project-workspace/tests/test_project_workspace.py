@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """End-to-end tests for the project-workspace scaffold CLI."""
 
 from __future__ import annotations
@@ -1585,7 +1584,7 @@ class ProjectWorkspaceTest(unittest.TestCase):
         count_commands = [
             command
             for command in commands
-            if command.startswith("bd list") or command.startswith("bd blocked")
+            if command.startswith(("bd list", "bd blocked"))
         ]
 
         self.assertLess(elapsed, 1)
@@ -2149,6 +2148,120 @@ class ProjectWorkspaceTest(unittest.TestCase):
             result.stdout,
         )
         self.assertIn("branch feature | upstream —", result.stdout)
+
+    @unittest.skipUnless(shutil.which("git"), "Git is required for worktree tests")
+    def test_status_and_inventory_omit_bare_repository_records(self) -> None:
+        real_git = self.use_real_git()
+        workspace = self.create_workspace("bare-linked-worktrees")
+        seed = self.root / "seed"
+        bare = self.root / "bare-store"
+        registered = self.root / "registered"
+        alternate = self.root / "alternate"
+        for arguments in (
+            ["init", "-b", "main", str(seed)],
+            [
+                "-C", str(seed), "-c", "user.name=Test User",
+                "-c", "user.email=test@example.com",
+                "commit", "--allow-empty", "-m", "initial",
+            ],
+            ["clone", "--bare", "--local", str(seed), str(bare)],
+            ["-C", str(bare), "worktree", "add", str(registered), "main"],
+            ["-C", str(bare), "worktree", "add", "-b", "feature", str(alternate), "main"],
+        ):
+            subprocess.run(
+                [real_git, *arguments], check=True, capture_output=True,
+                env=self.environment,
+            )
+        self.run_cli("add-repo", str(registered), "--workspace", str(workspace))
+        (alternate / "changed.txt").write_text("uncommitted\n", encoding="utf-8")
+        porcelain = subprocess.run(
+            [real_git, "-C", str(registered), "worktree", "list", "--porcelain"],
+            check=True, capture_output=True, text=True,
+        ).stdout
+        self.assertIn(f"worktree {bare.resolve()}\nbare\n", porcelain)
+
+        for command in (("status", "--section", "git"), ("git-inventory",)):
+            with self.subTest(command=command):
+                result = self.run_cli(*command, "--workspace", str(workspace), check=False)
+                self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                self.assertNotIn(str(bare.resolve()), result.stdout)
+                self.assertIn("registered (repos/registered)", result.stdout)
+                self.assertIn(str(alternate.resolve()), result.stdout)
+                self.assertIn("branch feature", result.stdout)
+                self.assertIn("dirty 1", result.stdout)
+
+    def test_worktree_discovery_distinguishes_bare_only_from_empty_output(self) -> None:
+        workspace = self.create_workspace("bare-only")
+        output = workspace / ".git" / "project-workspace-worktrees"
+        bare = self.root / "bare-store"
+        for porcelain, expected_error in (
+            (f"worktree {bare}\nbare\n\n", None),
+            ("", "no worktree entries"),
+        ):
+            output.write_text(porcelain, encoding="utf-8")
+            for command in (("status", "--section", "git"), ("git-inventory",)):
+                with self.subTest(command=command, porcelain=porcelain):
+                    result = self.run_cli(*command, "--workspace", str(workspace), check=False)
+                    if expected_error is None:
+                        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                        self.assertNotIn(str(bare), result.stdout)
+                    else:
+                        self.assertNotEqual(0, result.returncode)
+                        self.assertIn(expected_error, result.stdout)
+
+    def test_worktree_discovery_rejects_malformed_bare_records(self) -> None:
+        workspace = self.create_workspace("malformed-bare")
+        output = workspace / ".git" / "project-workspace-worktrees"
+        for record, expected_error in (
+            ("bare", "missing worktree path"),
+            (f"worktree {self.root / 'bare'}\nbare invalid", "missing branch state"),
+            (f"worktree {self.root / 'bare'}", "missing branch state"),
+            (f"worktree {self.root / 'bare'}\nbare\nbranch refs/heads/main",
+             "conflicting bare worktree state"),
+            (f"worktree {self.root / 'bare'}\nbare\ndetached",
+             "conflicting bare worktree state"),
+            (f"worktree {self.root / 'bare'}\nbare\nHEAD {'1' * 40}",
+             "conflicting bare worktree state"),
+        ):
+            output.write_text(record + "\n\n", encoding="utf-8")
+            for command in (("status", "--section", "git"), ("git-inventory",)):
+                with self.subTest(command=command, record=record):
+                    result = self.run_cli(*command, "--workspace", str(workspace), check=False)
+                    self.assertNotEqual(0, result.returncode)
+                    self.assertIn(expected_error, result.stdout)
+
+    def test_worktree_discovery_rejects_duplicates_involving_bare_records(self) -> None:
+        workspace = self.create_workspace("duplicate-bare")
+        output = workspace / ".git" / "project-workspace-worktrees"
+        bare_record = f"worktree {workspace}\nbare\n\n"
+        branch_record = f"worktree {workspace}\nbranch refs/heads/main\n\n"
+        for porcelain in (
+            bare_record + branch_record,
+            branch_record + bare_record,
+            bare_record + bare_record,
+        ):
+            output.write_text(porcelain, encoding="utf-8")
+            for command in (("status", "--section", "git"), ("git-inventory",)):
+                with self.subTest(command=command, porcelain=porcelain):
+                    result = self.run_cli(*command, "--workspace", str(workspace), check=False)
+                    self.assertNotEqual(0, result.returncode)
+                    self.assertIn("duplicate worktree path", result.stdout)
+
+    def test_status_counts_bare_records_toward_worktree_limit(self) -> None:
+        workspace = self.create_workspace("bare-limit")
+        records = f"worktree {self.root / 'bare'}\nbare\n\n"
+        records += "".join(
+            f"worktree {self.root / str(index)}\nbranch refs/heads/main\n\n"
+            for index in range(20)
+        )
+        (workspace / ".git" / "project-workspace-worktrees").write_text(
+            records, encoding="utf-8"
+        )
+        result = self.run_cli(
+            "status", "--section", "git", "--workspace", str(workspace), check=False
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("worktree limit exceeded (21 > 20)", result.stdout)
 
     def test_status_reports_worktree_discovery_failure_and_continues(self) -> None:
         workspace = self.create_workspace("worktree-failure")

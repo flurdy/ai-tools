@@ -174,6 +174,9 @@ views with `doctor`. The status command reads validated `workspace.json` topolog
 works without optional mgit configuration, and reports partial repository failures
 before returning non-zero. Git status always shows the workspace and registered
 checkouts, then uses Git metadata to discover worktrees once per shared common directory.
+Bare repository records are administrative metadata, not checkouts: both status and inventory
+omit them from worktree rows and status queries, but still count them toward discovery limits
+and reject duplicate paths or contradictory state.
 Actionable alternate worktrees—dirty, ahead, diverged, detached, without an upstream, or
 with unavailable tracking counts—are shown with their absolute path, branch, upstream,
 ahead/behind counts, and dirty count. A clean, non-diverged alternate is labelled

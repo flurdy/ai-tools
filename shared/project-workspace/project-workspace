@@ -496,13 +496,12 @@ def preflight(workspace: Workspace, files: dict[Path, str], dry_run: bool) -> bo
     ]
 
     link = workspace.repository_link
-    if link is not None and os.path.lexists(link):
-        if (
-            not link.is_symlink()
-            or os.path.isabs(os.readlink(link))
-            or link.resolve() != workspace.repository
-        ):
-            conflicts.append(link)
+    if link is not None and os.path.lexists(link) and (
+        not link.is_symlink()
+        or os.path.isabs(os.readlink(link))
+        or link.resolve() != workspace.repository
+    ):
+        conflicts.append(link)
 
     if conflicts:
         details = "\n".join(f"  - {path}" for path in conflicts)
@@ -1300,6 +1299,7 @@ def parse_worktree_entries(
     output: str, directory: Path, limit: int
 ) -> tuple[list[WorktreeEntry], str | None]:
     entries: list[WorktreeEntry] = []
+    paths: set[Path] = set()
     fields: dict[str, str | bool] = {}
 
     def append_entry() -> str | None:
@@ -1315,6 +1315,13 @@ def parse_worktree_entries(
             resolved = path.resolve()
         except OSError as error:
             return str(error)
+        if resolved in paths:
+            return "invalid git worktree list: duplicate worktree path"
+        paths.add(resolved)
+        if "bare" in fields:
+            if any(key in fields for key in ("branch", "HEAD", "detached")):
+                return "invalid git worktree list: conflicting bare worktree state"
+            return None
         raw_branch = fields.get("branch")
         branch: str | None = None
         if isinstance(raw_branch, str):
@@ -1325,8 +1332,6 @@ def parse_worktree_entries(
             return "invalid git worktree list: missing branch state"
         raw_head = fields.get("HEAD")
         head = raw_head if isinstance(raw_head, str) and raw_head else None
-        if any(entry.path == resolved for entry in entries):
-            return "invalid git worktree list: duplicate worktree path"
         entries.append(WorktreeEntry(resolved, branch, head))
         return None
 
@@ -1340,12 +1345,12 @@ def parse_worktree_entries(
         key, separator, value = line.partition(" ")
         if key in {"worktree", "HEAD", "branch"} and separator:
             fields[key] = value
-        elif key == "detached":
+        elif key == "detached" or line == "bare":
             fields[key] = True
-    if not entries:
+    if not paths:
         return [], "invalid git worktree list: no worktree entries"
-    if len(entries) > limit:
-        return [], f"worktree limit exceeded ({len(entries)} > {limit})"
+    if len(paths) > limit:
+        return [], f"worktree limit exceeded ({len(paths)} > {limit})"
     return entries, None
 
 
