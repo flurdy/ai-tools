@@ -9,6 +9,7 @@ This repo is meant to be the shareable, curated version of tools that also live 
 | Tool | Agent | What it does |
 | --- | --- | --- |
 | [Claude statusline](claude/statusline/) | Claude Code | Responsive Bobthefish-inspired Claude Code statusline with model, cost, context, rate limit, git, and PR signals. |
+| [Claude artifact-hygiene gate](claude/artifact-hygiene-gate/) | Claude Code | Audits detected Bash `git push` commands and denies findings or incomplete coverage. |
 | [Claude Kitty tab title](claude/kitty-tab-title/) | Claude Code | Hook script and settings fragment for showing repo/session state in Kitty tab titles. |
 | [Claude worktree co-tenancy](claude/worktree-cotenancy/) | Claude Code | Hook and statusline signal warning when two live sessions share a worktree, which the exit dialog can delete out from under one of them. |
 | [Codex Kitty tab title](codex/kitty-tab-title/) | Codex | Codex hook script and `hooks.json` for the same Kitty tab title workflow. |
@@ -54,6 +55,7 @@ later source changes once Pi has loaded it.
 
 ```text
 claude/
+  artifact-hygiene-gate/
   statusline/
   kitty-tab-title/
   worktree-cotenancy/
