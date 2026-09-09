@@ -16,7 +16,6 @@ This repo is meant to be the shareable, curated version of tools that also live 
 | [Codex Kitty tab title](codex/kitty-tab-title/) | Codex | Codex hook script and `hooks.json` for the same Kitty tab title workflow. |
 | [Pi statusline](pi/statusline/) | Pi | Pi extension for a responsive Bobthefish/Claude-Code-inspired footer with model, session guard, context, git, PR, cost, token, and cache signals. |
 | [Pi session mode](pi/session-mode/) | Pi | Guarded plan mode plus a canonical Git-worktree writer lease for implementation sessions. |
-| [Pi watch loop](pi/watch-loop/) | Pi | In-memory protocol-v1 extension for bounded fixed or adaptive watch workflows inside one interactive session. |
 | [Pi Flurdy dark theme](pi/theme/) | Pi | High-contrast dark theme with clearly separated success green and warning amber. |
 | [Pi `APPEND_SYSTEM.md` example](pi/append-system/) | Pi | Opt-in appended system instructions for concise next steps and safe remote Git operations. |
 | [Pi settings starter](pi/settings/) | Pi | Redacted global settings starter, component catalog, and explicit safe-MCP configuration boundary. |
@@ -37,6 +36,9 @@ the tools here:
 - [flurdy/pi-skill-model-router](https://github.com/flurdy/pi-skill-model-router) — an optional
   Pi extension that maps skill routing metadata to locally configured models, with its
   pre-extraction history in this repository.
+- [flurdy/pi-watch-loop](https://github.com/flurdy/pi-watch-loop) — the independently installed
+  protocol-v1 extension for bounded fixed and adaptive watch workflows, with its pre-extraction
+  history preserved from this repository.
 
 The Kitty tab title write-up is at <https://flurdy.com/docs/kitty-ai-tabs/>.
 
@@ -46,9 +48,9 @@ The Kitty tab title write-up is at <https://flurdy.com/docs/kitty-ai-tabs/>.
 make apply
 ```
 
-This links the statusline, session mode, Kitty tab title, watch loop, and theme from the checkout into
+This links the statusline, session mode, Kitty tab title, and theme from the checkout into
 `~/.pi/agent`. It does not install settings, launchers, `APPEND_SYSTEM.md`, or the standalone
-skill model router. Restart Pi after first linking an extension; `/reload` is sufficient for
+skill model router and watch-loop extensions. Restart Pi after first linking an extension; `/reload` is sufficient for
 later source changes once Pi has loaded it.
 
 
@@ -67,7 +69,6 @@ codex/
 pi/
   statusline/
   session-mode/
-  watch-loop/
   theme/
   append-system/
   settings/
