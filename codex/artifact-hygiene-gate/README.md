@@ -29,23 +29,35 @@ edits run without a fresh trust prompt. Treat this checkout as trusted executabl
 
 ## Behaviour
 
-Codex invokes the synchronous hook before local shell commands. A detected `git push` runs the
-artifact-hygiene audit in the target repository. The shared gate allows complete clean and
-info-only audits, and denies findings, partial/failed coverage, or a missing helper with exit 2.
-Denials use the same bounded summary as Claude Code. Non-push commands pass without auditing.
+Codex invokes the synchronous hook before local shell commands. A standalone
+`git -C /absolute/repository push ...` runs the artifact-hygiene audit in its resolved worktree.
+Bare pushes and relative `-C` deny. The shared gate allows complete
+clean and info-only audits, and denies findings, partial/failed coverage, a missing helper, or a
+detected wrapped, chained, or unresolved push with exit 2. Denials use the same bounded summary as
+Claude Code. Non-push commands pass without auditing.
 
 ## Requirements and limits
 
-- Codex CLI with lifecycle hooks enabled; verified against 0.153.4 and the documented
-  `PreToolUse` `Bash` contract.
+- Codex CLI with lifecycle hooks enabled. The `PreToolUse` `Bash` payload contract is checked
+  against the documentation and 0.153.4 source, not a live Codex session.
 - Bash, Python 3, standard Unix text utilities, and the executable artifact-hygiene helper from
   agent-skills at `~/.agents/skills/artifact-hygiene/scripts/artifact_hygiene.py`.
 - The fragment timeout is 300 seconds and is enforced by Codex, not the script.
 - Codex can skip untrusted hooks, and specialized tool paths may bypass `PreToolUse`; this is a
   guardrail rather than a complete enforcement boundary.
-- Push detection and repository resolution retain the canonical gate's documented regex limits.
+- Repository resolution accepts only the canonical gate's documented standalone command forms;
+  detected wrappers, chains, and unresolved repositories deny without auditing a fallback.
+- Regex detection retains the canonical gate's documented limits and can miss aliases, alternate
+  Git executable paths, scripts, shell expansions, and other indirect invocations.
 
-`make test` uses synthetic Codex-compatible payloads and a fake audit helper; it never pushes or
-reads real audit candidates. The payload contract is verified against Codex documentation rather
-than by launching an agent. Run a harmless disposable-repository check after trusting the hook if
-you need end-to-end evidence for a specific Codex release.
+The [hook contract](https://developers.openai.com/codex/hooks/#common-input-fields) defines `cwd`
+as the session working directory and `tool_input.command` as the shell command. In 0.153.4,
+[`run_pre_tool_use_hooks`](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/core/src/hook_runtime.rs)
+uses the turn's cwd, while
+[`ExecCommandHandler::pre_tool_use_payload`](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs)
+emits only the command, omitting the invocation's workdir. The shared gate therefore requires an
+absolute `-C` rather than treating session cwd as execution-directory evidence.
+
+`make test` runs the canonical suite through the installed Codex link, using synthetic payloads
+with that shared schema and a fake audit helper; it never pushes or reads real audit candidates.
+This is not end-to-end Codex execution evidence.
