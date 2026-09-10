@@ -276,18 +276,12 @@ function setKittyTabTitle(title: string): void {
 	}
 }
 
-const ORCA_CONFLICT_MESSAGE =
-	"Pi Kitty tab titles are disabled because ORCA_PANE_KEY enables the competing orca-titlebar-spinner writer. Disable orca-titlebar-spinner.ts, then set PI_KITTY_TITLE_ALLOW_ORCA=1 for this session to use flurdy-kitty-tab-title.ts.";
-
 export function registerPiKittyTabTitle(
 	pi: ExtensionAPI,
 	writeTitle: (title: string) => void = setKittyTabTitle,
 ): void {
 	if (process.env.ORCA_PANE_KEY && process.env.PI_KITTY_TITLE_ALLOW_ORCA !== "1") {
-		pi.on("session_start", (_event, ctx) => {
-			log(`disabled=${ORCA_CONFLICT_MESSAGE}`);
-			ctx.ui.notify(ORCA_CONFLICT_MESSAGE, "warning");
-		});
+		log("disabled=Orca manages this pane title");
 		return;
 	}
 

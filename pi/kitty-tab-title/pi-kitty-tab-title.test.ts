@@ -32,6 +32,12 @@ function withEnvironment(values: Record<string, string | undefined>, run: () => 
 	}
 }
 
+function registerOutsideOrca(pi: Parameters<typeof registerPiKittyTabTitle>[0], writeTitle: (title: string) => void): void {
+	withEnvironment({ ORCA_PANE_KEY: undefined, PI_KITTY_TITLE_ALLOW_ORCA: undefined }, () => {
+		registerPiKittyTabTitle(pi, writeTitle);
+	});
+}
+
 function git(command: string[], cwd: string): void {
 	execFileSync("git", command, { cwd, stdio: "ignore" });
 }
@@ -102,7 +108,7 @@ test("structured question state overrides lifecycle and survives session rename"
 			},
 			getSessionName: () => sessionName,
 		};
-		registerPiKittyTabTitle(pi as any, (title) => titles.push(title));
+		registerOutsideOrca(pi as any, (title) => titles.push(title));
 		const ctx = context(root);
 
 		handlers.get("tool_execution_start")?.(
@@ -157,7 +163,7 @@ test("session_info_changed refreshes immediately and clearing restores fallback 
 			events: { on: () => () => undefined },
 			getSessionName: () => sessionName,
 		};
-		registerPiKittyTabTitle(pi as any, (title) => titles.push(title));
+		registerOutsideOrca(pi as any, (title) => titles.push(title));
 		const ctx = context(root);
 		handlers.get("session_start")?.({ type: "session_start" }, ctx);
 		handlers.get("agent_end")?.({ type: "agent_end" }, ctx);
@@ -174,24 +180,16 @@ test("session_info_changed refreshes immediately and clearing restores fallback 
 	}
 });
 
-test("Orca-managed panes disable this competing title writer with a visible warning", () => {
+test("Orca-managed panes silently disable this competing title writer", () => {
 	withEnvironment({ ORCA_PANE_KEY: "pane-1", PI_KITTY_TITLE_ALLOW_ORCA: undefined }, () => {
 		const handlers = new Map<string, (event: any, ctx: any) => void>();
 		const titles: string[] = [];
-		const notices: string[] = [];
 		registerPiKittyTabTitle(
 			{ on: (event: string, handler: (payload: any, ctx: any) => void) => handlers.set(event, handler) } as any,
 			(title) => titles.push(title),
 		);
-		assert.deepEqual([...handlers.keys()], ["session_start"]);
-		handlers.get("session_start")?.(
-			{ type: "session_start" },
-			{ cwd: "/tmp", sessionManager: { getSessionId: () => "orca" }, ui: { notify: (message: string) => notices.push(message) } },
-		);
+		assert.deepEqual([...handlers.keys()], []);
 		assert.deepEqual(titles, []);
-		assert.match(notices[0] ?? "", /ORCA_PANE_KEY/);
-		assert.match(notices[0] ?? "", /orca-titlebar-spinner/);
-		assert.match(notices[0] ?? "", /PI_KITTY_TITLE_ALLOW_ORCA=1/);
 	});
 });
 

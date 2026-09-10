@@ -65,9 +65,9 @@ title escape sequence.
 ## Orca-managed panes
 
 `orca-titlebar-spinner.ts` also calls `ctx.ui.setTitle()` while `ORCA_PANE_KEY` is set and would
-race this extension. To avoid relying on extension event order, this extension disables its title
-writer and emits a warning in that environment. Disable the Orca titlebar-spinner extension,
-then set `PI_KITTY_TITLE_ALLOW_ORCA=1` for that session to acknowledge the conflict and enable
+race this extension. To avoid relying on extension event order, this extension silently disables
+its title writer in that environment. Disable the Orca titlebar-spinner extension, then set
+`PI_KITTY_TITLE_ALLOW_ORCA=1` for that session to acknowledge the conflict and enable
 `flurdy-kitty-tab-title.ts`. Do not set the override while both writers are loaded.
 
 ## Runtime behavior
