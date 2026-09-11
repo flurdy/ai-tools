@@ -8,7 +8,7 @@ deny_unproven_repo() {
 }
 
 input="$(cat)" || deny_unproven_repo
-command="$(printf '%s' "$input" | python3 -c '
+command="$(printf '%s' "$input" | python3 -I -c '
 import json, sys
 command = json.load(sys.stdin)["tool_input"]["command"]
 assert isinstance(command, str) and command and "\0" not in command
@@ -68,32 +68,83 @@ repo="$(git -C "$candidate" rev-parse --show-toplevel 2>/dev/null)" || deny_unpr
 audit="$HOME/.agents/skills/artifact-hygiene/scripts/artifact_hygiene.py"
 [[ -x "$audit" ]] || { echo "artifact-hygiene: helper missing at $audit; push denied for $repo." >&2; exit 2; }
 
-report="$(cd "$repo" && "$audit" 2>/dev/null)" && status=0 || status=$?
+# Keep report bytes off shell variables/argv; only fixed diagnostics and counts return.
+if summary="$(
+  (cd "$repo" && "$audit") 2>/dev/null | python3 -I -c '
+import json
+import sys
 
-summary="$(printf '%s' "$report" | python3 -c '
-import json, sys
-from collections import Counter
+
+def require(condition):
+    if not condition:
+        raise ValueError()
+
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        require(key not in result)
+        result[key] = value
+    return result
+
+
+def reject_constant(_value):
+    raise ValueError()
+
+
 try:
-    r = json.load(sys.stdin)
-except ValueError:
-    print("unreadable report"); sys.exit(0)
-partial = [c["source"] + ":" + ",".join(c.get("errors") or ["partial"]) for c in r.get("coverage", []) if c.get("status") != "complete"]
-counts = Counter((f["severity"] if "severity" in f else "?", f["category"]) for f in r.get("findings", []))
-if partial: print("partial coverage: " + "; ".join(partial))
-for (sev, cat), n in sorted(counts.items()): print(f"{n} {sev} {cat}")
-print("verdict: " + str(r.get("verdict")))
-')"
+    raw = sys.stdin.buffer.read(4_000_001)
+    require(len(raw) <= 4_000_000)
+    report = json.loads(raw.decode("utf-8"), object_pairs_hook=unique_object,
+                        parse_constant=reject_constant)
+    require(isinstance(report, dict))
+    require(report["schemaVersion"] == "artifact-hygiene/v1")
+    require(report["status"] == "complete")
+    require(isinstance(report["coverage"], list))
+    sources = set()
+    for entry in report["coverage"]:
+        require(isinstance(entry, dict))
+        source = entry["source"]
+        require(isinstance(source, str) and bool(source))
+        require(source not in sources)
+        sources.add(source)
+        require(entry["status"] == "complete")
+        require(entry["errors"] == [] and entry["limits"] == [])
+    require({"working-tree", "branch-history", "custom-detectors"} <= sources)
+    findings = report["findings"]
+    require(isinstance(findings, list))
+    require(report["verdict"] == ("findings" if findings else "clean"))
+    counts = {severity: 0 for severity in ("critical", "high", "medium", "low", "info")}
+    for finding in findings:
+        require(isinstance(finding, dict))
+        require(isinstance(finding["category"], str) and bool(finding["category"]))
+        severity = finding["severity"]
+        require(isinstance(severity, str) and severity in counts)
+        counts[severity] += 1
+except Exception:
+    print("invalid audit report")
+    sys.exit(2)
 
-# Pass on a complete audit whose only findings are informational (for example the
-# audit's own history); anything high/medium/low or partial coverage still denies.
-if [[ "$status" -eq 0 ]] && ! printf '%s' "$summary" | grep -qE '^[0-9]+ (high|medium|low|\?) '; then
+blocking = [f"{severity}={count}" for severity, count in counts.items()
+            if severity != "info" and count]
+if blocking:
+    print("blocking findings: " + ", ".join(blocking))
+    sys.exit(2)
+' 2>/dev/null
+  results=("${PIPESTATUS[@]}")
+  if [[ "${results[0]}" -ne 0 ]]; then
+    printf '\naudit helper failed or returned incomplete coverage (exit %s)\n' "${results[0]}"
+    exit 2
+  fi
+  exit "${results[1]}"
+)"; then
   echo "artifact-hygiene passed 'git push' for $repo"
   exit 0
 fi
 
 {
-  echo "artifact-hygiene denied 'git push' for $repo (exit $status):"
-  printf '%s\n' "$summary"
-  echo "Run /artifact-hygiene for the full redacted report; fix findings, or install gitleaks if coverage is partial."
+  echo "artifact-hygiene denied 'git push' for $repo:"
+  printf '%s\n' "${summary:-audit report validation failed}"
+  echo "Run /artifact-hygiene for the full redacted report; fix findings or restore complete audit coverage."
 } >&2
 exit 2

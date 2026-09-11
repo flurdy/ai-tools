@@ -36,11 +36,13 @@ import json
 import sys
 
 kind, path = sys.argv[1:]
-r = {"coverage": [{"source": "fixture", "status": "complete"}],
+r = {"schemaVersion": "artifact-hygiene/v1", "status": "complete",
+     "coverage": [{"source": source, "status": "complete", "errors": [], "limits": []}
+                  for source in ("working-tree", "branch-history", "custom-detectors")],
      "findings": [], "verdict": "clean"}
 if kind == "partial":
     r["coverage"][0].update(status="partial", errors=["scanner-missing"])
-    r["verdict"] = "partial"
+    r.update(status="partial", verdict="partial")
 elif kind != "clean":
     finding = {"category": "fixture-category"}
     if kind != "unknown":
@@ -150,12 +152,14 @@ git init --bare -q "$TEST_ROOT/bare"
 run_gate "git -C $TEST_ROOT/bare push" 2
 [[ ! -e "$INVOCATION_FILE" ]] || fail 'Bare repository invoked worktree audit'
 
+python3 -I "$SCRIPT_DIR/artifact-hygiene-report.test.py" "$GATE"
+
 for severity in high medium low unknown; do
   report "$severity"
   run_gate "git -C $TEST_ROOT/target push" 2
   assert_contains "artifact-hygiene denied 'git push' for $(cd "$TEST_ROOT/target" && pwd -P)"
-  assert_contains 'fixture-category'
-  assert_contains 'verdict: findings'
+  assert_contains 'Run /artifact-hygiene'
+  [[ "$output" != *fixture-category* ]] || fail 'Gate echoed report category text'
 done
 report info
 run_gate "$PUSH" 0
@@ -164,8 +168,7 @@ assert_equals "$output" "artifact-hygiene passed 'git push' for $(cd "$TEST_ROOT
 report partial
 export AUDIT_STATUS=2
 run_gate "$PUSH" 2
-assert_contains 'partial coverage: fixture:scanner-missing'
-assert_contains 'verdict: partial'
+assert_contains 'audit helper failed or returned incomplete coverage'
 
 report clean
 export AUDIT_STATUS=3

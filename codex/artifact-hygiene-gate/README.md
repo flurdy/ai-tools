@@ -31,16 +31,18 @@ edits run without a fresh trust prompt. Treat this checkout as trusted executabl
 
 Codex invokes the synchronous hook before local shell commands. A standalone
 `git -C /absolute/repository push ...` runs the artifact-hygiene audit in its resolved worktree.
-Bare pushes and relative `-C` deny. The shared gate allows complete
-clean and info-only audits, and denies findings, partial/failed coverage, a missing helper, or a
-detected wrapped, chained, or unresolved push with exit 2. Denials use the same bounded summary as
-Claude Code. Non-push commands pass without auditing.
+Bare pushes and relative `-C` deny. The shared gate allows only helper exit 0 plus a validated
+complete v1 report with no findings or info-only findings. Malformed reports, unsupported severities,
+incomplete coverage, helper/validator failures, and detected wrapped, chained or unresolved pushes
+deny with exit 2. Denials contain fixed diagnostics and known severity counts, not report-controlled
+text. See the [canonical report contract](../../claude/artifact-hygiene-gate/#report-contract).
+Non-push commands pass without auditing.
 
 ## Requirements and limits
 
 - Codex CLI with lifecycle hooks enabled. The `PreToolUse` `Bash` payload contract is checked
   against the documentation and 0.153.4 source, not a live Codex session.
-- Bash, Python 3, standard Unix text utilities, and the executable artifact-hygiene helper from
+- Bash, Python 3.10+, standard Unix text utilities, and the executable artifact-hygiene helper from
   agent-skills at `~/.agents/skills/artifact-hygiene/scripts/artifact_hygiene.py`.
 - The fragment timeout is 300 seconds and is enforced by Codex, not the script.
 - Codex can skip untrusted hooks, and specialized tool paths may bypass `PreToolUse`; this is a

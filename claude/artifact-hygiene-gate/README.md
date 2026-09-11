@@ -10,6 +10,7 @@ Originally promoted from the dotfiles hook.
 - `artifact-hygiene-push.sh`: `PreToolUse(Bash)` hook.
 - `settings.artifact-hygiene-gate.fragment.json`: hook registration with a 300-second timeout.
 - `artifact-hygiene-push.test.sh`: isolated hook, settings and installation tests.
+- `artifact-hygiene-report.test.py`: report-contract and safe-output regressions, called by that suite.
 
 ## Install
 
@@ -37,20 +38,35 @@ hook source; running `make install` replaces that two-link chain with a direct l
 | Invalid hook payload or missing command | Deny with exit 2 without running the audit |
 | Command is not a detected push | Allow without running the audit |
 | Detected push lacks an absolute `-C`, is wrapped/chained, or cannot be resolved | Deny with exit 2 without running the audit |
-| Exit 0, no findings or info-only findings | Allow and name the audited repository |
-| High, medium, low, or missing-severity findings | Deny with exit 2 |
+| Exit 0 and a valid complete v1 report with no findings or info-only findings | Allow and name the audited repository |
+| Critical, high, medium, low, missing, null, or unknown severity | Deny with exit 2 |
+| Malformed, unsupported, inconsistent or incomplete report; validator failure | Deny with exit 2 |
 | Nonzero audit exit, including partial coverage or failure | Deny with exit 2 |
 | Audit helper missing or not executable | Deny with exit 2 |
 
-Audit pass and denial messages name the resolved repository. Audit denials summarize coverage
-errors before severity/category counts and the verdict, then point to `/artifact-hygiene` for the
-redacted report. Unresolved pushes deny without claiming a repository was audited. The hook runs
-read-only Git discovery; it never pushes or fixes findings. Partial coverage relies on the audit's
-documented nonzero exit contract.
+Audit pass and denial messages name the resolved repository. Denials contain only fixed diagnostic
+text, process exit codes and counts by known severity; report-controlled strings and tracebacks are
+never printed. Use `/artifact-hygiene` for the full redacted details. Unresolved pushes deny without
+claiming a repository was audited. The hook runs read-only Git discovery; it never pushes or fixes findings.
+
+### Report contract
+
+Allow requires both the helper and validator to exit 0. The validator checks the gate-consumed
+`artifact-hygiene/v1` fields:
+
+- `status` is `complete`; `verdict` is `clean` exactly when `findings` is empty, otherwise `findings`.
+- Coverage includes unique `working-tree`, `branch-history` and `custom-detectors` entries.
+  Every entry, including additional sources, is complete with empty `errors` and `limits` lists.
+- Each finding has a nonempty string `category` and a known severity. Only `info` findings may pass.
+
+It does not use incidental metadata, locations, or precomputed summary counts for authorization.
+Invalid UTF-8/JSON, duplicate keys, non-finite JSON constants, missing or mistyped decision fields,
+and reports above the producer's 4,000,000-byte limit deny. Report bytes go directly to isolated
+Python rather than shell variables; helper failures and validator exceptions cannot become an allow.
 
 ## Runtime assumptions and limits
 
-- Requires Bash, Python 3, standard Unix text utilities, and agent-skills installed with the
+- Requires Bash, Python 3.10+, standard Unix text utilities, and agent-skills installed with the
   executable helper at `~/.agents/skills/artifact-hygiene/scripts/artifact_hygiene.py`.
 - The audit itself requires Git and Gitleaks; a missing scanner produces partial coverage.
 - The 300-second timeout is enforced by Claude's hook registration, not by the shell script.
@@ -70,8 +86,9 @@ documented nonzero exit contract.
 - Push detection is still a regex, not a shell parser. Aliases, alternate Git executable paths,
   scripts, shell expansions, and other indirect invocations can bypass it. Non-push commands containing
   a `push` token (such as `git checkout push`) can also produce a conservative denial.
-- The hook trusts the installed helper's report schema and exit contract. It is a guardrail, not a
-  general shell security boundary or a replacement for explicit push approval.
+- The hook validates report structure and the helper's exit status; it still trusts the installed
+  helper to perform the audit honestly. It is a guardrail, not a general shell security boundary
+  or a replacement for explicit push approval.
 
 ## Verification
 
