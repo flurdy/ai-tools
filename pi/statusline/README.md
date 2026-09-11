@@ -4,21 +4,41 @@ Pi extension that replaces Pi's default footer with a Bobthefish/Claude-Code-ins
 
 It renders a compact single-line footer by default, and switches to a taller table-style footer when the terminal is large enough. The optional widget above the editor shows the active run and latest submitted prompt.
 
-## Install for testing
+## Install
+
+Install [the standalone session-mode package](https://github.com/flurdy/pi-session-mode) first, either as a reviewed checkout link or pinned Pi Git package. Statusline imports `@flurdy/pi-session-mode/lease-observer`; it does not own or copy the observer.
+
+From the ai-tools root:
 
 ```bash
+make apply
+```
+
+The default dependency source is `~/.pi/agent/extensions/flurdy-session-mode`. For a Git package or another reviewed checkout, select its package root explicitly:
+
+```bash
+export SESSION_MODE_PACKAGE=/path/to/installed/pi-session-mode
+make apply
+```
+
+Use the same selected package revision for the guard and observer. This creates a validated dependency link under `pi/statusline/node_modules/@flurdy/`; it does not download a package, install the guard, or create a second implementation. A Pi package installed separately is not automatically resolvable as another extension's Node dependency.
+
+Restart Pi after first installation; use `/reload` for later changes. Avoid loading the guard from both a Git package and checkout link. `make verify-apply` checks resource links and observer resolution; it cannot attest to code already loaded in a running Pi process.
+
+## Develop and test
+
+Dependency installation may prune the explicit observer link. After `npm install` in this component, restore it before testing or reloading:
+
+```bash
+make prepare-statusline
+npm --prefix pi/statusline test
+npm --prefix pi/statusline run typecheck
 pi -e ./pi/statusline/index.ts
 ```
 
-## Install globally
+Keep `SESSION_MODE_PACKAGE` exported when using a non-default installation. Test and typecheck preflights fail with recovery guidance if the package, export, or link is missing or mismatched. `make prepare-statusline` refuses to replace an unmanaged dependency directory. No registry dependency is declared because the reviewed Git/local package is installed separately.
 
-```bash
-mkdir -p ~/.pi/agent/extensions
-rm -f ~/.pi/agent/extensions/flurdy-statusline.ts
-ln -sfn "$PWD/pi/statusline" ~/.pi/agent/extensions/flurdy-statusline
-```
-
-Then restart Pi, or run `/reload` from an existing Pi session. The lease-occupancy cell imports its observer from the sibling `pi/session-mode` directory, so keep both directories together as installed by `make apply`.
+To roll back, reselect a compatible reviewed package root, rerun `make prepare-statusline`, and reload both extensions. Do not copy an older observer into this repository.
 
 ## Options
 

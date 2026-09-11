@@ -8,7 +8,7 @@ import { BeadsCountsCache, fetchBeadsCounts, findBeadsRoot, formatBeadsCounts } 
 import { fetchCodexWeeklyQuota, isCodexQuotaStale, showsCodexQuota, type CodexWeeklyQuota } from "./codex-quota.ts";
 import { fetchGitDivergence, formatGitDivergence, GitDivergenceCache } from "./git-divergence.ts";
 import { activeModelLabel, modelLabel } from "./model-label.ts";
-import { DEFAULT_LEASE_OCCUPANCY_TIMEOUT_MS, probeWorktreeLeaseOccupancy, type WorktreeLeaseOccupancy } from "../session-mode/lease-observer.ts";
+import { DEFAULT_LEASE_OCCUPANCY_TIMEOUT_MS, probeWorktreeLeaseOccupancy, type WorktreeLeaseOccupancy } from "@flurdy/pi-session-mode/lease-observer";
 import { OpenRouterCostAdvisory, openRouterAdvisoryConfig, sharedOpenRouterAdvisoryState } from "./openrouter-advisory.ts";
 import { createOpenRouterCreditsCache, openRouterCreditsApiKey } from "./openrouter-credits.ts";
 import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT, codexQuotaTone } from "./quota-display.ts";
