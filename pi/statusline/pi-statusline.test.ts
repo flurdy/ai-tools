@@ -73,7 +73,7 @@ test("wires continuing turns to threshold crossing without tool-loop spam", () =
 	assert.equal(notifications.length, 1);
 });
 
-async function verifyGuardLayout(configuredTimeout: string | undefined, expectedTimeout: number) {
+async function verifyGuardLayout(configuredTimeout: string | undefined, expectedTimeout: number, scopes = "") {
 	const probeOptions: { timeoutMs: number; signal: AbortSignal }[] = [];
 	const handlers = registeredHandlers({
 		probeLeaseOccupancy: async (_cwd: string, options: { timeoutMs: number; signal: AbortSignal }) => {
@@ -121,7 +121,7 @@ async function verifyGuardLayout(configuredTimeout: string | undefined, expected
 			},
 			{
 				getGitBranch: () => "feature/statusline-layout-test",
-				getExtensionStatuses: () => new Map([["session-mode", sessionMode]]),
+				getExtensionStatuses: () => new Map([["session-mode", sessionMode], ["session-mode-leases", scopes]]),
 				onBranchChange: () => () => undefined,
 			},
 		);
@@ -137,10 +137,12 @@ async function verifyGuardLayout(configuredTimeout: string | undefined, expected
 			sessionMode = state;
 			process.env.PI_STATUSLINE = "compact";
 			assert.match(component.render(30).join("\n"), new RegExp(emoji));
+			if (scopes) assert.match(component.render(30).join("\n"), /leases:2/);
 			process.env.PI_STATUSLINE = "table";
-			const wide = component.render(120);
+			const wide = component.render(scopes ? 180 : 120);
 			assert.ok(wide.length > 1);
 			assert.match(wide.join("\n"), new RegExp(emoji));
+			if (scopes) assert.match(wide.join("\n"), /leases:2 api, web/);
 		}
 
 		sessionMode = "plan";
@@ -154,7 +156,7 @@ async function verifyGuardLayout(configuredTimeout: string | undefined, expected
 			assert.ok(options.signal instanceof AbortSignal);
 		}
 		process.env.PI_STATUSLINE = "table";
-		const occupiedTable = component.render(120);
+		const occupiedTable = component.render(scopes ? 180 : 120);
 		assert.ok(occupiedTable.length > 1);
 		assert.match(occupiedTable.join("\n"), /🔍\s*│\s*🔒/);
 		sessionMode = "implement";
@@ -167,6 +169,8 @@ async function verifyGuardLayout(configuredTimeout: string | undefined, expected
 		}
 	}
 }
+
+test("keeps the separate scope count in narrow footers and names in wide footers", () => verifyGuardLayout(undefined, 2000, "leases:2 api, web"));
 
 for (const [configuredTimeout, expectedTimeout] of [[undefined, 2000], ["150", 150], ["100", 100], ["50", 2000], ["invalid", 2000]] as const) {
 	test(`pins guard layouts and occupancy deadline (${configuredTimeout ?? "default"})`, () => verifyGuardLayout(configuredTimeout, expectedTimeout));

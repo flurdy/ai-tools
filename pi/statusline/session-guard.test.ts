@@ -3,6 +3,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import test from "node:test";
 import {
 	formatSessionGuard,
+	formatLeaseScopes,
 	LeaseOccupancyCache,
 	SESSION_GUARD_EMOJI,
 	sessionGuardLabel,
@@ -16,6 +17,15 @@ const expected = {
 	lost: "💥",
 	unguarded: "🚨",
 } as const;
+
+test("scope formatting keeps counts while dropping names in narrow layouts", () => {
+	assert.equal(formatLeaseScopes("leases:2 api, web"), "leases:2 api, web");
+	assert.equal(formatLeaseScopes("leases:2 api, web", true), "leases:2");
+	assert.equal(formatLeaseScopes("leases:1 child", true), "leases:1");
+	assert.equal(formatLeaseScopes(""), "");
+	assert.equal(formatLeaseScopes("invalid scope"), "");
+	assert.doesNotMatch(formatLeaseScopes("leases:1 repo\u009b31m"), /[\u0080-\u009f]/);
+});
 
 test("maps plain and themed session guard labels to distinct fixed-width emoji", () => {
 	assert.deepEqual(SESSION_GUARD_EMOJI, expected);

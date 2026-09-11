@@ -23,6 +23,12 @@ export function formatSessionGuard(status: string, emojiEnabled = true): string 
 	return label ? SESSION_GUARD_EMOJI[label] : status;
 }
 
+export function formatLeaseScopes(status: string, compact = false): string {
+	const plain = status.replace(ANSI_SEQUENCE, "").replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+	const match = /^(leases:(?:[0-9]|[12][0-9]|3[0-2]))(?:\s+.*)?$/.exec(plain);
+	return match ? compact ? match[1]! : plain.slice(0, 120) : "";
+}
+
 export interface LeaseOccupancyCacheOptions {
 	load(cwd: string, signal: AbortSignal): Promise<LeaseOccupancyProbeResult>;
 	ttlMs: number;

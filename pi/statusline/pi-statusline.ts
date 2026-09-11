@@ -18,7 +18,7 @@ import { DEFAULT_LEASE_OCCUPANCY_TIMEOUT_MS, probeWorktreeLeaseOccupancy, type W
 import { OpenRouterCostAdvisory, openRouterAdvisoryConfig, sharedOpenRouterAdvisoryState } from "./openrouter-advisory.ts";
 import { createOpenRouterCreditsCache, openRouterCreditsApiKey } from "./openrouter-credits.ts";
 import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT, codexQuotaTone } from "./quota-display.ts";
-import { formatSessionGuard, LeaseOccupancyCache, sessionGuardLabel } from "./session-guard.ts";
+import { formatLeaseScopes, formatSessionGuard, LeaseOccupancyCache, sessionGuardLabel } from "./session-guard.ts";
 
 type GitInfo = {
 	branch: string | null;
@@ -420,6 +420,7 @@ export default function piStatusline(
 				const k8sContext = getK8sContext();
 				const model = modelLabel(ctx.model?.provider, ctx.model?.id ?? "no-model");
 				const sessionMode = footerData.getExtensionStatuses().get("session-mode") ?? "";
+				const leaseScopes = footerData.getExtensionStatuses().get("session-mode-leases") ?? "";
 				const guardLabel = sessionGuardLabel(sessionMode);
 				void leaseOccupancyCache?.refresh(guardLabel === "plan" ? ctx.cwd : null);
 				const sessionName = pi.getSessionName();
@@ -454,7 +455,9 @@ export default function piStatusline(
 					k8s: k8sContext ? theme.fg("accent", `☸ ${k8sContext}`) : "",
 					agent: theme.fg("success", theme.bold("π")),
 					guard: formatSessionGuard(sessionMode, process.env.PI_STATUSLINE_GUARD_EMOJI !== "0"),
-					leaseOccupancy: guardLabel === "plan" && leaseOccupancyCache?.occupiedFor(ctx.cwd) ? "🔒" : "",
+					leaseScopes: formatLeaseScopes(leaseScopes),
+					leaseCount: formatLeaseScopes(leaseScopes, true),
+					leaseOccupancy: guardLabel === "plan" && leaseOccupancyCache?.occupiedFor(ctx.cwd) ? "🔒cwd" : "",
 					model: theme.fg("success", theme.bold(model)),
 					effort: effort ? theme.fg("accent", effort) : "",
 					session: sessionName ? theme.fg("accent", `◈ ${truncateToWidth(sessionName, 24, "…")}`) : "",
@@ -482,13 +485,13 @@ export default function piStatusline(
 
 			function compact(width: number): string[] {
 				const s = segments();
-				let cells = [s.clock, joinCells([s.agent, s.guard, s.leaseOccupancy, s.model, s.effort]), s.bars, s.quota, s.openRouterBalance, s.k8s, s.duration, s.path, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
+				let cells = [s.clock, joinCells([s.agent, s.guard, s.leaseOccupancy, s.leaseScopes, s.model, s.effort]), s.bars, s.quota, s.openRouterBalance, s.k8s, s.duration, s.path, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
 				let line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
-				cells = [joinCells([s.agent, s.guard, s.leaseOccupancy, s.model, s.effort]), s.bars, s.quota, s.openRouterBalance, s.k8s, s.duration, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
+				cells = [joinCells([s.agent, s.guard, s.leaseOccupancy, s.leaseCount, s.model, s.effort]), s.bars, s.quota, s.openRouterBalance, s.k8s, s.duration, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
 				line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
-				cells = [s.agent, s.guard, s.leaseOccupancy, s.model, s.bars, s.k8s, s.branch, s.divergence, s.session].filter(Boolean);
+				cells = [s.agent, s.guard, s.leaseOccupancy, s.leaseCount, s.model, s.bars, s.k8s, s.branch, s.divergence, s.session].filter(Boolean);
 				if (visibleWidth(joinCells(cells)) > width && s.divergence) cells = cells.filter((cell) => cell !== s.divergence);
 				return [truncateToWidth(joinCells(cells), width)];
 			}
@@ -497,7 +500,7 @@ export default function piStatusline(
 				const s = segments();
 				const border = (text: string) => theme.fg("border", text);
 				let row1 = [s.host, s.k8s, s.path, s.repo, s.branch, s.divergence, s.pr, s.beads, s.session].filter(Boolean);
-				const row2 = [s.agent, s.guard, s.leaseOccupancy, s.model, s.effort, s.ctx, s.quotaTable, s.openRouterBalance, s.cost, s.duration, s.clock].filter(Boolean);
+				const row2 = [s.agent, s.guard, s.leaseOccupancy, s.leaseScopes, s.model, s.effort, s.ctx, s.quotaTable, s.openRouterBalance, s.cost, s.duration, s.clock].filter(Boolean);
 
 				function widthsFor(cells: string[]): number[] {
 					return cells.map((cell) => visibleWidth(cell) + 2);

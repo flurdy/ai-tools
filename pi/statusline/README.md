@@ -105,13 +105,15 @@ Table mode uses two bordered rows: location/session information on top, then mod
 | Guard label | Footer | Meaning |
 | --- | --- | --- |
 | `acquiring` | ⏳ | Waiting for the worktree writer lease. |
-| `implement` | ✅ | This session holds write authority. |
+| `implement` | ✅ | This session holds leases for its selected worktrees. |
 | `plan` | 🔍 | This session is guarded and read-only. |
 | `conflict` | ⛔ | Another session prevented lease acquisition. |
 | `lost` | 💥 | A previously held lease was lost. |
 | `unguarded` | 🚨 | Guard protection is unavailable or disabled. |
 
-While this session is in plan mode, a separate adjacent `🔒` cell means another same-user session currently holds the canonical worktree lease. The indicator comes from the kernel's live lock table; holder metadata is never treated as proof. It is hidden when the lock is free, the cwd is not a guarded Git worktree, inspection fails, or the session leaves plan mode.
+A separate `leases:N` cell reports the selected lease count, with bounded worktree names when space permits. Narrow layouts drop names before the count. A single non-cwd scope is shown too; use `/leases` for full canonical identities, requested scopes and failures. This field is supplied by session-mode, not inferred from Beads or the launch directory.
+
+While this session is in plan mode, an adjacent `🔒cwd` cell means another same-user session currently holds the cwd worktree lease. It does not describe every workspace member. The indicator comes from the kernel's live lock table; holder metadata is never treated as proof. It is hidden when the lock is free, cwd is not a guarded Git worktree, inspection fails, or the session leaves plan mode.
 
 The session-mode extension continues to publish full text labels for Pi's default footer and diagnostic compatibility. Set `PI_STATUSLINE_GUARD_EMOJI=0` for the same text in this custom footer. The distinct shapes, text fallback, and table above are the accessibility contract; colour is not required to distinguish states.
 
@@ -141,7 +143,8 @@ The latest prompt is taken from your submitted input, so it can expose task deta
 - current `kubectl` context when available
 - current session name (truncated when necessary)
 - the `session-mode` extension status as a compact emoji, pinned in narrow and wide layouts, with documented text fallback
-- an adjacent `🔒` cell in plan mode when another same-user session holds the canonical worktree lease
+- a separate `leases:N` scope count, retaining names where space permits
+- an adjacent `🔒cwd` cell in plan mode when another same-user session holds the cwd worktree lease
 - `π` agent marker in its own cell; a compact model name (including variants such as Sol, Terra, and Luna), prefixed with `OR` only for OpenRouter; and thinking level
 - cautious context-capacity bar labelled `ctx` (green through 33%, yellow through 66%, then red)
 - cached Codex weekly used-capacity bar labelled `GPT` for OpenAI-Codex models, plus its reset date in table mode
@@ -165,7 +168,7 @@ Set `PI_STATUSLINE_OPENROUTER_WARN=0` to disable the advisory. Set either interv
 
 ## Worktree lease occupancy source
 
-The plan-mode `🔒` cell resolves the canonical Git root and asks util-linux `lslocks` whether the session-mode extension's stable lock file has a live exclusive `FLOCK` entry. It never reads holder JSON, opens or takes the lock, or creates a missing lock file. When `/proc` identity details are available, a holder whose kernel process parent is this Pi process is suppressed so a slow `/plan` release is not mistaken for another session. The lookup runs asynchronously, is cached and timeout-bounded, waits briefly after entering plan mode to avoid unnecessary work during normal release, and stays hidden when Git, `lslocks`, the lock file, or kernel lock data is unavailable.
+The plan-mode `🔒cwd` cell resolves the canonical Git root and asks util-linux `lslocks` whether the session-mode extension's stable lock file has a live exclusive `FLOCK` entry. It never reads holder JSON, opens or takes the lock, or creates a missing lock file. When `/proc` identity details are available, a holder whose kernel process parent is this Pi process is suppressed so a slow `/plan` release is not mistaken for another session. The lookup runs asynchronously, is cached and timeout-bounded, waits briefly after entering plan mode to avoid unnecessary work during normal release, and stays hidden when Git, `lslocks`, the lock file, or kernel lock data is unavailable.
 
 ## Git upstream source
 
