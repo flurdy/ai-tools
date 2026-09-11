@@ -79,28 +79,30 @@ test("observes the authoritative flock without trusting metadata or creating a l
 		const root = execFileSync("git", ["-C", fixture.repo, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
 		const lockPath = join(fixture.runtimeDir, `${lockIdentity(root)}.lock`);
 		const metadataPath = join(fixture.runtimeDir, `${lockIdentity(root)}.json`);
+		const probeOptions = { runtimeDir: fixture.runtimeDir, timeoutMs: 10_000 };
 
-		assert.deepEqual(await probeWorktreeLeaseOccupancy(fixture.repo, { runtimeDir: fixture.runtimeDir }), { kind: "free", root });
+		assert.deepEqual(await probeWorktreeLeaseOccupancy(fixture.repo, probeOptions), { kind: "free", root });
 		await assert.rejects(access(lockPath, constants.F_OK));
 
 		await mkdir(fixture.runtimeDir, { recursive: true });
 		await writeFile(metadataPath, '{"pid":999999}\n');
-		assert.deepEqual(await probeWorktreeLeaseOccupancy(fixture.repo, { runtimeDir: fixture.runtimeDir }), { kind: "free", root });
+		assert.deepEqual(await probeWorktreeLeaseOccupancy(fixture.repo, probeOptions), { kind: "free", root });
 
 		const lease = await acquireWorktreeLease(fixture.repo, { runtimeDir: fixture.runtimeDir });
 		assert.equal(lease.kind, "held");
 		try {
-			assert.deepEqual(await probeWorktreeLeaseOccupancy(fixture.repo, { runtimeDir: fixture.runtimeDir }), { kind: "free", root });
+			assert.deepEqual(await probeWorktreeLeaseOccupancy(fixture.repo, probeOptions), { kind: "free", root });
 			const runtimeAlias = join(fixture.repo, "..", "runtime-link");
 			await symlink(fixture.runtimeDir, runtimeAlias);
 			assert.deepEqual(await probeWorktreeLeaseOccupancy(fixture.repo, {
+				...probeOptions,
 				runtimeDir: runtimeAlias,
 				selfPid: -1,
 			}), { kind: "held", root });
 		} finally {
 			if (lease.kind === "held") await lease.release();
 		}
-		assert.deepEqual(await probeWorktreeLeaseOccupancy(fixture.repo, { runtimeDir: fixture.runtimeDir }), { kind: "free", root });
+		assert.deepEqual(await probeWorktreeLeaseOccupancy(fixture.repo, probeOptions), { kind: "free", root });
 	} finally {
 		await fixture.cleanup();
 	}

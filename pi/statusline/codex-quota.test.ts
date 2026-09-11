@@ -184,6 +184,7 @@ process.on("SIGTERM", () => {
   process.exit(0);
 });
 process.stdin.resume();
+setInterval(() => {}, 1000);
 writeFileSync(ready, String(process.pid));
 `,
 		async (script, directory) => {
