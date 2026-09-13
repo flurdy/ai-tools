@@ -8,7 +8,7 @@ Originally promoted from the dotfiles hook.
 ## Files
 
 - `artifact-hygiene-push.sh`: `PreToolUse(Bash)` hook.
-- `settings.artifact-hygiene-gate.fragment.json`: hook registration with a 300-second timeout.
+- `settings.artifact-hygiene-gate.fragment.json`: hook registration with a 660-second timeout.
 - `artifact-hygiene-push.test.sh`: isolated hook, settings and installation tests.
 - `artifact-hygiene-report.test.py`: report-contract and safe-output regressions, called by that suite.
 
@@ -69,7 +69,9 @@ Python rather than shell variables; helper failures and validator exceptions can
 - Requires Bash, Python 3.10+, standard Unix text utilities, and agent-skills installed with the
   executable helper at `~/.agents/skills/artifact-hygiene/scripts/artifact_hygiene.py`.
 - The audit itself requires Git and Gitleaks; a missing scanner produces partial coverage.
-- The 300-second timeout is enforced by Claude's hook registration, not by the shell script.
+- The 660-second hook timeout is enforced by Claude's registration, not the shell script. It gives
+  the audit's 600-second deadline headroom to terminate children, remove its private temporary
+  directory, and emit a fail-closed report.
 - Repository resolution requires one standalone `git -C /absolute/repository push ...` command
   with exactly one literal absolute `-C` path. Bare pushes and relative `-C` deny. Optional no-value
   Git flags are `--no-pager`, `--paginate`, `--literal-pathspecs`,

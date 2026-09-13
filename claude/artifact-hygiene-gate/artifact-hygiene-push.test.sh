@@ -191,7 +191,7 @@ with open(sys.argv[1]) as f:
     fragment = json.load(f)
 assert fragment == {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{
     "type": "command", "command": "bash ~/.claude/hooks/artifact-hygiene-push.sh",
-    "timeout": 300}]}]}}
+    "timeout": 660}]}]}}
 PY
 
 make -s -C "$SCRIPT_DIR" install "CLAUDE_DIR=$TEST_ROOT/claude install"
