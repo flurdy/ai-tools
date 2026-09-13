@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PreToolUse(Bash) gate: run artifact-hygiene before any `git push`; deny on findings or partial coverage.
+# PreToolUse(Bash) gate: allow only complete, valid clean/advisory audit reports.
 set -euo pipefail
 
 deny_unproven_repo() {
@@ -98,7 +98,7 @@ try:
     report = json.loads(raw.decode("utf-8"), object_pairs_hook=unique_object,
                         parse_constant=reject_constant)
     require(isinstance(report, dict))
-    require(report["schemaVersion"] == "artifact-hygiene/v1")
+    require(report["schemaVersion"] == "artifact-hygiene/v2")
     require(report["status"] == "complete")
     require(isinstance(report["coverage"], list))
     sources = set()
@@ -113,22 +113,31 @@ try:
     require({"working-tree", "branch-history", "custom-detectors"} <= sources)
     findings = report["findings"]
     require(isinstance(findings, list))
-    require(report["verdict"] == ("findings" if findings else "clean"))
-    counts = {severity: 0 for severity in ("critical", "high", "medium", "low", "info")}
+    counts = {
+        grade: {severity: 0 for severity in ("critical", "high", "medium", "low", "info")}
+        for grade in ("advisory", "block")
+    }
     for finding in findings:
         require(isinstance(finding, dict))
         require(isinstance(finding["category"], str) and bool(finding["category"]))
         severity = finding["severity"]
-        require(isinstance(severity, str) and severity in counts)
-        counts[severity] += 1
+        require(isinstance(severity, str) and severity in counts["block"])
+        require(isinstance(finding["policy"], dict))
+        grade = finding["policy"]["grade"]
+        require(isinstance(grade, str) and grade in counts)
+        require(severity != "critical" or grade == "block")
+        counts[grade][severity] += 1
+    expected = "block" if any(counts["block"].values()) else "advisory" if findings else "clean"
+    require(report["verdict"] == expected)
 except Exception:
     print("invalid audit report")
     sys.exit(2)
 
-blocking = [f"{severity}={count}" for severity, count in counts.items()
-            if severity != "info" and count]
-if blocking:
-    print("blocking findings: " + ", ".join(blocking))
+for grade, label in (("advisory", "advisory"), ("block", "blocking")):
+    summary = [f"{severity}={count}" for severity, count in counts[grade].items() if count]
+    if summary:
+        print(label + " findings: " + ", ".join(summary))
+if any(counts["block"].values()):
     sys.exit(2)
 ' 2>/dev/null
   results=("${PIPESTATUS[@]}")
@@ -138,6 +147,9 @@ if blocking:
   fi
   exit "${results[1]}"
 )"; then
+  if [[ -n "$summary" ]]; then
+    printf '%s\n' "$summary"
+  fi
   echo "artifact-hygiene passed 'git push' for $repo"
   exit 0
 fi

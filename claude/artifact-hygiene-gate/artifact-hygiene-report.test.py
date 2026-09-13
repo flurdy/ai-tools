@@ -18,7 +18,7 @@ SENTINEL = "UNSAFE-REPORT-TEXT"
 
 def complete_report():
     return {
-        "schemaVersion": "artifact-hygiene/v1",
+        "schemaVersion": "artifact-hygiene/v2",
         "status": "complete",
         "verdict": "clean",
         "coverage": [
@@ -29,10 +29,11 @@ def complete_report():
     }
 
 
-def with_finding(severity="info"):
+def with_finding(severity="info", grade=None):
     report = complete_report()
-    report["verdict"] = "findings"
-    report["findings"] = [{"severity": severity, "category": "fixture-category"}]
+    grade = grade or ("advisory" if severity == "info" else "block")
+    report["verdict"] = grade
+    report["findings"] = [{"severity": severity, "category": "fixture-category", "policy": {"grade": grade}}]
     return report
 
 
@@ -70,6 +71,8 @@ class ReportGateTests(unittest.TestCase):
         self.assertNotIn(b"Traceback", output)
         if expected == 0:
             self.assertIn(b"passed", output)
+            if isinstance(report, dict) and report.get("verdict") == "advisory":
+                self.assertIn(b"advisory findings:", output)
         else:
             self.assertIn(b"denied", output)
             self.assertNotIn(b"passed", output)
@@ -131,7 +134,7 @@ class ReportGateTests(unittest.TestCase):
             del report["coverage"][0][field]
             with self.subTest(missing_coverage=field):
                 self.run_report(report, 2)
-        for field in ("category", "severity"):
+        for field in ("category", "severity", "policy"):
             report = with_finding()
             del report["findings"][0][field]
             with self.subTest(missing_finding=field):
@@ -139,7 +142,8 @@ class ReportGateTests(unittest.TestCase):
 
     def test_invalid_shapes_and_consistency(self):
         changes = [
-            (("schemaVersion",), "artifact-hygiene/v2"),
+            (("schemaVersion",), "artifact-hygiene/v1"),
+            (("schemaVersion",), "artifact-hygiene/v3"),
             (("schemaVersion",), []),
             (("status",), "partial"),
             (("status",), "failed"),
@@ -147,6 +151,8 @@ class ReportGateTests(unittest.TestCase):
             (("verdict",), "partial"),
             (("verdict",), "failed"),
             (("verdict",), "findings"),
+            (("verdict",), "advisory"),
+            (("verdict",), "block"),
             (("verdict",), []),
             (("coverage",), None),
             (("coverage",), {}),
@@ -176,7 +182,23 @@ class ReportGateTests(unittest.TestCase):
                     changed(with_finding(), ("findings", 0, "category"), category), 2
                 )
 
-    def test_only_info_is_allowed(self):
+    def test_advisory_grades_allow_high_findings_but_never_critical(self):
+        for severity in ("high", "medium", "low", "info"):
+            self.run_report(with_finding(severity, "advisory"), 0)
+        self.run_report(with_finding("critical", "advisory"), 2)
+        for grade in (None, "allow", "clean", [], 0):
+            self.run_report(changed(with_finding(), ("findings", 0, "policy", "grade"), grade), 2)
+        self.run_report(changed(with_finding(), ("findings", 0, "policy"), {}), 2)
+        self.run_report(changed(with_finding(), ("findings", 0, "policy"), None), 2)
+        self.run_report(changed(with_finding("high"), ("verdict",), "advisory"), 2)
+        self.run_report(changed(with_finding(), ("verdict",), "block"), 2)
+        mixed = with_finding("high", "advisory")
+        mixed["findings"].extend(with_finding("high", "block")["findings"])
+        self.run_report(mixed, 2)
+        mixed["verdict"] = "block"
+        self.run_report(mixed, 2)
+
+    def test_block_and_unknown_severities_are_denied(self):
         for severity in (
             "critical",
             "high",
@@ -198,7 +220,7 @@ class ReportGateTests(unittest.TestCase):
                 self.run_report(b"[]", 2, helper_status=status)
         for state, status in (("partial", 2), ("failed", 3)):
             report = complete_report()
-            report.update(status=state, verdict=state)
+            report.update(status=state, verdict="block")
             report["coverage"][0].update(status=state, errors=["fixture-error"])
             self.run_report(report, 2, helper_status=status)
 

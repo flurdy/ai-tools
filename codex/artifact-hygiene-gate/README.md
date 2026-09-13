@@ -32,10 +32,11 @@ edits run without a fresh trust prompt. Treat this checkout as trusted executabl
 Codex invokes the synchronous hook before local shell commands. A standalone
 `git -C /absolute/repository push ...` runs the artifact-hygiene audit in its resolved worktree.
 Bare pushes and relative `-C` deny. The shared gate allows only helper exit 0 plus a validated
-complete v1 report with no findings or info-only findings. Malformed reports, unsupported severities,
-incomplete coverage, helper/validator failures, and detected wrapped, chained or unresolved pushes
-deny with exit 2. Denials contain fixed diagnostics and known severity counts, not report-controlled
-text. See the [canonical report contract](../../claude/artifact-hygiene-gate/#report-contract).
+complete v2 report with verdict `clean` or `advisory`. Advisory findings remain visible as fixed
+severity counts; they are not declared harmless. A `block` verdict, inconsistent grades, malformed
+reports, unknown grades/severities, incomplete coverage, helper/validator failures, and detected
+wrapped, chained or unresolved pushes deny with exit 2. Details contain fixed diagnostics and known
+severity counts, not report-controlled text. Old/new schema mismatches deny. See the [canonical report contract](../../claude/artifact-hygiene-gate/#report-contract).
 Non-push commands pass without auditing.
 
 ## Requirements and limits

@@ -38,26 +38,31 @@ hook source; running `make install` replaces that two-link chain with a direct l
 | Invalid hook payload or missing command | Deny with exit 2 without running the audit |
 | Command is not a detected push | Allow without running the audit |
 | Detected push lacks an absolute `-C`, is wrapped/chained, or cannot be resolved | Deny with exit 2 without running the audit |
-| Exit 0 and a valid complete v1 report with no findings or info-only findings | Allow and name the audited repository |
-| Critical, high, medium, low, missing, null, or unknown severity | Deny with exit 2 |
+| Exit 0 and a valid complete v2 report with verdict `clean` | Allow and name the audited repository |
+| Exit 0 and a valid complete v2 report with verdict `advisory` | Show fixed advisory severity counts, then allow |
+| Verdict `block`, blocking finding grade, invalid grade/severity, or critical advisory | Deny with exit 2 |
 | Malformed, unsupported, inconsistent or incomplete report; validator failure | Deny with exit 2 |
 | Nonzero audit exit, including partial coverage or failure | Deny with exit 2 |
 | Audit helper missing or not executable | Deny with exit 2 |
 
-Audit pass and denial messages name the resolved repository. Denials contain only fixed diagnostic
-text, process exit codes and counts by known severity; report-controlled strings and tracebacks are
-never printed. Use `/artifact-hygiene` for the full redacted details. Unresolved pushes deny without
+Audit pass and denial messages name the resolved repository. Advisory and denial details contain only
+fixed diagnostic text, process exit codes and counts by known severity; report-controlled strings and
+tracebacks are never printed. Advisory does not mean a match was verified harmless. Use `/artifact-hygiene` for the full redacted details. Unresolved pushes deny without
 claiming a repository was audited. The hook runs read-only Git discovery; it never pushes or fixes findings.
 
 ### Report contract
 
 Allow requires both the helper and validator to exit 0. The validator checks the gate-consumed
-`artifact-hygiene/v1` fields:
+`artifact-hygiene/v2` fields:
 
-- `status` is `complete`; `verdict` is `clean` exactly when `findings` is empty, otherwise `findings`.
+- `status` is `complete`. The verdict is derived from the findings: empty means `clean`, any
+  `policy.grade: block` means `block`, otherwise it is `advisory`. A mismatching producer verdict denies.
 - Coverage includes unique `working-tree`, `branch-history` and `custom-detectors` entries.
   Every entry, including additional sources, is complete with empty `errors` and `limits` lists.
-- Each finding has a nonempty string `category` and a known severity. Only `info` findings may pass.
+- Each finding has a nonempty string `category`, a known severity, and a `policy` object with
+  `grade: advisory` or `grade: block`. Critical severity cannot be advisory. Any blocking grade denies;
+  advisory findings can have other known severities. The helper alone owns class/location/visibility
+  grading; the hook does not copy its policy matrix.
 
 It does not use incidental metadata, locations, or precomputed summary counts for authorization.
 Invalid UTF-8/JSON, duplicate keys, non-finite JSON constants, missing or mistyped decision fields,
@@ -89,8 +94,14 @@ Python rather than shell variables; helper failures and validator exceptions can
   scripts, shell expansions, and other indirect invocations can bypass it. Non-push commands containing
   a `push` token (such as `git checkout push`) can also produce a conservative denial.
 - The hook validates report structure and the helper's exit status; it still trusts the installed
-  helper to perform the audit honestly. It is a guardrail, not a general shell security boundary
+  helper to perform the audit and grading honestly. It is a guardrail, not a general shell security boundary
   or a replacement for explicit push approval.
+
+### Contract migration
+
+The helper and hook must both support v2. Old/new schema mismatches deny, never silently allow.
+Update the installed agent-skills helper and this shared gate together; Codex reuses the same source.
+Clone-local visibility assertions belong to the helper and are not set by installation or this hook.
 
 ## Verification
 

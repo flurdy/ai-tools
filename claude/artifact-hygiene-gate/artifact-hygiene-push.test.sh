@@ -36,19 +36,20 @@ import json
 import sys
 
 kind, path = sys.argv[1:]
-r = {"schemaVersion": "artifact-hygiene/v1", "status": "complete",
+r = {"schemaVersion": "artifact-hygiene/v2", "status": "complete",
      "coverage": [{"source": source, "status": "complete", "errors": [], "limits": []}
                   for source in ("working-tree", "branch-history", "custom-detectors")],
      "findings": [], "verdict": "clean"}
 if kind == "partial":
     r["coverage"][0].update(status="partial", errors=["scanner-missing"])
-    r.update(status="partial", verdict="partial")
+    r.update(status="partial", verdict="block")
 elif kind != "clean":
-    finding = {"category": "fixture-category"}
+    grade = "advisory" if kind == "info" else "block"
+    finding = {"category": "fixture-category", "policy": {"grade": grade}}
     if kind != "unknown":
         finding["severity"] = kind
     r["findings"] = [finding]
-    r["verdict"] = "findings"
+    r["verdict"] = grade
 with open(path, "w") as f:
     json.dump(r, f)
 PY
@@ -163,7 +164,8 @@ for severity in high medium low unknown; do
 done
 report info
 run_gate "$PUSH" 0
-assert_equals "$output" "artifact-hygiene passed 'git push' for $(cd "$TEST_ROOT/target" && pwd -P)" 'info-only output'
+assert_contains 'advisory findings: info=1'
+assert_contains "artifact-hygiene passed 'git push' for $(cd "$TEST_ROOT/target" && pwd -P)"
 
 report partial
 export AUDIT_STATUS=2
