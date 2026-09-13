@@ -44,7 +44,8 @@ Non-push commands pass without auditing.
   against the documentation and 0.153.4 source, not a live Codex session.
 - Bash, Python 3.10+, standard Unix text utilities, and the executable artifact-hygiene helper from
   agent-skills at `~/.agents/skills/artifact-hygiene/scripts/artifact_hygiene.py`.
-- The fragment timeout is 300 seconds and is enforced by Codex, not the script.
+- The fragment timeout is 660 seconds and is enforced by Codex, not the script. It gives the
+  helper's 600-second deadline headroom for cleanup and fail-closed report emission.
 - Codex can skip untrusted hooks, and specialized tool paths may bypass `PreToolUse`; this is a
   guardrail rather than a complete enforcement boundary.
 - Repository resolution accepts only the canonical gate's documented standalone command forms;

@@ -27,7 +27,7 @@ hooks = groups[0]["hooks"]
 assert len(hooks) == 1
 hook = hooks[0]
 assert hook["type"] == "command"
-assert hook["timeout"] == 300
+assert hook["timeout"] == 660
 assert set(hook) == {"type", "command", "timeout"}
 print(hook["command"])
 PY
