@@ -6,39 +6,27 @@ It renders a compact single-line footer by default, and switches to a taller tab
 
 ## Install
 
-Install [the standalone session-mode package](https://github.com/flurdy/pi-session-mode) first, either as a reviewed checkout link or pinned Pi Git package. Statusline imports `@flurdy/pi-session-mode/lease-observer`; it does not own or copy the observer.
-
 From the ai-tools root:
 
 ```bash
 make apply
 ```
 
-The default dependency source is `~/.pi/agent/extensions/flurdy-session-mode`. For a Git package or another reviewed checkout, select its package root explicitly:
+Install [the standalone session-mode package](https://github.com/flurdy/pi-session-mode) separately for guard indicators and `/leases`. Statusline reads its published `session-mode` and `session-mode-leases` statuses through Pi; it does not import that package or inspect locks. Without those statuses, the guard cell is hidden.
 
-```bash
-export SESSION_MODE_PACKAGE=/path/to/installed/pi-session-mode
-make apply
-```
-
-Use the same selected package revision for the guard and observer. This creates a validated dependency link under `pi/statusline/node_modules/@flurdy/`; it does not download a package, install the guard, or create a second implementation. A Pi package installed separately is not automatically resolvable as another extension's Node dependency.
-
-Restart Pi after first installation; use `/reload` for later changes. Avoid loading the guard from both a Git package and checkout link. `make verify-apply` checks resource links and observer resolution; it cannot attest to code already loaded in a running Pi process.
+Restart Pi after first installation; use `/reload` for later changes. `make verify-apply` checks resource links, not code already loaded in a running Pi process. Older installations may retain an unused `pi/statusline/node_modules/@flurdy/pi-session-mode` link; it is no longer required.
 
 ## Develop and test
 
-Dependency installation may prune the explicit observer link. After `npm install` in this component, restore it before testing or reloading:
+After installing this component's development dependencies, run from the ai-tools root:
 
 ```bash
-make prepare-statusline
 npm --prefix pi/statusline test
 npm --prefix pi/statusline run typecheck
 pi -e ./pi/statusline/index.ts
 ```
 
-Keep `SESSION_MODE_PACKAGE` exported when using a non-default installation. Test and typecheck preflights fail with recovery guidance if the package, export, or link is missing or mismatched. `make prepare-statusline` refuses to replace an unmanaged dependency directory. No registry dependency is declared because the reviewed Git/local package is installed separately.
-
-To roll back, reselect a compatible reviewed package root, rerun `make prepare-statusline`, and reload both extensions. Do not copy an older observer into this repository.
+Avoid loading a second copy of an already installed extension when using `-e`.
 
 ## Options
 
@@ -50,10 +38,6 @@ To roll back, reselect a compatible reviewed package root, rerun `make prepare-s
 - `PI_STATUSLINE_GIT_DIVERGENCE_TTL=30000` — upstream-divergence cache interval in milliseconds (minimum one second).
 - `PI_STATUSLINE_GIT_DIVERGENCE_TIMEOUT=500` — timeout for one local upstream comparison in milliseconds (minimum 100 ms).
 - `PI_STATUSLINE_GUARD_EMOJI=0` — show the session guard's full text label instead of its compact emoji.
-- `PI_STATUSLINE_GUARD_OCCUPANCY=0` — hide the plan-mode indicator for a worktree lease held by another session.
-- `PI_STATUSLINE_GUARD_OCCUPANCY_TTL=5000` — worktree-lease occupancy cache interval in milliseconds (minimum one second).
-- `PI_STATUSLINE_GUARD_OCCUPANCY_TIMEOUT=2000` — per-command timeout for bounded Git and kernel-lock inspection in milliseconds, shared with the observer default. Overrides must be at least 100 ms; invalid or smaller values fall back to the default.
-- `PI_STATUSLINE_GUARD_OCCUPANCY_SETTLE=500` — delay before the first plan-mode occupancy check, allowing the current session's lease release to finish; `0` disables the delay.
 - `PI_STATUSLINE_LAST_PROMPT=0` — hide the active-run/latest-prompt widget above the editor (recommended when prompts may be visible to others).
 - `PI_STATUSLINE_K8S_CONTEXT=0` — hide the current `kubectl` context (shown by default when available).
 - `PI_STATUSLINE_BEADS=0` — hide Beads work counts in the table footer.
@@ -83,7 +67,7 @@ The examples below are schematic: they use placeholder values and omit terminal 
 Compact mode is a single line. As space narrows, less-important cells are dropped before the line is truncated.
 
 ```text
-12:34 │ π │ ✅ │ GPT-5 Terra │ ⚡Hi │ ██░ ctx │ █░░ GPT │ OR $74.75 │ 12m │ ~/project │ main │ ⇡10 ⇣2 │ ◈ session
+12:34 │ π │ 🔒 │ GPT-5 Terra │ ⚡Hi │ ██░ ctx │ █░░ GPT │ OR $74.75 │ 12m │ ~/project │ main │ ⇡10 ⇣2 │ ◈ session
 ```
 
 ### Table footer
@@ -94,7 +78,7 @@ Table mode uses two bordered rows: location/session information on top, then mod
 ┌──────────────┬───────────┬──────┬──────────────────────┬────────────────┐
 │ example-host │ ~/project │ main │ ⇡10 ⇣2 │ ◉ P4:4 ◐1         │ ◈ session      │
 ├───┬──────────┴──┬─────┬──┴──────┴──┬──────────┬────────┴──┬─────┬───────┤
-│ π │ ✅ │ GPT-5 Terra │ ⚡Hi │ ███░░░ ctx │ OR $74.75 │ est $0.00 │ 12m │ 12:34 │
+│ π │ 🔒2 │ GPT-5 Terra │ ⚡Hi │ ███░░░ ctx │ OR $74.75 │ est $0.00 │ 12m │ 12:34 │
 └───┴─────────────┴─────┴────────────┴──────────┴───────────┴─────┴───────┘
 ```
 
@@ -105,17 +89,19 @@ Table mode uses two bordered rows: location/session information on top, then mod
 | Guard label | Footer | Meaning |
 | --- | --- | --- |
 | `acquiring` | ⏳ | Waiting for the worktree writer lease. |
-| `implement` | ✅ | This session holds leases for its selected worktrees. |
+| `implement`, one worktree lease | 🔒 | This session holds one worktree writer lease, not necessarily cwd. |
+| `implement`, multiple worktree leases | 🔒N | This session holds N worktree writer leases (up to 32). |
+| `implement`, zero or unavailable count | ✅ | Implement state without a reported worktree lease; may be a file-only grant. |
 | `plan` | 🔍 | This session is guarded and read-only. |
 | `conflict` | ⛔ | Another session prevented lease acquisition. |
 | `lost` | 💥 | A previously held lease was lost. |
 | `unguarded` | 🚨 | Guard protection is unavailable or disabled. |
 
-A separate `leases:N` cell reports the selected lease count, with bounded worktree names when space permits. Narrow layouts drop names before the count. A single non-cwd scope is shown too; use `/leases` for full canonical identities, requested scopes and failures. This field is supplied by session-mode, not inferred from Beads or the launch directory.
+One guard cell summarizes this session's authority in both layouts. The lock means this session holds worktree write authority, not that another session blocks it. Plan mode has no occupancy hint or background lock probe. Lease counts are used only in implement state; names and zero counts are never displayed. Missing or malformed counts do not imply a held lock.
 
-While this session is in plan mode, an adjacent `🔒cwd` cell means another same-user session currently holds the cwd worktree lease. It does not describe every workspace member. The indicator comes from the kernel's live lock table; holder metadata is never treated as proof. It is hidden when the lock is free, cwd is not a guarded Git worktree, inspection fails, or the session leaves plan mode.
+Use `/leases` for full canonical identities, requested scopes, occupancy observations, and failures. The footer reads the count published by session-mode; it does not infer authority from Beads or the launch directory. Guard enforcement, status publication, and `/leases` are unchanged.
 
-The session-mode extension continues to publish full text labels for Pi's default footer and diagnostic compatibility. Set `PI_STATUSLINE_GUARD_EMOJI=0` for the same text in this custom footer. The distinct shapes, text fallback, and table above are the accessibility contract; colour is not required to distinguish states.
+Set `PI_STATUSLINE_GUARD_EMOJI=0` to preserve the full themed state label, adding a count only for multiple implement leases (for example, `implement 2`). A single lease or unavailable count remains `implement`. The distinct shapes, text fallback, and table above are the accessibility contract; colour is not required to distinguish states.
 
 ### Above-editor widget and prompt privacy
 
@@ -142,9 +128,7 @@ The latest prompt is taken from your submitted input, so it can expose task deta
 - hostname with a Nerd Font monitor icon
 - current `kubectl` context when available
 - current session name (truncated when necessary)
-- the `session-mode` extension status as a compact emoji, pinned in narrow and wide layouts, with documented text fallback
-- a separate `leases:N` scope count, retaining names where space permits
-- an adjacent `🔒cwd` cell in plan mode when another same-user session holds the cwd worktree lease
+- one session guard cell, pinned in narrow and wide layouts, with a worktree count only for multiple implement leases and a documented text fallback
 - `π` agent marker in its own cell; a compact model name (including variants such as Sol, Terra, and Luna), prefixed with `OR` only for OpenRouter; and thinking level
 - cautious context-capacity bar labelled `ctx` (green through 33%, yellow through 66%, then red)
 - cached Codex weekly used-capacity bar labelled `GPT` for OpenAI-Codex models, plus its reset date in table mode
@@ -165,10 +149,6 @@ The advisory is enabled by default only for models whose Pi provider is `openrou
 The cost figure is a local estimate: current context tokens multiplied by the active model's Pi-configured request-wide input rate. Before the first request, submitted text uses Pi's conservative four-characters-per-token estimate and each image adds 1,200 tokens. The estimate assumes all context is billed as uncached input and excludes output, exact provider payload adjustments, cache discounts, routing changes, account credits, and provider billing corrections. The notification labels it `estimated uncached input` and omits it when pricing metadata is missing or invalid. It never queries OpenRouter billing or account spend.
 
 Set `PI_STATUSLINE_OPENROUTER_WARN=0` to disable the advisory. Set either interval to `0` to disable only that signal; invalid values fall back to the documented defaults.
-
-## Worktree lease occupancy source
-
-The plan-mode `🔒cwd` cell resolves the canonical Git root and asks util-linux `lslocks` whether the session-mode extension's stable lock file has a live exclusive `FLOCK` entry. It never reads holder JSON, opens or takes the lock, or creates a missing lock file. When `/proc` identity details are available, a holder whose kernel process parent is this Pi process is suppressed so a slow `/plan` release is not mistaken for another session. The lookup runs asynchronously, is cached and timeout-bounded, waits briefly after entering plan mode to avoid unnecessary work during normal release, and stays hidden when Git, `lslocks`, the lock file, or kernel lock data is unavailable.
 
 ## Git upstream source
 

@@ -37,7 +37,7 @@ the tools here:
   Pi extension that maps skill routing metadata to locally configured models, with its
   pre-extraction history in this repository.
 - [flurdy/pi-session-mode](https://github.com/flurdy/pi-session-mode) — independently installed
-  guarded modes, writer leases and the statusline observer API; its pre-extraction history is here.
+  guarded modes, writer leases and `/leases` inspection; its pre-extraction history is here.
 - [flurdy/pi-watch-loop](https://github.com/flurdy/pi-watch-loop) — the independently installed
   protocol-v1 extension for bounded fixed and adaptive watch workflows, with its pre-extraction
   history preserved from this repository.
@@ -50,14 +50,12 @@ The Kitty tab title write-up is at <https://flurdy.com/docs/kitty-ai-tabs/>.
 make apply
 ```
 
-Install the standalone session-mode package first. `make apply` links the statusline, Kitty tab
-title and theme into `~/.pi/agent`, and wires statusline to that package's observer export. By default
-it uses `~/.pi/agent/extensions/flurdy-session-mode`; for a pinned Pi Git installation pass
-`SESSION_MODE_PACKAGE=/path/to/installed/pi-session-mode`. See [statusline installation](pi/statusline/README.md).
+`make apply` links the statusline, Kitty tab title and theme into `~/.pi/agent`.
+Install session-mode separately for guard indicators and `/leases`; statusline reads its published
+statuses without a package dependency. See [statusline installation](pi/statusline/README.md).
 
 This does not install settings, launchers, `APPEND_SYSTEM.md`, session-mode, skill-model-router or
 watch-loop. Restart Pi after first linking an extension; `/reload` is sufficient for later changes.
-Dependency installation may prune the observer link; restore it with `make prepare-statusline`.
 
 
 ## Layout

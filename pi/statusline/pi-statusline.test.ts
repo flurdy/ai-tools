@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { stripVTControlCharacters } from "node:util";
 import test from "node:test";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import piStatusline from "./pi-statusline.ts";
 
 type Handler = (event: any, context: any) => unknown;
 
-function registeredHandlers(dependencies?: unknown): Map<string, Handler> {
+function registeredHandlers(): Map<string, Handler> {
 	const handlers = new Map<string, Handler>();
 	piStatusline({
 		on(event: string, handler: Handler) {
@@ -13,7 +15,7 @@ function registeredHandlers(dependencies?: unknown): Map<string, Handler> {
 		getSessionName() {
 			return "layout-test-session";
 		},
-	} as never, dependencies as never);
+	} as never);
 	return handlers;
 }
 
@@ -73,32 +75,25 @@ test("wires continuing turns to threshold crossing without tool-loop spam", () =
 	assert.equal(notifications.length, 1);
 });
 
-async function verifyGuardLayout(configuredTimeout: string | undefined, expectedTimeout: number, scopes = "") {
-	const probeOptions: { timeoutMs: number; signal: AbortSignal }[] = [];
-	const handlers = registeredHandlers({
-		probeLeaseOccupancy: async (_cwd: string, options: { timeoutMs: number; signal: AbortSignal }) => {
-			probeOptions.push(options);
-			return { kind: "held", root: "/tmp" };
-		},
-	});
+type Footer = { render(width: number): string[]; dispose(): void };
+
+async function withFooter(run: (footer: Footer, statuses: Map<string, string>) => void) {
 	let footerFactory: any;
-	let component: any;
-	let sessionMode = "implement";
+	let component: Footer | undefined;
+	const statuses = new Map<string, string>();
 	const environment = [
 		"PI_STATUSLINE_K8S_CONTEXT",
 		"PI_STATUSLINE_CODEX_QUOTA",
 		"PI_STATUSLINE_OPENROUTER_CREDITS",
 		"PI_STATUSLINE_BEADS",
 		"PI_STATUSLINE_GIT_DIVERGENCE",
-		"PI_STATUSLINE_GUARD_OCCUPANCY_SETTLE",
-		"PI_STATUSLINE_GUARD_OCCUPANCY_TIMEOUT",
+		"PI_STATUSLINE_PR",
+		"PI_STATUSLINE_GUARD_EMOJI",
 		"PI_STATUSLINE",
 	] as const;
 	const previous = new Map(environment.map((name) => [name, process.env[name]]));
-	for (const name of environment.slice(0, 5)) process.env[name] = "0";
-	process.env.PI_STATUSLINE_GUARD_OCCUPANCY_SETTLE = "0";
-	if (configuredTimeout === undefined) delete process.env.PI_STATUSLINE_GUARD_OCCUPANCY_TIMEOUT;
-	else process.env.PI_STATUSLINE_GUARD_OCCUPANCY_TIMEOUT = configuredTimeout;
+	for (const name of environment.slice(0, 6)) process.env[name] = "0";
+	process.env.PI_STATUSLINE_GUARD_EMOJI = "1";
 	try {
 		const ctx = {
 			cwd: "/tmp",
@@ -111,56 +106,22 @@ async function verifyGuardLayout(configuredTimeout: string | undefined, expected
 				setFooter(factory: any) { footerFactory = factory; },
 			},
 		};
-		await handlers.get("session_start")?.({}, ctx);
+		await registeredHandlers().get("session_start")?.({}, ctx);
 		assert.ok(footerFactory);
 		component = footerFactory(
 			{ requestRender() {} },
 			{
-				fg: (_tone: string, text: string) => text,
-				bold: (text: string) => text,
+				fg: (_tone: string, text: string) => `\x1b[32m${text}\x1b[0m`,
+				bold: (text: string) => `\x1b[1m${text}\x1b[0m`,
 			},
 			{
 				getGitBranch: () => "feature/statusline-layout-test",
-				getExtensionStatuses: () => new Map([["session-mode", sessionMode], ["session-mode-leases", scopes]]),
+				getExtensionStatuses: () => statuses,
 				onBranchChange: () => () => undefined,
 			},
 		);
-		const expected = new Map([
-			["acquiring", "⏳"],
-			["implement", "✅"],
-			["plan", "🔍"],
-			["conflict", "⛔"],
-			["lost", "💥"],
-			["unguarded", "🚨"],
-		]);
-		for (const [state, emoji] of expected) {
-			sessionMode = state;
-			process.env.PI_STATUSLINE = "compact";
-			assert.match(component.render(30).join("\n"), new RegExp(emoji));
-			if (scopes) assert.match(component.render(30).join("\n"), /leases:2/);
-			process.env.PI_STATUSLINE = "table";
-			const wide = component.render(scopes ? 180 : 120);
-			assert.ok(wide.length > 1);
-			assert.match(wide.join("\n"), new RegExp(emoji));
-			if (scopes) assert.match(wide.join("\n"), /leases:2 api, web/);
-		}
-
-		sessionMode = "plan";
-		process.env.PI_STATUSLINE = "compact";
-		component.render(30);
-		await new Promise((resolve) => setImmediate(resolve));
-		assert.match(component.render(30).join("\n"), /🔍\s*│\s*🔒/);
-		assert.ok(probeOptions.length > 0);
-		for (const options of probeOptions) {
-			assert.equal(options.timeoutMs, expectedTimeout);
-			assert.ok(options.signal instanceof AbortSignal);
-		}
-		process.env.PI_STATUSLINE = "table";
-		const occupiedTable = component.render(scopes ? 180 : 120);
-		assert.ok(occupiedTable.length > 1);
-		assert.match(occupiedTable.join("\n"), /🔍\s*│\s*🔒/);
-		sessionMode = "implement";
-		assert.doesNotMatch(component.render(120).join("\n"), /🔒/);
+		assert.ok(component);
+		run(component, statuses);
 	} finally {
 		component?.dispose();
 		for (const [name, value] of previous) {
@@ -170,8 +131,57 @@ async function verifyGuardLayout(configuredTimeout: string | undefined, expected
 	}
 }
 
-test("keeps the separate scope count in narrow footers and names in wide footers", () => verifyGuardLayout(undefined, 2000, "leases:2 api, web"));
-
-for (const [configuredTimeout, expectedTimeout] of [[undefined, 2000], ["150", 150], ["100", 100], ["50", 2000], ["invalid", 2000]] as const) {
-	test(`pins guard layouts and occupancy deadline (${configuredTimeout ?? "default"})`, () => verifyGuardLayout(configuredTimeout, expectedTimeout));
+function verifyLayouts(footer: Footer, expectedGuard: string) {
+	for (const layout of ["compact", "table"]) {
+		process.env.PI_STATUSLINE = layout;
+		for (const width of [1, 8, 20, 30, 80, 120, 180]) {
+			const lines = footer.render(width);
+			assert.ok(lines.every((line) => visibleWidth(line) <= width), `${layout} at ${width}`);
+			if (layout === "table" && width === 180) {
+				assert.equal(lines.length, 5);
+				assert.equal(new Set(lines.map(visibleWidth)).size, 1);
+			}
+			if (layout === "compact" || width === 30) assert.equal(lines.length, 1);
+			const plain = stripVTControlCharacters(lines.join("\n"));
+			assert.doesNotMatch(plain, /leases:|api, web|🔒cwd|\x00|\x9b/);
+			if (width >= 30) {
+				const cells = plain.split(/[│\n]/).map((cell) => cell.trim());
+				assert.equal(cells.filter((cell) => cell === expectedGuard).length, 1, `${layout} at ${width}: ${plain}`);
+			}
+		}
+	}
 }
+
+for (const emojiEnabled of [true, false]) {
+	for (const count of [1, 2, 32]) {
+		test(`unifies ${count} worktree leases in emoji=${emojiEnabled} layouts`, () => withFooter((footer, statuses) => {
+			process.env.PI_STATUSLINE_GUARD_EMOJI = emojiEnabled ? "1" : "0";
+			statuses.set("session-mode", "\x1b[32mimplement\x1b[0m");
+			statuses.set("session-mode-leases", `\x1b[32mleases:${count} api, web\x00\x9b\x1b[0m`);
+			const suffix = count > 1 ? String(count) : "";
+			verifyLayouts(footer, emojiEnabled ? `🔒${suffix}` : `implement${suffix ? ` ${suffix}` : ""}`);
+		}));
+	}
+}
+
+test("keeps non-implement states distinct without persistent lease or occupancy cells", () => withFooter((footer, statuses) => {
+	statuses.set("session-mode-leases", "leases:32 api, web");
+	for (const [state, emoji] of [["acquiring", "⏳"], ["plan", "🔍"], ["conflict", "⛔"], ["lost", "💥"], ["unguarded", "🚨"]]) {
+		statuses.set("session-mode", `\x1b[31m${state}\x1b[0m`);
+		process.env.PI_STATUSLINE_GUARD_EMOJI = "1";
+		verifyLayouts(footer, emoji!);
+		process.env.PI_STATUSLINE_GUARD_EMOJI = "0";
+		verifyLayouts(footer, state!);
+	}
+}));
+
+test("updates the unified cell as scopes change and disappear", () => withFooter((footer, statuses) => {
+	statuses.set("session-mode", "implement");
+	for (const [scopes, guard] of [["leases:2 api, web", "🔒2"], ["leases:1 child", "🔒"], ["leases:0", "✅"], ["invalid", "✅"], ["", "✅"]]) {
+		statuses.set("session-mode-leases", scopes!);
+		verifyLayouts(footer, guard!);
+	}
+	statuses.delete("session-mode");
+	statuses.delete("session-mode-leases");
+	assert.doesNotMatch(footer.render(180).join("\n"), /🔒|✅|leases:/);
+}));

@@ -8,9 +8,7 @@
     "node": ">=22.19"
   },
   "scripts": {
-    "pretest": "node session-mode-package.mjs verify",
-    "test": "node --test session-mode-package.test.mjs && tsx --test *.test.ts",
-    "pretypecheck": "node session-mode-package.mjs verify",
+    "test": "tsx --test *.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {

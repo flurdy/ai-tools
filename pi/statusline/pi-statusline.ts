@@ -14,11 +14,10 @@ import {
 } from "./codex-quota.ts";
 import { fetchGitDivergence, formatGitDivergence, GitDivergenceCache } from "./git-divergence.ts";
 import { activeModelLabel, modelLabel } from "./model-label.ts";
-import { DEFAULT_LEASE_OCCUPANCY_TIMEOUT_MS, probeWorktreeLeaseOccupancy, type WorktreeLeaseOccupancy } from "@flurdy/pi-session-mode/lease-observer";
 import { OpenRouterCostAdvisory, openRouterAdvisoryConfig, sharedOpenRouterAdvisoryState } from "./openrouter-advisory.ts";
 import { createOpenRouterCreditsCache, openRouterCreditsApiKey } from "./openrouter-credits.ts";
 import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT, codexQuotaTone } from "./quota-display.ts";
-import { formatLeaseScopes, formatSessionGuard, LeaseOccupancyCache, sessionGuardLabel } from "./session-guard.ts";
+import { formatSessionGuard } from "./session-guard.ts";
 
 type GitInfo = {
 	branch: string | null;
@@ -214,14 +213,7 @@ function getUsage(ctx: ExtensionContext): Usage {
 	return { cost, ctxTokens, ctxMax, ctxPct };
 }
 
-export interface PiStatuslineDependencies {
-	probeLeaseOccupancy(cwd: string, options: { timeoutMs: number; signal: AbortSignal }): Promise<WorktreeLeaseOccupancy>;
-}
-
-export default function piStatusline(
-	pi: ExtensionAPI,
-	dependencies: PiStatuslineDependencies = { probeLeaseOccupancy: probeWorktreeLeaseOccupancy },
-): void {
+export default function piStatusline(pi: ExtensionAPI): void {
 	const openRouterAdvisory = new OpenRouterCostAdvisory(openRouterAdvisoryConfig(), sharedOpenRouterAdvisoryState());
 	let thinking = process.env.PI_STATUSLINE_THINKING ?? "";
 	let startedAt = Date.now();
@@ -360,18 +352,6 @@ export default function piStatusline(
 					ttlMs: gitDivergenceRefreshMs,
 					onChange: () => tui.requestRender(),
 				});
-			const leaseOccupancyTimeoutMs = envMilliseconds("PI_STATUSLINE_GUARD_OCCUPANCY_TIMEOUT", DEFAULT_LEASE_OCCUPANCY_TIMEOUT_MS, 100);
-			const leaseOccupancyCache = process.env.PI_STATUSLINE_GUARD_OCCUPANCY === "0"
-				? undefined
-				: new LeaseOccupancyCache({
-					load: async (cwd, signal) => (await dependencies.probeLeaseOccupancy(cwd, {
-						timeoutMs: leaseOccupancyTimeoutMs,
-						signal,
-					})).kind,
-					ttlMs: envMilliseconds("PI_STATUSLINE_GUARD_OCCUPANCY_TTL", 5000, 1000),
-					settleMs: envMilliseconds("PI_STATUSLINE_GUARD_OCCUPANCY_SETTLE", 500, 0),
-					onChange: () => tui.requestRender(),
-				});
 
 			async function refreshCodexQuota(provider = ctx.model?.provider): Promise<void> {
 				if (!showsCodexQuota(provider, quotaEnabled) || quotaRefreshing || quotaAbort.signal.aborted) return;
@@ -419,10 +399,9 @@ export default function piStatusline(
 				const usage = getUsage(ctx);
 				const k8sContext = getK8sContext();
 				const model = modelLabel(ctx.model?.provider, ctx.model?.id ?? "no-model");
-				const sessionMode = footerData.getExtensionStatuses().get("session-mode") ?? "";
-				const leaseScopes = footerData.getExtensionStatuses().get("session-mode-leases") ?? "";
-				const guardLabel = sessionGuardLabel(sessionMode);
-				void leaseOccupancyCache?.refresh(guardLabel === "plan" ? ctx.cwd : null);
+				const statuses = footerData.getExtensionStatuses();
+				const sessionMode = statuses.get("session-mode") ?? "";
+				const leaseScopes = statuses.get("session-mode-leases") ?? "";
 				const sessionName = pi.getSessionName();
 				const beadsCounts = beadsCache?.counts;
 				const effort = thinking ? `⚡${thinking === "high" ? "Hi" : thinking === "medium" ? "Md" : thinking.slice(0, 2)}` : "";
@@ -454,10 +433,7 @@ export default function piStatusline(
 					host: theme.fg("accent", ` ${hostname().split(".")[0]}`),
 					k8s: k8sContext ? theme.fg("accent", `☸ ${k8sContext}`) : "",
 					agent: theme.fg("success", theme.bold("π")),
-					guard: formatSessionGuard(sessionMode, process.env.PI_STATUSLINE_GUARD_EMOJI !== "0"),
-					leaseScopes: formatLeaseScopes(leaseScopes),
-					leaseCount: formatLeaseScopes(leaseScopes, true),
-					leaseOccupancy: guardLabel === "plan" && leaseOccupancyCache?.occupiedFor(ctx.cwd) ? "🔒cwd" : "",
+					guard: formatSessionGuard(sessionMode, process.env.PI_STATUSLINE_GUARD_EMOJI !== "0", leaseScopes),
 					model: theme.fg("success", theme.bold(model)),
 					effort: effort ? theme.fg("accent", effort) : "",
 					session: sessionName ? theme.fg("accent", `◈ ${truncateToWidth(sessionName, 24, "…")}`) : "",
@@ -485,13 +461,13 @@ export default function piStatusline(
 
 			function compact(width: number): string[] {
 				const s = segments();
-				let cells = [s.clock, joinCells([s.agent, s.guard, s.leaseOccupancy, s.leaseScopes, s.model, s.effort]), s.bars, s.quota, s.openRouterBalance, s.k8s, s.duration, s.path, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
+				let cells = [s.clock, joinCells([s.agent, s.guard, s.model, s.effort]), s.bars, s.quota, s.openRouterBalance, s.k8s, s.duration, s.path, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
 				let line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
-				cells = [joinCells([s.agent, s.guard, s.leaseOccupancy, s.leaseCount, s.model, s.effort]), s.bars, s.quota, s.openRouterBalance, s.k8s, s.duration, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
+				cells = [joinCells([s.agent, s.guard, s.model, s.effort]), s.bars, s.quota, s.openRouterBalance, s.k8s, s.duration, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
 				line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
-				cells = [s.agent, s.guard, s.leaseOccupancy, s.leaseCount, s.model, s.bars, s.k8s, s.branch, s.divergence, s.session].filter(Boolean);
+				cells = [s.agent, s.guard, s.model, s.bars, s.k8s, s.branch, s.divergence, s.session].filter(Boolean);
 				if (visibleWidth(joinCells(cells)) > width && s.divergence) cells = cells.filter((cell) => cell !== s.divergence);
 				return [truncateToWidth(joinCells(cells), width)];
 			}
@@ -500,7 +476,7 @@ export default function piStatusline(
 				const s = segments();
 				const border = (text: string) => theme.fg("border", text);
 				let row1 = [s.host, s.k8s, s.path, s.repo, s.branch, s.divergence, s.pr, s.beads, s.session].filter(Boolean);
-				const row2 = [s.agent, s.guard, s.leaseOccupancy, s.leaseScopes, s.model, s.effort, s.ctx, s.quotaTable, s.openRouterBalance, s.cost, s.duration, s.clock].filter(Boolean);
+				const row2 = [s.agent, s.guard, s.model, s.effort, s.ctx, s.quotaTable, s.openRouterBalance, s.cost, s.duration, s.clock].filter(Boolean);
 
 				function widthsFor(cells: string[]): number[] {
 					return cells.map((cell) => visibleWidth(cell) + 2);
@@ -552,7 +528,6 @@ export default function piStatusline(
 					openRouterCreditsCache?.dispose();
 					beadsCache?.dispose();
 					gitDivergenceCache?.dispose();
-					leaseOccupancyCache?.dispose();
 					unsubBranch();
 				},
 				invalidate() {},
