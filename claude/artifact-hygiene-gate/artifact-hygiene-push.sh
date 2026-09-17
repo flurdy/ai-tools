@@ -27,10 +27,34 @@ fi
 [[ "$command" != *$'\n'* ]] || deny_unproven_repo
 for variable in GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
   GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE GIT_CEILING_DIRECTORIES \
-  GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT \
+  GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_CONFIG GIT_CONFIG_PARAMETERS \
   GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM; do
   [[ -z "${!variable+x}" ]] || deny_unproven_repo
 done
+
+# Allow only the harness flags that disable credential prompts, never credential helpers.
+python3 -I -c '
+import os
+import sys
+
+count = os.environ.get("GIT_CONFIG_COUNT", "0")
+if count not in ("0", "1", "2"):
+    sys.exit(1)
+allowed = {"credential.interactive", "credential.guiPrompt"}
+expected = set()
+seen = set()
+for index in range(int(count)):
+    key_name = f"GIT_CONFIG_KEY_{index}"
+    value_name = f"GIT_CONFIG_VALUE_{index}"
+    key = os.environ.get(key_name)
+    if key not in allowed or key in seen or os.environ.get(value_name) != "false":
+        sys.exit(1)
+    seen.add(key)
+    expected.update((key_name, value_name))
+actual = {name for name in os.environ if name.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}
+sys.exit(0 if actual == expected else 1)
+' 2>/dev/null || deny_unproven_repo
+
 read -r -a words <<< "$command"
 for word in "${words[@]}"; do
   [[ "$word" =~ ^[-a-zA-Z0-9_./:@%+=,]+$ ]] || deny_unproven_repo

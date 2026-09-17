@@ -12,6 +12,7 @@ from pathlib import Path
 GATE = Path(sys.argv.pop()).absolute()
 REPORT = Path(os.environ["REPORT_FILE"])
 INVOCATION = Path(os.environ["INVOCATION_FILE"])
+CONFIG_ENVIRONMENT = Path(os.environ["CONFIG_ENVIRONMENT_FILE"])
 REPOSITORY = REPORT.parent / "target"
 SENTINEL = "UNSAFE-REPORT-TEXT"
 
@@ -33,7 +34,13 @@ def with_finding(severity="info", grade=None):
     report = complete_report()
     grade = grade or ("advisory" if severity == "info" else "block")
     report["verdict"] = grade
-    report["findings"] = [{"severity": severity, "category": "fixture-category", "policy": {"grade": grade}}]
+    report["findings"] = [
+        {
+            "severity": severity,
+            "category": "fixture-category",
+            "policy": {"grade": grade},
+        }
+    ]
     return report
 
 
@@ -46,13 +53,32 @@ def changed(report, path, value):
     return result
 
 
+def credential_config(*keys):
+    config = {"GIT_CONFIG_COUNT": str(len(keys))}
+    for index, key in enumerate(keys):
+        config[f"GIT_CONFIG_KEY_{index}"] = key
+        config[f"GIT_CONFIG_VALUE_{index}"] = "false"
+    return config
+
+
+CREDENTIAL_KEYS = ("credential.interactive", "credential.guiPrompt")
+
+
 class ReportGateTests(unittest.TestCase):
     def run_report(
-        self, report, expected, *, helper_status=0, cwd=None, extra_env=None
+        self,
+        report,
+        expected,
+        *,
+        helper_status=0,
+        cwd=None,
+        extra_env=None,
+        audited=True,
     ):
         raw = report if isinstance(report, bytes) else json.dumps(report).encode()
         REPORT.write_bytes(raw)
         INVOCATION.unlink(missing_ok=True)
+        CONFIG_ENVIRONMENT.unlink(missing_ok=True)
         payload = {"tool_input": {"command": f"git -C {REPOSITORY} push"}}
         result = subprocess.run(
             ["bash", str(GATE)],
@@ -65,7 +91,18 @@ class ReportGateTests(unittest.TestCase):
         )
         output = result.stdout + result.stderr
         self.assertEqual(result.returncode, expected, output.decode(errors="replace"))
-        self.assertEqual(INVOCATION.read_text().strip(), str(REPOSITORY.resolve()))
+        if audited:
+            self.assertEqual(INVOCATION.read_text().strip(), str(REPOSITORY.resolve()))
+            indexed_config = {
+                key: value
+                for key, value in (extra_env or {}).items()
+                if key == "GIT_CONFIG_COUNT"
+                or key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
+            }
+            self.assertEqual(json.loads(CONFIG_ENVIRONMENT.read_text()), indexed_config)
+        else:
+            self.assertFalse(INVOCATION.exists(), "Rejected config reached the auditor")
+            self.assertFalse(CONFIG_ENVIRONMENT.exists())
         self.assertLess(len(output), 2048)
         self.assertNotIn(SENTINEL.encode(), output)
         self.assertNotIn(b"Traceback", output)
@@ -86,6 +123,167 @@ class ReportGateTests(unittest.TestCase):
             {"source": "extra-source", "status": "complete", "errors": [], "limits": []}
         )
         self.run_report(extra, 0)
+
+    def test_noninteractive_credential_config(self):
+        for keys in (
+            (),
+            CREDENTIAL_KEYS[:1],
+            CREDENTIAL_KEYS[1:],
+            CREDENTIAL_KEYS,
+            CREDENTIAL_KEYS[::-1],
+        ):
+            with self.subTest(keys=keys):
+                self.run_report(
+                    complete_report(), 0, extra_env=credential_config(*keys)
+                )
+
+    def test_invalid_config_counts(self):
+        for count in (
+            "",
+            "-1",
+            "+2",
+            "02",
+            "1k",
+            "2 ",
+            " 2",
+            "2\n",
+            "2.0",
+            "３",
+            "3",
+            "999999999999999999999",
+            SENTINEL,
+        ):
+            with self.subTest(count=count):
+                self.run_report(
+                    complete_report(),
+                    2,
+                    extra_env={
+                        **credential_config(*CREDENTIAL_KEYS),
+                        "GIT_CONFIG_COUNT": count,
+                    },
+                    audited=False,
+                )
+
+    def test_incomplete_or_extra_indexed_config(self):
+        pair = credential_config(*CREDENTIAL_KEYS)
+        cases = [
+            {key: value for key, value in pair.items() if key != missing}
+            for missing in pair
+        ]
+        cases.extend(
+            [
+                {**pair, "GIT_CONFIG_COUNT": "0"},
+                {**pair, "GIT_CONFIG_COUNT": "1"},
+                {"GIT_CONFIG_VALUE_0": SENTINEL},
+                {"GIT_CONFIG_KEY_0": CREDENTIAL_KEYS[0]},
+            ]
+        )
+        for prefix in ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"):
+            cases.extend(
+                {**pair, prefix + index: SENTINEL}
+                for index in ("", "2", "00", "+0", "-1", "word")
+            )
+        for config in cases:
+            with self.subTest(config=config):
+                self.run_report(complete_report(), 2, extra_env=config, audited=False)
+
+    def test_only_the_two_exact_false_flags_are_allowed(self):
+        for key in (
+            "credential.helper",
+            "credential.username",
+            "credential.useHttpPath",
+            "credential.https://example.invalid.interactive",
+            "credentialInteractive",
+            "CREDENTIAL.interactive",
+            "credential.guiprompt",
+            "core.worktree",
+            "",
+            SENTINEL,
+        ):
+            self.run_report(
+                complete_report(), 2, extra_env=credential_config(key), audited=False
+            )
+        self.run_report(
+            complete_report(),
+            2,
+            extra_env=credential_config(CREDENTIAL_KEYS[0], CREDENTIAL_KEYS[0]),
+            audited=False,
+        )
+        for value in (
+            "",
+            "true",
+            "False",
+            "0",
+            "never",
+            "false\n",
+            "!echo " + SENTINEL,
+        ):
+            self.run_report(
+                complete_report(),
+                2,
+                extra_env={
+                    **credential_config(*CREDENTIAL_KEYS),
+                    "GIT_CONFIG_VALUE_1": value,
+                },
+                audited=False,
+            )
+
+    def test_credential_pair_does_not_relax_other_override_denials(self):
+        for variable in (
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_COMMON_DIR",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_NAMESPACE",
+            "GIT_CEILING_DIRECTORIES",
+            "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+            "GIT_CONFIG",
+            "GIT_CONFIG_PARAMETERS",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_SYSTEM",
+        ):
+            for value in ("", SENTINEL):
+                with self.subTest(variable=variable, value=value):
+                    self.run_report(
+                        complete_report(),
+                        2,
+                        extra_env={
+                            **credential_config(*CREDENTIAL_KEYS),
+                            variable: value,
+                        },
+                        audited=False,
+                    )
+
+    def test_credential_pair_preserves_report_decisions(self):
+        pair = credential_config(*CREDENTIAL_KEYS)
+        self.run_report(with_finding(), 0, extra_env=pair)
+        self.run_report(with_finding("high"), 2, extra_env=pair)
+        self.run_report(complete_report(), 2, extra_env=pair, helper_status=3)
+        self.run_report(b"not-json", 2, extra_env=pair)
+        partial = changed(complete_report(), ("status",), "partial")
+        self.run_report(partial, 2, extra_env=pair)
+
+    def test_environment_validator_failure_denies_before_audit(self):
+        binaries = REPORT.parent / "env-validator-bin"
+        binaries.mkdir(exist_ok=True)
+        python = binaries / "python3"
+        python.write_text(
+            '#!/bin/sh\ncase "$3" in *os.environ*) '
+            f"echo {SENTINEL} >&2; exit 1;; esac\n"
+            f'exec {shlex.quote(sys.executable)} "$@"\n'
+        )
+        python.chmod(0o700)
+        self.run_report(
+            complete_report(),
+            2,
+            extra_env={
+                **credential_config(*CREDENTIAL_KEYS),
+                "PATH": f"{binaries}:{os.environ['PATH']}",
+            },
+            audited=False,
+        )
 
     def test_decode_failures(self):
         for raw in (
@@ -187,7 +385,9 @@ class ReportGateTests(unittest.TestCase):
             self.run_report(with_finding(severity, "advisory"), 0)
         self.run_report(with_finding("critical", "advisory"), 2)
         for grade in (None, "allow", "clean", [], 0):
-            self.run_report(changed(with_finding(), ("findings", 0, "policy", "grade"), grade), 2)
+            self.run_report(
+                changed(with_finding(), ("findings", 0, "policy", "grade"), grade), 2
+            )
         self.run_report(changed(with_finding(), ("findings", 0, "policy"), {}), 2)
         self.run_report(changed(with_finding(), ("findings", 0, "policy"), None), 2)
         self.run_report(changed(with_finding("high"), ("verdict",), "advisory"), 2)

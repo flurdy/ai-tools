@@ -3,11 +3,16 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 GATE=${GATE:-$SCRIPT_DIR/artifact-hygiene-push.sh}
+# Each case owns its indexed config; the invoking harness may inject its own pair.
+for variable in GIT_CONFIG_COUNT "${!GIT_CONFIG_KEY_@}" "${!GIT_CONFIG_VALUE_@}"; do
+  unset "$variable"
+done
 mkdir -p "$SCRIPT_DIR/../../.artifacts"
 TEST_ROOT=$(mktemp -d "$SCRIPT_DIR/../../.artifacts/artifact-hygiene-gate.XXXXXX")
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export HOME="$TEST_ROOT/home"
 export REPORT_FILE="$TEST_ROOT/report.json" INVOCATION_FILE="$TEST_ROOT/invocation"
+export CONFIG_ENVIRONMENT_FILE="$TEST_ROOT/config-environment.json"
 export AUDIT_STATUS=0
 mkdir -p "$HOME/.agents/skills/artifact-hygiene/scripts" "$TEST_ROOT/repo" "$TEST_ROOT/target"
 git -C "$TEST_ROOT/repo" init -q
@@ -25,6 +30,11 @@ assert_contains() { [[ "$output" == *"$1"* ]] || fail "Expected output to contai
 cat > "$AUDIT" <<'HELPER'
 #!/usr/bin/env bash
 pwd -P > "$INVOCATION_FILE"
+python3 -I -c 'import json, os
+with open(os.environ["CONFIG_ENVIRONMENT_FILE"], "w") as output:
+    json.dump({k: v for k, v in os.environ.items() if k == "GIT_CONFIG_COUNT" or
+               k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}, output)
+'
 cat "$REPORT_FILE"
 exit "$AUDIT_STATUS"
 HELPER

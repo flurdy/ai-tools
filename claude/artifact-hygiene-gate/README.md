@@ -87,7 +87,8 @@ Python rather than shell variables; helper failures and validator exceptions can
   receives session cwd, not necessarily the command's workdir. An absolute `-C` is independent of both.
   Read-only `git rev-parse --show-toplevel` resolves the candidate's worktree root; bare repositories
   deny. Inherited Git repository, worktree, index, object-store, namespace, discovery or config
-  overrides deny rather than redirect discovery or the audit. Inline assignments are unsupported.
+  overrides deny rather than redirect discovery or the audit, except for the narrow credential-prompt
+  block described below. Inline assignments are unsupported.
 - Detected shell wrappers, directory changes, subshells, and command chains deny before auditing.
   Issue each push as its own visible command; rewrite `cd path && git push` using an absolute `-C`.
 - Push detection is still a regex, not a shell parser. Aliases, alternate Git executable paths,
@@ -96,6 +97,26 @@ Python rather than shell variables; helper failures and validator exceptions can
 - The hook validates report structure and the helper's exit status; it still trusts the installed
   helper to perform the audit and grading honestly. It is a guardrail, not a general shell security boundary
   or a replacement for explicit push approval.
+
+### Harness credential flags
+
+Claude Code can inject `GIT_CONFIG_COUNT=2` with `credential.interactive=false` and
+`credential.guiPrompt=false`. The gate accepts only these two exact key spellings and the exact
+value `false`, once each and in either order. Either flag alone is also accepted. The count must
+be absent or the canonical string `0`, `1`, or `2`; the indexed `GIT_CONFIG_KEY_n` and
+`GIT_CONFIG_VALUE_n` variables must form exactly that complete block, with no extra or orphan
+entries. Zero/absent count is accepted only without indexed entries.
+
+This is deliberately stricter than Git's config parsing: alternative case, boolean spellings,
+counts, URL-scoped keys, and every other credential setting deny. In particular, `credential.helper`
+can execute commands and is not a safe namespace-wide exception. All other inherited override
+checks and inline-command restrictions remain unchanged. Validation fails closed before Git
+discovery or auditing and never prints config names or values.
+
+Accepted flags remain in the gate/helper environment; the canonical auditor still owns its
+independent subprocess-environment sanitization. They never bypass the audit, report validation,
+or separate human approval for an actual push. Codex reuses this same gate contract; this does not
+assume that Codex injects the same environment.
 
 ### Contract migration
 
