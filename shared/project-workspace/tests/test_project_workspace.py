@@ -188,6 +188,13 @@ class ProjectWorkspaceTest(unittest.TestCase):
             '  [[ -f .beads/project-workspace-blocked.json ]] && cat .beads/project-workspace-blocked.json || echo "[]"\n'
             "  exit\n"
             "fi\n"
+            'if [[ "$1" == "dolt" && ( "$2" == pull || "$2" == push ) ]]; then\n'
+            '  if [[ -f ".beads/project-workspace-dolt-$2-fail" ]]; then\n'
+            '    cat ".beads/project-workspace-dolt-$2-fail" >&2\n'
+            "    exit 3\n"
+            "  fi\n"
+            "  exit\n"
+            "fi\n"
             "mkdir -p .beads\n"
             'if [[ "${BD_FAIL_ONCE:-}" == "1" && ! -f "$COMMAND_LOG.bd-failed" ]]; then\n'
             '  touch "$COMMAND_LOG.bd-failed"\n'
@@ -2514,6 +2521,137 @@ all-status: custom-status
         self.assertEqual(
             extension, (workspace / "workspace.mk").read_text(encoding="utf-8")
         )
+
+    def track_in_workspace_store(self, workspace: Path, name: str) -> None:
+        manifest_path = workspace / "workspace.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for repository in manifest["repositories"]:
+            if repository["name"] == name:
+                repository["beadsStore"] = "workspace"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    def beads_sync_workspace_with(self, name: str) -> Path:
+        workspace = self.sync_workspace_with(name, ["own-store", "shared", "untracked"])
+        self.set_beads_status(workspace, [], [])
+        self.set_beads_status(self.root / "own-store", [], [])
+        self.set_beads_status(self.root / "shared", [], [])
+        self.track_in_workspace_store(workspace, "shared")
+        return workspace
+
+    def test_beads_sync_pulls_then_pushes_each_unique_store(self) -> None:
+        workspace = self.beads_sync_workspace_with("beads-sync")
+
+        result = self.run_cli("beads-sync", "--workspace", str(workspace))
+
+        self.assertIn("=== BEADS SYNC ===", result.stdout)
+        self.assertRegex(
+            result.stdout, r"(?m)^workspace \(\.\) +\| pulled then pushed via origin$"
+        )
+        self.assertRegex(
+            result.stdout,
+            r"(?m)^own-store \(repos/own-store\) +\| pulled then pushed via origin$",
+        )
+        self.assertRegex(
+            result.stdout,
+            r"(?m)^untracked \(repos/untracked\) +\| skipped \(Beads store is not initialized\)$",
+        )
+        self.assertNotIn("shared (repos/shared)", result.stdout)
+        commands = self.command_log.read_text(encoding="utf-8")
+        self.assertEqual(2, commands.count("bd dolt pull --remote origin"))
+        self.assertEqual(2, commands.count("bd dolt push --remote origin"))
+        self.assertLess(
+            commands.index("bd dolt pull --remote origin"),
+            commands.index("bd dolt push --remote origin"),
+        )
+
+    def test_beads_sync_dry_run_and_remote_override_do_not_contact_remotes(self) -> None:
+        workspace = self.beads_sync_workspace_with("beads-sync-check")
+
+        result = self.run_cli(
+            "beads-sync", "--workspace", str(workspace), "--dry-run", "--remote", "leonidas"
+        )
+
+        self.assertRegex(
+            result.stdout, r"(?m)^workspace \(\.\) +\| would pull then push via leonidas$"
+        )
+        self.assertNotIn("shared (repos/shared)", result.stdout)
+        self.assertNotIn("bd dolt", self.command_log.read_text(encoding="utf-8"))
+
+    def test_beads_sync_reports_store_failures_without_stopping(self) -> None:
+        workspace = self.beads_sync_workspace_with("beads-sync-failures")
+        (workspace / ".beads" / "project-workspace-dolt-pull-fail").write_text(
+            "merge conflict in issues\n", encoding="utf-8"
+        )
+
+        result = self.run_cli(
+            "beads-sync", "--workspace", str(workspace), check=False
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("ERROR: pull failed: merge conflict in issues", result.stdout)
+        self.assertRegex(
+            result.stdout,
+            r"(?m)^own-store \(repos/own-store\) +\| pulled then pushed via origin$",
+        )
+        commands = self.command_log.read_text(encoding="utf-8")
+        self.assertEqual(2, commands.count("bd dolt pull --remote origin"))
+        self.assertEqual(1, commands.count("bd dolt push --remote origin"))
+
+    def test_workspace_store_members_are_reported_not_counted_as_missing(self) -> None:
+        workspace = self.beads_sync_workspace_with("shared-store-status")
+
+        status = self.run_cli(
+            "status", "--workspace", str(workspace), "--section", "beads"
+        )
+        counts = json.loads(
+            self.run_cli("beads-counts", "--workspace", str(workspace)).stdout
+        )
+
+        self.assertRegex(
+            status.stdout,
+            r"(?m)^shared \(repos/shared\) +\| tracked in workspace store$",
+        )
+        self.assertRegex(
+            status.stdout, r"(?m)^untracked \(repos/untracked\) +\| not initialized$"
+        )
+        self.assertEqual(2, counts["successfulSources"])
+        self.assertEqual(
+            ["untracked (repos/untracked): Beads store is not initialized"],
+            counts["diagnostics"],
+        )
+
+    def test_manifest_rejects_unknown_beads_store_owner(self) -> None:
+        workspace = self.sync_workspace_with("bad-owner", ["service"])
+        manifest_path = workspace / "workspace.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["repositories"][0]["beadsStore"] = "elsewhere"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        result = self.run_cli(
+            "beads-sync", "--workspace", str(workspace), "--dry-run", check=False
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("repository beadsStore is invalid in workspace.json: service", result.stderr)
+
+    def test_generated_make_beads_sync_check_lists_stores_only(self) -> None:
+        workspace = self.beads_sync_workspace_with("make-beads-sync")
+
+        result = subprocess.run(
+            ["make", "beads-sync-check"],
+            capture_output=True,
+            check=True,
+            cwd=workspace,
+            env=self.environment,
+            stdin=subprocess.DEVNULL,
+            text=True,
+        )
+
+        self.assertIn("would pull then push via origin", result.stdout)
+        self.assertNotIn("bd dolt", self.command_log.read_text(encoding="utf-8"))
+        makefile = (workspace / "Makefile").read_text(encoding="utf-8")
+        self.assertIn("beads-sync:", makefile)
+        self.assertIn("beads-sync-check:", makefile)
 
     def test_sync_publishes_ahead_work_and_reports_skips(self) -> None:
         workspace = self.sync_workspace_with(

@@ -665,6 +665,14 @@ def validate_manifest(
                 raise WorkspaceError(
                     f"repository role is invalid in workspace.json: {entry_name}"
                 )
+            if (
+                collection == "repositories"
+                and "beadsStore" in entry
+                and entry["beadsStore"] != "workspace"
+            ):
+                raise WorkspaceError(
+                    f"repository beadsStore is invalid in workspace.json: {entry_name}"
+                )
 
             link = root / path
             expected_links.add(link)
@@ -1187,6 +1195,26 @@ def status_targets(
             root / str(repository["path"]),
         )
         for repository in repositories
+    ]
+
+
+def tracked_in_workspace_store(repository: dict[str, object]) -> bool:
+    return repository.get("beadsStore") == "workspace"
+
+
+def beads_store_targets(
+    root: Path, manifest: dict[str, object]
+) -> list[tuple[str, str, Path]]:
+    repositories = manifest["repositories"]
+    assert isinstance(repositories, list)
+    return [("workspace", ".", root)] + [
+        (
+            str(repository["name"]),
+            str(repository["path"]),
+            root / str(repository["path"]),
+        )
+        for repository in repositories
+        if not tracked_in_workspace_store(repository)
     ]
 
 
@@ -2020,7 +2048,7 @@ def parse_beads_count_source(
 def beads_count_payload(
     root: Path, manifest: dict[str, object], timeout: float
 ) -> dict[str, object]:
-    targets = status_targets(root, manifest)
+    targets = beads_store_targets(root, manifest)
     diagnostics: list[str] = []
     outputs: dict[
         int,
@@ -2135,9 +2163,13 @@ def beads_status(root: Path, manifest: dict[str, object]) -> bool:
     print("=== BEADS STATUS ===")
     success = True
     targets = status_targets(root, manifest)
+    stores = {directory for _, _, directory in beads_store_targets(root, manifest)}
     width = label_width(targets)
     for name, relative_path, directory in targets:
         label = f"{name} ({relative_path})".ljust(width)
+        if directory not in stores:
+            print(f"{label} | tracked in workspace store")
+            continue
         if not (directory / ".beads").is_dir():
             print(f"{label} | not initialized")
             continue
@@ -2270,6 +2302,34 @@ def sync_workspace(root: Path, dry_run: bool, assume_yes: bool) -> bool:
         label = f"{name} ({relative_path})"
         outcome = sync_repository(directory, label, dry_run, assume_yes)
         print(f"{label.ljust(width)} | {outcome.summary}")
+        success = success and not outcome.failed
+    print()
+    return success
+
+
+def beads_sync_store(directory: Path, remote: str, dry_run: bool) -> SyncOutcome:
+    if not (directory / ".beads").is_dir():
+        return SyncOutcome("skipped (Beads store is not initialized)")
+    if dry_run:
+        return SyncOutcome(f"would pull then push via {remote}")
+    for verb in ("pull", "push"):
+        error = run_sync_step(["bd", "dolt", verb, "--remote", remote], directory)
+        if error is not None:
+            return SyncOutcome(f"ERROR: {verb} failed: {error}", failed=True)
+    return SyncOutcome(f"pulled then pushed via {remote}")
+
+
+def beads_sync_workspace(root: Path, remote: str, dry_run: bool) -> bool:
+    workspace_root = Path(os.path.abspath(root.expanduser()))
+    manifest, _readme = load_workspace_manifest(workspace_root)
+    print("=== BEADS SYNC ===")
+    print("Scope: each unique store once; members tracked in the workspace store are covered by it.")
+    success = True
+    targets = beads_store_targets(workspace_root, manifest)
+    width = label_width(targets)
+    for name, relative_path, directory in targets:
+        outcome = beads_sync_store(directory, remote, dry_run)
+        print(f"{name} ({relative_path})".ljust(width) + f" | {outcome.summary}")
         success = success and not outcome.failed
     print()
     return success
@@ -2432,6 +2492,19 @@ def parser() -> argparse.ArgumentParser:
         help="rebase diverged branches without prompting",
     )
 
+    beads_sync = subcommands.add_parser(
+        "beads-sync", help="pull then push every unique Beads store"
+    )
+    beads_sync.add_argument(
+        "--workspace", type=Path, default=Path.cwd(), help="workspace root"
+    )
+    beads_sync.add_argument(
+        "--remote", default="origin", help="Dolt remote name (default: origin)"
+    )
+    beads_sync.add_argument(
+        "--dry-run", action="store_true", help="list stores without contacting remotes"
+    )
+
     doctor = subcommands.add_parser("doctor", help="validate a project workspace")
     doctor.add_argument(
         "--workspace", type=Path, default=Path.cwd(), help="workspace root"
@@ -2464,6 +2537,11 @@ def main() -> int:
         elif arguments.command == "sync":
             succeeded = sync_workspace(
                 arguments.workspace, arguments.dry_run, arguments.assume_yes
+            )
+            return 0 if succeeded else 1
+        elif arguments.command == "beads-sync":
+            succeeded = beads_sync_workspace(
+                arguments.workspace, arguments.remote, arguments.dry_run
             )
             return 0 if succeeded else 1
         elif arguments.command == "configure-mgit":

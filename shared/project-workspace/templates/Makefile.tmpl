@@ -1,6 +1,6 @@
 SHELL := /usr/bin/env bash
 
-.PHONY: help status git-status git-inventory beads-status all-status sync sync-check doctor
+.PHONY: help status git-status git-inventory beads-status all-status sync sync-check beads-sync beads-sync-check doctor
 
 help:
 	@echo "make status        # show combined repository and work status"
@@ -10,6 +10,8 @@ help:
 	@echo "make all-status    # show Git, Beads, and workspace health"
 	@echo "make sync          # fetch, integrate, and publish repository work"
 	@echo "make sync-check    # preview sync without integrating or pushing"
+	@echo "make beads-sync    # pull then push every unique Beads store"
+	@echo "make beads-sync-check # list Beads stores without contacting remotes"
 	@echo "make doctor        # validate the workspace structure"
 
 status: all-status
@@ -35,6 +37,14 @@ sync:
 sync-check:
 	@command -v project-workspace >/dev/null 2>&1 || { echo "ERROR: project-workspace is required" >&2; exit 127; }
 	@project-workspace sync --workspace . --dry-run
+
+beads-sync:
+	@command -v project-workspace >/dev/null 2>&1 || { echo "ERROR: project-workspace is required" >&2; exit 127; }
+	@project-workspace beads-sync --workspace .
+
+beads-sync-check:
+	@command -v project-workspace >/dev/null 2>&1 || { echo "ERROR: project-workspace is required" >&2; exit 127; }
+	@project-workspace beads-sync --workspace . --dry-run
 
 doctor:
 	@command -v project-workspace >/dev/null 2>&1 || { echo "ERROR: project-workspace is required" >&2; exit 127; }

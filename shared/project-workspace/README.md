@@ -166,6 +166,8 @@ make beads-status
 make all-status
 make sync
 make sync-check
+make beads-sync
+make beads-sync-check
 make doctor
 ```
 
@@ -250,6 +252,17 @@ repository when the answer is no or the run is non-interactive, and proceeds una
 only with `--yes`. A conflicting rebase is aborted so the branch is left as it was found.
 Pushes are never forced. Per-repository failures are reported and the remaining
 repositories still run, then the command returns non-zero.
+
+`make beads-sync` is the Beads counterpart: for each unique store it runs `bd dolt pull`
+then `bd dolt push` against `origin` (`project-workspace beads-sync --remote NAME`
+overrides the remote). A repository entry with `"beadsStore": "workspace"` in
+`workspace.json` owns no store of its own; status reports it as `tracked in workspace store`
+and sync, counts, and status query the root store once for it. Uninitialized stores are
+skipped and reported. `bd` refuses conflicting merges and non-fast-forward pushes itself, so
+a failing store is reported, the remaining stores still run, and the command returns
+non-zero; resolve that store by hand and rerun. `make beads-sync-check` lists the store
+set and the intended action without contacting any remote. Run `make beads-sync` when
+leaving one machine and again on arriving at the other.
 
 `make doctor` uses the installed `project-workspace` command as the authoritative
 manifest, relative-link, Git-repository, orphan-path, and generated-README validator.
