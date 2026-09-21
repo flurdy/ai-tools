@@ -164,6 +164,65 @@ CURRENT_REPO=""
 HANDOFFS_DIR_LS="$HOME/.claude/handoffs"
 handoff_count=0
 declare -a HO_FILE HO_SLUG HO_PATH HO_BRANCH HO_DATE HO_TIME HO_SORT_KEY HO_ROOT
+
+# list.sh spawns one `bd` per handoff row that cites bead IDs, serially. Each is
+# sub-second against an idle store but climbs toward bd's own 5s timeout when the
+# embedded Dolt server is contended, so a launch degrades into tens of seconds.
+# Cache it exactly like the PR data above: fresh cache instantly, stale cache
+# instantly while refreshing in the background, synchronous run only when cold.
+# The key is the repo, because list.sh resolves ---CURRENT-REPO--- and workspace
+# membership from the working directory.
+refresh_handoff_cache() {
+  local cache="$1" tmp="$1.tmp.$$"
+  if "$HANDOFF_LIST" >"$tmp" 2>/dev/null; then
+    mv -f "$tmp" "$cache"
+  else
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
+# A handoff written moments ago must appear at once — wrap-up then relaunch is the
+# common path — so the handoffs directory's mtime invalidates the cache whatever
+# the TTL says. Creating a file bumps the directory; the TTL covers only what
+# list.sh derives live: branch liveness, PR state, and bead closure.
+handoff_list_cached() {
+  local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/ai-launcher"
+  mkdir -p "$cache_dir" 2>/dev/null || { "$HANDOFF_LIST" 2>/dev/null; return; }
+  local key cache
+  key=$(printf '%s' "${MAIN:-$PWD}" | cksum | cut -d' ' -f1)
+  cache="$cache_dir/handoffs-$key.txt"
+
+  local ttl=90 now mtime=0 dir_mtime=0
+  now=$(date +%s)
+  if [ -f "$cache" ]; then
+    mtime=$(stat -c %Y "$cache" 2>/dev/null || stat -f %m "$cache" 2>/dev/null || echo 0)
+  fi
+  if [ -d "$HANDOFFS_DIR_LS" ]; then
+    dir_mtime=$(stat -c %Y "$HANDOFFS_DIR_LS" 2>/dev/null || stat -f %m "$HANDOFFS_DIR_LS" 2>/dev/null || echo 0)
+  fi
+
+  if [ -f "$cache" ] && [ "$mtime" -gt "$dir_mtime" ]; then
+    cat "$cache"
+    if [ $((now - mtime)) -ge "$ttl" ]; then
+      # Stale: serve it now, refresh for next time. Redirect the background
+      # subshell's stdout or the reader blocks waiting for pipe EOF.
+      ( refresh_handoff_cache "$cache" ) >/dev/null 2>&1 &
+    fi
+    return
+  fi
+
+  # Cold, or a handoff appeared since the cache was written: pay it once. Emit
+  # whatever list.sh produced either way, matching the uncached behaviour that
+  # fed partial output straight into the reader, but cache only a clean run.
+  local tmp="$cache.tmp.$$"
+  if "$HANDOFF_LIST" >"$tmp" 2>/dev/null; then
+    cat "$tmp"; mv -f "$tmp" "$cache"
+  else
+    cat "$tmp" 2>/dev/null; rm -f "$tmp"
+  fi
+}
+
 if [ -x "$HANDOFF_LIST" ]; then
   section=""
   while IFS= read -r line; do
@@ -199,7 +258,7 @@ if [ -x "$HANDOFF_LIST" ]; then
         HO_SORT_KEY+=("$hdate ${htime/\?/00:00}")
         ;;
     esac
-  done < <("$HANDOFF_LIST" 2>/dev/null)
+  done < <(handoff_list_cached)
 fi
 
 # --- dirty / ahead markers for a worktree path ------------------------------
