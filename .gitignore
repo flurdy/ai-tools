@@ -10,3 +10,4 @@ __pycache__/
 *.db
 .beads/dolt/
 .beads-credential-key
+.envrc
