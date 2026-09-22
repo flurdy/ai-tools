@@ -1,0 +1,4 @@
+{
+  "extends": "../kitty-tab-title/tsconfig.json",
+  "include": ["*.ts"]
+}

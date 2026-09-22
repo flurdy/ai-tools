@@ -43,6 +43,7 @@ The optional [skill model router](https://github.com/flurdy/pi-skill-model-route
 | Flurdy dark theme | [`pi/theme/`](../theme/) | High-contrast Pi theme used by the starter. | Install the theme before selecting `flurdy-dark`. |
 | Statusline | [`pi/statusline/`](../statusline/) | Custom footer with context, model, quota, Git, and session signals. | Optional local extension; review privacy-related display options. |
 | Kitty tab title | [`pi/kitty-tab-title/`](../kitty-tab-title/) | Displays Pi session/repository state in Kitty tabs. | Kitty-specific and optional. |
+| Completion notifications | [`pi/notify/`](../notify/) | Notifies supported terminals after `agent_settled`, never intermediate run ends. | Installed by `make apply`; silent in Orca and unsupported environments. Disable other notifiers to avoid duplicates. |
 | `APPEND_SYSTEM.md` example | [`pi/append-system/`](../append-system/) | Adds concise response and Git remote-safety guidance. | Opt-in system instructions, separate from settings and prompt templates. |
 | Pi launcher | [`pi/launcher/`](../launcher/) | Selects checkouts, worktrees, and handoffs before launching Pi. | Contains local workflow assumptions; review before adopting. |
 
@@ -82,7 +83,7 @@ These examples come from Pi itself, not this repository or the third-party packa
 | Upstream example | What it demonstrates | Important limitation |
 | --- | --- | --- |
 | [`confirm-destructive.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/examples/extensions/confirm-destructive.ts) | Confirmation before `/new`, session switching, and forking. | It does not gate shell commands, file deletion, Git pushes, or arbitrary tools. |
-| [`notify.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/examples/extensions/notify.ts) | Terminal/OS notification when an agent run ends. | Behavior depends on terminal and platform; inspect the PowerShell/OSC implementation. |
+| [`notify.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/examples/extensions/notify.ts) | Terminal/OS notification after an agent run settles. | Prefer this repository's [maintained notifier](../notify/); do not load both. The upstream example includes different protocol/platform fallbacks. |
 | [`protected-paths.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/examples/extensions/protected-paths.ts) | Blocking built-in `write` and `edit` calls for configured path substrings. | It is illustrative, not a sandbox: shell commands and other mutation tools are outside its guard. Adapt its path matching before relying on it. |
 
 Copied examples become your code to maintain. A Pi upgrade may improve the upstream example without updating your copy.
