@@ -5,9 +5,11 @@ import { join } from "node:path";
 import test from "node:test";
 import {
 	codexQuotaDisplayState,
-	fetchCodexWeeklyQuota,
+	fetchCodexQuotaSnapshot,
 	isCodexQuotaStale,
+	isCodexSnapshotStale,
 	selectCodexWeeklyQuota,
+	selectCodexQuotaSnapshot,
 	showsCodexQuota,
 } from "./codex-quota.ts";
 import { modelLabel, shortModel } from "./model-label.ts";
@@ -114,6 +116,79 @@ test("rejects responses without a weekly window", () => {
 	assert.equal(quota, undefined);
 });
 
+test("parses credits from the same canonical snapshot as weekly quota", () => {
+	const snapshot = selectCodexQuotaSnapshot({
+		rateLimits: { credits: { hasCredits: true, unlimited: false, balance: "999" } },
+		rateLimitsByLimitId: {
+			codex: {
+				primary: { usedPercent: 40, windowDurationMins: WEEK },
+				credits: { hasCredits: true, unlimited: false, balance: "12.500" },
+			},
+			codex_special: { credits: { hasCredits: true, unlimited: false, balance: "777" } },
+		},
+	}, 123);
+	assert.equal(snapshot?.weekly?.usedPercent, 40);
+	assert.deepEqual(snapshot?.credits, { kind: "balance", balance: "12.500" });
+	assert.equal(snapshot?.fetchedAtMs, 123);
+	assert.equal(snapshot?.weekly?.fetchedAtMs, 123);
+});
+
+test("does not borrow missing credits from a non-canonical bucket", () => {
+	const snapshot = selectCodexQuotaSnapshot({
+		rateLimits: { credits: { hasCredits: true, unlimited: false, balance: "999" } },
+		rateLimitsByLimitId: { codex: { primary: { usedPercent: 40, windowDurationMins: WEEK } } },
+	});
+	assert.equal(snapshot?.credits, undefined);
+	assert.equal(snapshot?.weekly?.usedPercent, 40);
+});
+
+test("supports credits-only, unlimited, exact zero, and snake-case snapshots", () => {
+	for (const balance of ["0", "0.00", "12.50", "9007199254740993.125"]) {
+		const snapshot = selectCodexQuotaSnapshot({ rateLimits: {
+			primary: null, secondary: null, credits: { hasCredits: true, unlimited: false, balance },
+		} }, 123);
+		assert.equal(snapshot?.weekly, undefined);
+		assert.deepEqual(snapshot?.credits, { kind: "balance", balance });
+	}
+	for (const hasCredits of [true, false]) {
+		const snapshot = selectCodexQuotaSnapshot({ rateLimits: { credits: { hasCredits, unlimited: true, balance: null } } });
+		assert.deepEqual(snapshot?.credits, { kind: "unlimited" });
+	}
+	assert.deepEqual(selectCodexQuotaSnapshot({ rate_limits: {
+		credits: { has_credits: true, unlimited: false, balance: "7.25" },
+	} })?.credits, { kind: "balance", balance: "7.25" });
+});
+
+test("hides absent or malformed credits without losing a valid weekly quota", () => {
+	const invalidCredits: unknown[] = [undefined, null, [], {},
+		{ hasCredits: false, unlimited: false, balance: "10" },
+		{ hasCredits: "true", unlimited: false, balance: "10" },
+		{ hasCredits: 1, unlimited: true, balance: null },
+		{ hasCredits: true, unlimited: "false", balance: "10" },
+		{ hasCredits: true, balance: "10" },
+		{ unlimited: true, balance: null },
+	];
+	for (const balance of [null, undefined, 0, 12, true, "", " ", " 1", "1 ", "1\n", "-0", "-1", "+1", "1e3", "0xff", "NaN", "Infinity", "1,000", ".5", "1.", "1.2.3", "1\u001b[31m", "9".repeat(400)]) {
+		invalidCredits.push({ hasCredits: true, unlimited: false, balance });
+	}
+	for (const credits of invalidCredits) {
+		const snapshot = selectCodexQuotaSnapshot({ rateLimits: {
+			primary: { usedPercent: 20, windowDurationMins: WEEK }, credits,
+		} });
+		assert.equal(snapshot?.credits, undefined, JSON.stringify(credits));
+		assert.equal(snapshot?.weekly?.usedPercent, 20);
+	}
+});
+
+test("accepts empty account data but rejects missing or malformed envelopes", () => {
+	assert.deepEqual(selectCodexQuotaSnapshot({ rateLimits: { primary: null, secondary: null, credits: null } }, 123), {
+		weekly: undefined, credits: undefined, fetchedAtMs: 123,
+	});
+	for (const response of [undefined, null, [], {}, { rateLimits: null }, { rateLimits: [] }]) {
+		assert.equal(selectCodexQuotaSnapshot(response), undefined);
+	}
+});
+
 test("clamps unexpected percentages", () => {
 	assert.equal(
 		selectCodexWeeklyQuota({ rateLimits: { primary: { usedPercent: 120, windowDurationMins: WEEK } } })?.remainingPercent,
@@ -130,6 +205,16 @@ test("marks old or reset snapshots stale", () => {
 	assert.equal(isCodexQuotaStale(fresh, 2000, 5000), false);
 	assert.equal(isCodexQuotaStale(fresh, 7000, 5000), true);
 	assert.equal(isCodexQuotaStale(fresh, 10_000, 20_000), true);
+});
+
+test("shares snapshot age and reset staleness with credits", () => {
+	const credits = { kind: "balance" as const, balance: "12.50" };
+	const snapshot = { credits, fetchedAtMs: 1000 };
+	assert.equal(isCodexSnapshotStale(snapshot, 2000, 5000), false);
+	assert.equal(isCodexSnapshotStale(snapshot, 7000, 5000), true);
+	const weekly = { usedPercent: 20, remainingPercent: 80, fetchedAtMs: 1000, resetsAtMs: 10_000 };
+	assert.equal(isCodexSnapshotStale({ ...snapshot, weekly }, 2000, 20_000), false);
+	assert.equal(isCodexSnapshotStale({ ...snapshot, weekly }, 10_000, 20_000), true);
 });
 
 async function waitForFile(path: string): Promise<void> {
@@ -174,7 +259,8 @@ process.stdin.on("data", (chunk) => {
     }
     if (message.id === 2) {
       process.stdout.write(JSON.stringify({ id: 2, result: { rateLimits: {
-        primary: { usedPercent: 23, windowDurationMins: 10080, resetsAt: 1800000000 }
+        primary: { usedPercent: 23, windowDurationMins: 10080, resetsAt: 1800000000 },
+        credits: { hasCredits: true, unlimited: false, balance: "12.50" }
       } } }) + "\n");
     }
     newline = buffer.indexOf("\n");
@@ -183,9 +269,10 @@ process.stdin.on("data", (chunk) => {
 process.on("SIGTERM", () => process.exit(0));
 `,
 		async (script) => {
-			const quota = await fetchCodexWeeklyQuota({ command: process.execPath, args: [script], timeoutMs: 2000 });
-			assert.equal(quota.usedPercent, 23);
-			assert.equal(quota.remainingPercent, 77);
+			const snapshot = await fetchCodexQuotaSnapshot({ command: process.execPath, args: [script], timeoutMs: 2000 });
+			assert.equal(snapshot.weekly?.usedPercent, 23);
+			assert.equal(snapshot.weekly?.remainingPercent, 77);
+			assert.deepEqual(snapshot.credits, { kind: "balance", balance: "12.50" });
 		},
 	);
 });
@@ -207,7 +294,7 @@ writeFileSync(ready, String(process.pid));
 			const ready = join(directory, "ready");
 			const terminated = join(directory, "terminated");
 			const controller = new AbortController();
-			const query = fetchCodexWeeklyQuota({ command: process.execPath, args: [script, ready, terminated], timeoutMs: 5000, signal: controller.signal });
+			const query = fetchCodexQuotaSnapshot({ command: process.execPath, args: [script, ready, terminated], timeoutMs: 5000, signal: controller.signal });
 			await waitForFile(ready);
 			controller.abort();
 			await assert.rejects(query, /aborted/);
@@ -227,7 +314,7 @@ process.on("SIGTERM", () => {});
 `,
 		async (script, directory) => {
 			const pidFile = join(directory, "pid");
-			const query = fetchCodexWeeklyQuota({ command: process.execPath, args: [script, pidFile], timeoutMs: 50 });
+			const query = fetchCodexQuotaSnapshot({ command: process.execPath, args: [script, pidFile], timeoutMs: 50 });
 			await waitForFile(pidFile);
 			const pid = Number(await readFile(pidFile, "utf8"));
 			await assert.rejects(query, /timed out/);

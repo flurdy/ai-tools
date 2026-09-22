@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
@@ -77,7 +80,21 @@ test("wires continuing turns to threshold crossing without tool-loop spam", () =
 
 type Footer = { render(width: number): string[]; dispose(): void };
 
-async function withFooter(run: (footer: Footer, statuses: Map<string, string>) => void) {
+type FooterControls = { refresh(): Promise<void>; setProvider(provider: string): void };
+type FooterOptions = { provider?: string; codexBin?: string; quotaEnabled?: boolean };
+
+async function waitFor(check: () => boolean): Promise<void> {
+	const deadline = Date.now() + 3000;
+	while (!check()) {
+		if (Date.now() >= deadline) throw new Error("Timed out waiting for footer refresh");
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+}
+
+async function withFooter(
+	run: (footer: Footer, statuses: Map<string, string>, controls: FooterControls) => void | Promise<void>,
+	options: FooterOptions = {},
+) {
 	let footerFactory: any;
 	let component: Footer | undefined;
 	const statuses = new Map<string, string>();
@@ -90,28 +107,39 @@ async function withFooter(run: (footer: Footer, statuses: Map<string, string>) =
 		"PI_STATUSLINE_PR",
 		"PI_STATUSLINE_GUARD_EMOJI",
 		"PI_STATUSLINE",
+		"PI_STATUSLINE_CODEX_BIN",
+		"PI_STATUSLINE_CODEX_QUOTA_TTL",
+		"PI_STATUSLINE_CODEX_QUOTA_STALE",
+		"PI_STATUSLINE_CODEX_QUOTA_TIMEOUT",
 	] as const;
 	const previous = new Map(environment.map((name) => [name, process.env[name]]));
 	for (const name of environment.slice(0, 6)) process.env[name] = "0";
 	process.env.PI_STATUSLINE_GUARD_EMOJI = "1";
+	process.env.PI_STATUSLINE_CODEX_QUOTA_TTL = "300000";
+	process.env.PI_STATUSLINE_CODEX_QUOTA_STALE = "900000";
+	process.env.PI_STATUSLINE_CODEX_QUOTA_TIMEOUT = "2000";
+	if (options.codexBin) process.env.PI_STATUSLINE_CODEX_BIN = options.codexBin;
+	if (options.quotaEnabled) process.env.PI_STATUSLINE_CODEX_QUOTA = "1";
+	let renders = 0;
+	const handlers = registeredHandlers();
 	try {
 		const ctx = {
 			cwd: "/tmp",
 			mode: "tui",
-			model: { provider: "test", id: "model", contextWindow: 1000 },
+			model: { provider: options.provider ?? "test", id: "model", contextWindow: 1000 },
 			getContextUsage: () => ({ tokens: 0 }),
-			sessionManager: { getBranch: () => [] },
+			sessionManager: { getBranch: () => [], getSessionId: () => "footer-test" },
 			ui: {
 				setWidget() {},
 				setFooter(factory: any) { footerFactory = factory; },
 			},
 		};
-		await registeredHandlers().get("session_start")?.({}, ctx);
+		await handlers.get("session_start")?.({}, ctx);
 		assert.ok(footerFactory);
 		component = footerFactory(
-			{ requestRender() {} },
+			{ requestRender() { renders++; } },
 			{
-				fg: (_tone: string, text: string) => `\x1b[32m${text}\x1b[0m`,
+				fg: (tone: string, text: string) => `\x1b[${tone === "dim" ? "2" : "32"}m${text}\x1b[0m`,
 				bold: (text: string) => `\x1b[1m${text}\x1b[0m`,
 			},
 			{
@@ -121,7 +149,15 @@ async function withFooter(run: (footer: Footer, statuses: Map<string, string>) =
 			},
 		);
 		assert.ok(component);
-		run(component, statuses);
+		if (options.quotaEnabled && ctx.model.provider === "openai-codex") await waitFor(() => renders > 0);
+		await run(component, statuses, {
+			setProvider(provider) { ctx.model.provider = provider; },
+			async refresh() {
+				const before = renders;
+				handlers.get("model_select")?.({ model: ctx.model, source: "restore" }, ctx);
+				await waitFor(() => renders >= before + 2);
+			},
+		});
 	} finally {
 		component?.dispose();
 		for (const [name, value] of previous) {
@@ -185,3 +221,135 @@ test("updates the unified cell as scopes change and disappear", () => withFooter
 	statuses.delete("session-mode-leases");
 	assert.doesNotMatch(footer.render(180).join("\n"), /🔒|✅|leases:/);
 }));
+
+function rateLimits(credits: unknown, weekly = true, resetsAt = Math.floor(Date.now() / 1000) + 3600) {
+	return { result: { rateLimits: {
+		primary: weekly ? { usedPercent: 40, windowDurationMins: 10080, resetsAt } : null,
+		secondary: null,
+		credits,
+	} } };
+}
+
+async function withCodexServer(
+	response: unknown,
+	run: (binary: string, reply: (value: unknown) => Promise<void>, methods: () => Promise<string[]>) => Promise<void>,
+) {
+	const directory = await mkdtemp(join(tmpdir(), "pi-footer-credits-"));
+	const binary = join(directory, "codex");
+	const responseFile = join(directory, "response.json");
+	const log = join(directory, "requests");
+	try {
+		await writeFile(log, "");
+		const reply = (value: unknown) => writeFile(responseFile, JSON.stringify(value));
+		await reply(response);
+		await writeFile(binary, `#!/usr/bin/env node
+const { readFileSync, appendFileSync } = require("node:fs");
+const { createInterface } = require("node:readline");
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const request = JSON.parse(line);
+  appendFileSync(${JSON.stringify(log)}, request.method + "\\n");
+  if (request.method === "initialize") {
+    console.log(JSON.stringify({ id: request.id, result: {} }));
+  } else if (request.method === "account/rateLimits/read") {
+    console.log(JSON.stringify({ id: request.id, ...JSON.parse(readFileSync(${JSON.stringify(responseFile)}, "utf8")) }));
+  }
+});
+`, { mode: 0o700 });
+		await run(binary, reply, async () => (await readFile(log, "utf8")).trim().split("\n").filter(Boolean));
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
+}
+
+function verifyCreditLayouts(footer: Footer, label: string, dim = false) {
+	for (const layout of ["compact", "table"]) {
+		process.env.PI_STATUSLINE = layout;
+		const lines = footer.render(240);
+		assert.equal(lines.length, layout === "table" ? 5 : 1);
+		const rendered = lines.join("\n");
+		const plain = stripVTControlCharacters(rendered);
+		assert.ok(plain.includes(label), plain);
+		assert.ok(rendered.includes(`\x1b[${dim ? "2" : "32"}m${label}\x1b[0m`), rendered);
+		assert.doesNotMatch(plain, /Codex \$/);
+		for (const width of [1, 20, 80, 120, 180, 240]) {
+			assert.ok(footer.render(width).every((line) => visibleWidth(line) <= width), `${layout} at ${width}`);
+		}
+	}
+}
+
+test("renders Codex credits in both layouts using the single cached quota response", async () => {
+	await withCodexServer(rateLimits({ hasCredits: true, unlimited: false, balance: "12.500" }), async (binary, reply, methods) => {
+		await withFooter(async (footer, _statuses, controls) => {
+			verifyCreditLayouts(footer, "Codex credits 12.500");
+			assert.match(stripVTControlCharacters(footer.render(240).join("\n")), /GPT/);
+			assert.deepEqual(await methods(), ["initialize", "initialized", "account/rateLimits/read"]);
+
+			await reply({ error: { code: -1, message: "offline" } });
+			await controls.refresh();
+			verifyCreditLayouts(footer, "Codex credits 12.500");
+			assert.equal((await methods()).filter((method) => method === "account/rateLimits/read").length, 2);
+
+			await reply(rateLimits(null));
+			await controls.refresh();
+			assert.doesNotMatch(footer.render(240).join("\n"), /Codex credits/);
+			assert.match(stripVTControlCharacters(footer.render(240).join("\n")), /GPT/);
+		}, { provider: "openai-codex", codexBin: binary, quotaEnabled: true });
+	});
+});
+
+test("renders unlimited and zero credits without requiring a weekly window", async () => {
+	await withCodexServer(rateLimits({ hasCredits: false, unlimited: true, balance: null }, false), async (binary, reply) => {
+		await withFooter(async (footer, _statuses, controls) => {
+			verifyCreditLayouts(footer, "Codex credits unlimited");
+			assert.doesNotMatch(stripVTControlCharacters(footer.render(240).join("\n")), /GPT/);
+			await reply(rateLimits({ hasCredits: true, unlimited: false, balance: "0.00" }, false));
+			await controls.refresh();
+			verifyCreditLayouts(footer, "Codex credits 0.00");
+			await reply(rateLimits(null, false));
+			await controls.refresh();
+			assert.doesNotMatch(footer.render(240).join("\n"), /Codex credits|GPT/);
+		}, { provider: "openai-codex", codexBin: binary, quotaEnabled: true });
+	});
+});
+
+test("dims credits with the weekly snapshot and hides malformed data on a successful refresh", async () => {
+	await withCodexServer(rateLimits({ hasCredits: true, unlimited: false, balance: "8" }, true, 1), async (binary, reply) => {
+		await withFooter(async (footer, _statuses, controls) => {
+			verifyCreditLayouts(footer, "Codex credits 8", true);
+			assert.match(footer.render(240).join("\n"), /\x1b\[2mGPT\x1b\[0m/);
+			await reply(rateLimits({ hasCredits: true, unlimited: false, balance: "NaN" }));
+			await controls.refresh();
+			assert.doesNotMatch(footer.render(240).join("\n"), /Codex credits|NaN/);
+			assert.match(stripVTControlCharacters(footer.render(240).join("\n")), /GPT/);
+		}, { provider: "openai-codex", codexBin: binary, quotaEnabled: true });
+	});
+});
+
+test("hides credits on initial failure without changing the weekly unavailable indicator", async () => {
+	await withCodexServer({ error: { code: -1, message: "offline" } }, async (binary) => {
+		await withFooter((footer) => {
+			assert.match(stripVTControlCharacters(footer.render(240).join("\n")), /GPT \?/);
+			assert.doesNotMatch(footer.render(240).join("\n"), /Codex credits/);
+		}, { provider: "openai-codex", codexBin: binary, quotaEnabled: true });
+	});
+});
+
+test("scopes Codex credits and lookups to enabled openai-codex models", async () => {
+	await withCodexServer(rateLimits({ hasCredits: true, unlimited: false, balance: "8" }), async (binary, _reply, methods) => {
+		for (const provider of ["anthropic", "openrouter", "openai"]) {
+			await withFooter((footer) => {
+				assert.doesNotMatch(footer.render(240).join("\n"), /Codex credits|GPT/);
+			}, { provider, codexBin: binary, quotaEnabled: true });
+		}
+		await withFooter((footer) => {
+			assert.doesNotMatch(footer.render(240).join("\n"), /Codex credits|GPT/);
+		}, { provider: "openai-codex", codexBin: binary, quotaEnabled: false });
+		assert.deepEqual(await methods(), []);
+		await withFooter((footer, _statuses, controls) => {
+			verifyCreditLayouts(footer, "Codex credits 8");
+			controls.setProvider("openrouter");
+			assert.doesNotMatch(footer.render(240).join("\n"), /Codex credits|GPT/);
+		}, { provider: "openai-codex", codexBin: binary, quotaEnabled: true });
+		assert.deepEqual(await methods(), ["initialize", "initialized", "account/rateLimits/read"]);
+	});
+});

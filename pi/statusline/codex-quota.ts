@@ -10,6 +10,14 @@ export interface CodexWeeklyQuota {
 	fetchedAtMs: number;
 }
 
+export type CodexCredits = { kind: "unlimited" } | { kind: "balance"; balance: string };
+
+export interface CodexQuotaSnapshot {
+	weekly?: CodexWeeklyQuota;
+	credits?: CodexCredits;
+	fetchedAtMs: number;
+}
+
 export interface FetchCodexQuotaOptions {
 	command?: string;
 	args?: string[];
@@ -52,14 +60,38 @@ function isWeeklyWindow(minutes: number): boolean {
 	return minutes >= WEEKLY_WINDOW_MINUTES * (1 - WINDOW_TOLERANCE) && minutes <= WEEKLY_WINDOW_MINUTES * (1 + WINDOW_TOLERANCE);
 }
 
-/** Select the seven-day Codex window without assuming it is primary or secondary. */
-export function selectCodexWeeklyQuota(result: unknown, fetchedAtMs = Date.now()): CodexWeeklyQuota | undefined {
+function canonicalLimits(result: unknown): JsonObject | undefined {
 	const root = asObject(result);
 	if (!root) return undefined;
 	const byLimitId = asObject(root.rateLimitsByLimitId ?? root.rate_limits_by_limit_id);
-	const limits = asObject(byLimitId?.codex) ?? asObject(root.rateLimits ?? root.rate_limits);
-	if (!limits) return undefined;
+	return asObject(byLimitId?.codex) ?? asObject(root.rateLimits ?? root.rate_limits);
+}
 
+function parseCredits(value: unknown): CodexCredits | undefined {
+	const credits = asObject(value);
+	if (!credits) return undefined;
+	const hasCredits = valueAt(credits, "hasCredits", "has_credits");
+	if (typeof hasCredits !== "boolean" || typeof credits.unlimited !== "boolean") return undefined;
+	if (credits.unlimited) return { kind: "unlimited" };
+	const balance = credits.balance;
+	if (!hasCredits || typeof balance !== "string" || balance !== balance.trim()
+		|| !/^[0-9]+(?:\.[0-9]+)?$/.test(balance) || !Number.isFinite(Number(balance))) return undefined;
+	return { kind: "balance", balance };
+}
+
+export function selectCodexQuotaSnapshot(result: unknown, fetchedAtMs = Date.now()): CodexQuotaSnapshot | undefined {
+	const limits = canonicalLimits(result);
+	if (!limits) return undefined;
+	return { weekly: weeklyQuota(limits, fetchedAtMs), credits: parseCredits(limits.credits), fetchedAtMs };
+}
+
+/** Select the seven-day Codex window without assuming it is primary or secondary. */
+export function selectCodexWeeklyQuota(result: unknown, fetchedAtMs = Date.now()): CodexWeeklyQuota | undefined {
+	const limits = canonicalLimits(result);
+	return limits ? weeklyQuota(limits, fetchedAtMs) : undefined;
+}
+
+function weeklyQuota(limits: JsonObject, fetchedAtMs: number): CodexWeeklyQuota | undefined {
 	const windows = [asObject(limits.primary), asObject(limits.secondary)].filter((window): window is JsonObject => Boolean(window));
 	for (const window of windows) {
 		const windowMinutes = finiteNumber(valueAt(window, "windowDurationMins", "window_minutes"));
@@ -82,13 +114,19 @@ export function isCodexQuotaStale(quota: CodexWeeklyQuota, nowMs: number, staleA
 	return nowMs - quota.fetchedAtMs > staleAfterMs || (quota.resetsAtMs !== null && nowMs >= quota.resetsAtMs);
 }
 
+export function isCodexSnapshotStale(snapshot: CodexQuotaSnapshot, nowMs: number, staleAfterMs: number): boolean {
+	return snapshot.weekly
+		? isCodexQuotaStale(snapshot.weekly, nowMs, staleAfterMs)
+		: nowMs - snapshot.fetchedAtMs > staleAfterMs;
+}
+
 function errorMessage(value: unknown): string {
 	const object = asObject(value);
 	return typeof object?.message === "string" ? object.message : "unknown Codex app-server error";
 }
 
 /** Query Codex's authenticated app-server API without reading credential files. */
-export function fetchCodexWeeklyQuota(options: FetchCodexQuotaOptions = {}): Promise<CodexWeeklyQuota> {
+export function fetchCodexQuotaSnapshot(options: FetchCodexQuotaOptions = {}): Promise<CodexQuotaSnapshot> {
 	const command = options.command ?? "codex";
 	const args = options.args ?? ["app-server", "--stdio"];
 	const timeoutMs = options.timeoutMs ?? 10_000;
@@ -106,12 +144,12 @@ export function fetchCodexWeeklyQuota(options: FetchCodexQuotaOptions = {}): Pro
 		let settled = false;
 		let terminating = false;
 		let pendingError: Error | undefined;
-		let pendingQuota: CodexWeeklyQuota | undefined;
+		let pendingQuota: CodexQuotaSnapshot | undefined;
 		let stdoutBuffer = "";
 		let stderr = "";
 		let forceKillTimeout: ReturnType<typeof setTimeout> | undefined;
 
-		const settle = (error?: Error, quota?: CodexWeeklyQuota) => {
+		const settle = (error?: Error, quota?: CodexQuotaSnapshot) => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timeout);
@@ -121,7 +159,7 @@ export function fetchCodexWeeklyQuota(options: FetchCodexQuotaOptions = {}): Pro
 			else if (quota) resolve(quota);
 			else reject(new Error("Codex quota query returned no result"));
 		};
-		const terminate = (error?: Error, quota?: CodexWeeklyQuota) => {
+		const terminate = (error?: Error, quota?: CodexQuotaSnapshot) => {
 			if (settled || terminating) return;
 			terminating = true;
 			pendingError = error;
@@ -164,9 +202,9 @@ export function fetchCodexWeeklyQuota(options: FetchCodexQuotaOptions = {}): Pro
 				fail(`Codex quota query failed: ${errorMessage(message.error)}`);
 				return;
 			}
-			const quota = selectCodexWeeklyQuota(message.result);
+			const quota = selectCodexQuotaSnapshot(message.result);
 			if (!quota) {
-				fail("Codex quota response did not include a weekly window");
+				fail("Codex quota response did not include a rate-limit snapshot");
 				return;
 			}
 			terminate(undefined, quota);

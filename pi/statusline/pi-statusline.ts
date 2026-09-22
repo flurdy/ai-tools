@@ -7,10 +7,10 @@ import { dirname } from "node:path";
 import { BeadsCountsCache, fetchBeadsCounts, findBeadsRoot, formatBeadsCounts } from "./beads-status.ts";
 import {
 	codexQuotaDisplayState,
-	fetchCodexWeeklyQuota,
-	isCodexQuotaStale,
+	fetchCodexQuotaSnapshot,
+	isCodexSnapshotStale,
 	showsCodexQuota,
-	type CodexWeeklyQuota,
+	type CodexQuotaSnapshot,
 } from "./codex-quota.ts";
 import { fetchGitDivergence, formatGitDivergence, GitDivergenceCache } from "./git-divergence.ts";
 import { activeModelLabel, modelLabel } from "./model-label.ts";
@@ -321,7 +321,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 			const quotaStaleMs = envMilliseconds("PI_STATUSLINE_CODEX_QUOTA_STALE", 15 * 60_000, 60_000);
 			const quotaTimeoutMs = envMilliseconds("PI_STATUSLINE_CODEX_QUOTA_TIMEOUT", 10_000, 1000);
 			const quotaAbort = new AbortController();
-			let codexQuota: CodexWeeklyQuota | undefined;
+			let codexSnapshot: CodexQuotaSnapshot | undefined;
 			let codexQuotaLookupFailed = false;
 			let quotaRefreshing = false;
 			const openRouterRefreshMs = envMilliseconds("PI_STATUSLINE_OPENROUTER_CREDITS_TTL", 5 * 60_000, 60_000);
@@ -357,14 +357,14 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				if (!showsCodexQuota(provider, quotaEnabled) || quotaRefreshing || quotaAbort.signal.aborted) return;
 				quotaRefreshing = true;
 				try {
-					codexQuota = await fetchCodexWeeklyQuota({
+					codexSnapshot = await fetchCodexQuotaSnapshot({
 						command: process.env.PI_STATUSLINE_CODEX_BIN?.trim() || "codex",
 						timeoutMs: quotaTimeoutMs,
 						signal: quotaAbort.signal,
 					});
 					codexQuotaLookupFailed = false;
 				} catch {
-					if (!codexQuota) codexQuotaLookupFailed = true;
+					if (!codexSnapshot) codexQuotaLookupFailed = true;
 				} finally {
 					quotaRefreshing = false;
 					if (!quotaAbort.signal.aborted) tui.requestRender();
@@ -408,10 +408,11 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const status = `${git.dirty ? "●" : ""}${git.untracked ? "…" : ""}${git.staged ? "✚" : ""}`;
 				let quota = "";
 				let quotaTable = "";
+				const codexQuota = codexSnapshot?.weekly;
+				const stale = codexSnapshot ? isCodexSnapshotStale(codexSnapshot, Date.now(), quotaStaleMs) : false;
 				const quotaState = codexQuotaDisplayState(ctx.model?.provider, quotaEnabled, codexQuota, codexQuotaLookupFailed);
 				if (quotaState === "available" && codexQuota) {
 					const used = Math.round(codexQuota.usedPercent);
-					const stale = isCodexQuotaStale(codexQuota, Date.now(), quotaStaleMs);
 					const tone = codexQuotaTone(used);
 					const quotaColors = stale
 						? { ok: colors.empty, warn: colors.empty, crit: colors.empty, empty: colors.empty }
@@ -424,6 +425,10 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					quota = theme.fg("dim", "GPT ?");
 					quotaTable = quota;
 				}
+				const credits = showsCodexQuota(ctx.model?.provider, quotaEnabled) ? codexSnapshot?.credits : undefined;
+				const codexBalance = credits
+					? theme.fg(stale ? "dim" : "success", `Codex credits ${credits.kind === "unlimited" ? "unlimited" : credits.balance}`)
+					: "";
 				const openRouterCredits = openRouterCreditsCache?.credits;
 				const openRouterBalance = openRouterCredits
 					? theme.fg(openRouterCreditsCache.isStale() ? "dim" : "success", `OR $${openRouterCredits.remainingCredits.toFixed(2)}`)
@@ -441,6 +446,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					ctx: `${bar(usage.ctxPct, 6, 34, 67, colors)} ${theme.fg("dim", "ctx")}`,
 					quota,
 					quotaTable,
+					codexBalance,
 					openRouterBalance,
 					cost: theme.fg("success", `est $${usage.cost.toFixed(2)}`),
 					duration: theme.fg("dim", fmtDuration(Date.now() - startedAt)),
@@ -461,10 +467,10 @@ export default function piStatusline(pi: ExtensionAPI): void {
 
 			function compact(width: number): string[] {
 				const s = segments();
-				let cells = [s.clock, joinCells([s.agent, s.guard, s.model, s.effort]), s.bars, s.quota, s.openRouterBalance, s.k8s, s.duration, s.path, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
+				let cells = [s.clock, joinCells([s.agent, s.guard, s.model, s.effort]), s.bars, s.quota, s.codexBalance, s.openRouterBalance, s.k8s, s.duration, s.path, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
 				let line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
-				cells = [joinCells([s.agent, s.guard, s.model, s.effort]), s.bars, s.quota, s.openRouterBalance, s.k8s, s.duration, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
+				cells = [joinCells([s.agent, s.guard, s.model, s.effort]), s.bars, s.quota, s.codexBalance, s.openRouterBalance, s.k8s, s.duration, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
 				line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
 				cells = [s.agent, s.guard, s.model, s.bars, s.k8s, s.branch, s.divergence, s.session].filter(Boolean);
@@ -476,7 +482,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const s = segments();
 				const border = (text: string) => theme.fg("border", text);
 				let row1 = [s.host, s.k8s, s.path, s.repo, s.branch, s.divergence, s.pr, s.beads, s.session].filter(Boolean);
-				const row2 = [s.agent, s.guard, s.model, s.effort, s.ctx, s.quotaTable, s.openRouterBalance, s.cost, s.duration, s.clock].filter(Boolean);
+				const row2 = [s.agent, s.guard, s.model, s.effort, s.ctx, s.quotaTable, s.codexBalance, s.openRouterBalance, s.cost, s.duration, s.clock].filter(Boolean);
 
 				function widthsFor(cells: string[]): number[] {
 					return cells.map((cell) => visibleWidth(cell) + 2);

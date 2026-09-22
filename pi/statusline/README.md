@@ -43,7 +43,7 @@ Avoid loading a second copy of an already installed extension when using `-e`.
 - `PI_STATUSLINE_BEADS=0` — hide Beads work counts in the table footer.
 - `PI_STATUSLINE_BEADS_TTL=30000` — Beads count refresh interval in milliseconds (minimum five seconds).
 - `PI_STATUSLINE_BEADS_TIMEOUT=2000` — timeout for one Beads count lookup in milliseconds (minimum 250 ms).
-- `PI_STATUSLINE_CODEX_QUOTA=0` — disable the Codex weekly-quota lookup when using an OpenAI-Codex model.
+- `PI_STATUSLINE_CODEX_QUOTA=0` — disable the shared Codex weekly-quota and credit-balance lookup when using an OpenAI-Codex model.
 - `PI_STATUSLINE_CODEX_QUOTA_TTL=300000` — Codex quota refresh interval in milliseconds (minimum one minute).
 - `PI_STATUSLINE_CODEX_QUOTA_STALE=900000` — age after which the last successful quota snapshot is marked stale (minimum one minute).
 - `PI_STATUSLINE_CODEX_QUOTA_TIMEOUT=10000` — timeout for one Codex quota lookup in milliseconds.
@@ -67,7 +67,7 @@ The examples below are schematic: they use placeholder values and omit terminal 
 Compact mode is a single line. As space narrows, less-important cells are dropped before the line is truncated.
 
 ```text
-12:34 │ π │ 🔒 │ GPT-5 Terra │ ⚡Hi │ ██░ ctx │ █░░ GPT │ OR $74.75 │ 12m │ ~/project │ main │ ⇡10 ⇣2 │ ◈ session
+12:34 │ π │ 🔒 │ GPT-5 Terra │ ⚡Hi │ ██░ ctx │ █░░ GPT │ Codex credits 125.50 │ OR $74.75 │ 12m │ ~/project │ main │ ⇡10 ⇣2 │ ◈ session
 ```
 
 ### Table footer
@@ -132,6 +132,7 @@ The latest prompt is taken from your submitted input, so it can expose task deta
 - `π` agent marker in its own cell; a compact model name (including variants such as Sol, Terra, and Luna), prefixed with `OR` only for OpenRouter; and thinking level
 - cautious context-capacity bar labelled `ctx` (green through 33%, yellow through 66%, then red)
 - cached Codex weekly used-capacity bar labelled `GPT` for OpenAI-Codex models, plus its reset date in table mode
+- ChatGPT/Codex credit balance labelled `Codex credits` (or `Codex credits unlimited`), sharing the quota lookup and visible in either layout when space permits
 - optional cached OpenRouter account credit balance labelled `OR`, immediately before the estimated session cost
 - session duration
 - abbreviated cwd
@@ -158,13 +159,15 @@ The optional divergence cell asynchronously compares the cache-keyed branch with
 
 The table footer discovers the nearest parent `.beads` workspace. At a validated project-workspace root it uses `project-workspace beads-counts` to aggregate the root and every registered repository store; inside a registered repository and outside project workspaces it retains the nearest-store `bd` query. Open counts include non-zero `P0`–`P4` buckets, including P4 backlog work. Active and blocked counts use compact symbols. A partial workspace result keeps healthy counts and adds `⚠N` for unavailable sources; if every source is unavailable it shows `◉ ? ⚠N` rather than a false zero. The lookup is cached, timeout-bounded, and never runs during footer rendering. Its cell stays hidden in compact mode, outside Beads workspaces, when required commands are missing, or when topology or output is invalid.
 
-## Codex quota source
+## Codex quota and credit source
 
 For OpenAI-Codex models, the quota segment queries the authenticated Codex CLI's machine-readable `codex app-server` API (`account/rateLimits/read`). It stays hidden and skips lookups for other providers. It does not scrape the interactive `/status` screen, read Codex credential files, or run a model turn. Lookup runs asynchronously outside footer rendering, refreshes at a bounded interval, and retains the last successful snapshot when a later refresh fails. Data older than the configured stale interval—or whose reset time has passed—is rendered dim.
 
-The weekly bucket is identified by its approximately seven-day duration rather than by assuming it is always the API's primary or secondary window. When an enabled OpenAI-Codex model is active, an initial lookup failure renders a dim `GPT ?`; a later failure retains the last successful snapshot. The segment stays hidden for other providers and when the lookup is explicitly disabled.
+Quota and credits come from the same canonical `rateLimitsByLimitId.codex` snapshot, falling back to `rateLimits` when that bucket is absent. The weekly window is identified by its approximately seven-day duration rather than by assuming it is always primary or secondary. A successful response without a weekly window hides the bar but can still show credits. When an enabled OpenAI-Codex model is active, an initial lookup failure renders a dim `GPT ?` and no credit balance; a later failure retains the last successful snapshot. Both segments stay hidden for other providers and when the lookup is explicitly disabled.
 
-The displayed quota belongs to the account authenticated in the Codex CLI. It represents Pi's OpenAI-Codex allowance only when Pi and Codex are signed into the same ChatGPT account.
+The [`CreditsSnapshot`](https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/schema/typescript/v2/CreditsSnapshot.ts) fields are validated separately, so malformed credits do not hide valid weekly quota. Both flags must be booleans. `unlimited: true` displays `Codex credits unlimited`; otherwise a balance appears only with `hasCredits: true` and a finite, non-negative plain decimal string. The decimal is displayed unchanged, including an explicitly reported zero. Absent, null, malformed, or unavailable credit data is hidden, not converted to zero. A successful refresh replaces the entire snapshot, clearing credits that are no longer reported. Credits share quota refresh, timeout, failure retention, and stale dimming (including a passed weekly reset); there is no second request or timer.
+
+This is **ChatGPT/Codex credit capacity, not OpenAI API-platform billing credit or a dollar balance**. The displayed quota and credits belong to the account authenticated in the Codex CLI. They represent Pi's active OpenAI-Codex account only when Pi and Codex are signed into the same ChatGPT account; the statusline does not verify account alignment.
 
 ## OpenRouter credit source
 
