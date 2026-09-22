@@ -35,14 +35,14 @@ cl --chrome
 cl --model=claude-sonnet-4-5
 ```
 
-Picker keys:
+Picker keys (Alt avoids Orca's intercepted Ctrl shortcuts):
 
-- `ctrl-p` (shown as `ctrl-p=mode`): cycle the displayed permission mode through `restore`, `plan`, and `auto` without closing the picker
+- `alt-p` (shown as `alt-p=mode`): cycle the displayed permission mode through `restore`, `plan`, and `auto` without closing the picker
 - `enter`: launch the selected row in the displayed permission mode
-- `ctrl-n`: force new session
-- `ctrl-r`: resume picker
-- `ctrl-f`: continue and fork session
-- `ctrl-w`: start the row in a fresh worktree (prompts for a branch; a handoff row also seeds its note)
+- `alt-n`: force new session
+- `alt-r`: resume picker
+- `alt-f`: continue and fork session
+- `alt-w`: start the row in a fresh worktree (prompts for a branch; a handoff row also seeds its note)
 
 The default `restore` state passes no permission flag, preserving a resumed session's saved mode. Explicit `plan` and `auto` selections pass the corresponding `--permission-mode`. `cl --plan` is intentionally rejected so explicit choices remain visible in the picker.
 

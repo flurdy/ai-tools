@@ -53,9 +53,9 @@ esac
 picker_header() {
   local mode="$1"
   if [ "$supports_fork" = 1 ]; then
-    printf 'mode=%s  ctrl-p=mode  enter=default  ctrl-n=new  ctrl-r=resume-pick  ctrl-f=fork  ctrl-w=worktree\n' "$mode"
+    printf 'mode=%s  alt-p=mode  enter=default  alt-n=new  alt-r=resume-pick  alt-f=fork  alt-w=worktree\n' "$mode"
   else
-    printf 'mode=%s  ctrl-p=mode  enter=default  ctrl-n=new  ctrl-r=resume-pick  ctrl-w=worktree\n' "$mode"
+    printf 'mode=%s  alt-p=mode  enter=default  alt-n=new  alt-r=resume-pick  alt-w=worktree\n' "$mode"
   fi
 }
 
@@ -338,9 +338,9 @@ fi
 
 # --- pick --------------------------------------------------------------------
 if [ "$supports_fork" = 1 ]; then
-  expect='ctrl-n,ctrl-r,ctrl-f,ctrl-w'
+  expect='alt-n,alt-r,alt-f,alt-w'
 else
-  expect='ctrl-n,ctrl-r,ctrl-w'
+  expect='alt-n,alt-r,alt-w'
 fi
 mode_file=$(mktemp "${TMPDIR:-/tmp}/ai-launch-mode.XXXXXX")
 cleanup_mode_file() { rm -f "$mode_file"; }
@@ -352,7 +352,7 @@ if ! printf 'restore\n' >"$mode_file"; then
 fi
 # Keep path values out of fzf's action grammar and let its child shell expand
 # them only as quoted environment variables; Bash %q is not valid in Fish.
-mode_bind='ctrl-p:transform-header("$AI_LAUNCH_MODE_CALLBACK" --agent="$AI_LAUNCH_MODE_AGENT" --toggle-mode-file="$AI_LAUNCH_MODE_FILE")'
+mode_bind='alt-p:transform-header("$AI_LAUNCH_MODE_CALLBACK" --agent="$AI_LAUNCH_MODE_AGENT" --toggle-mode-file="$AI_LAUNCH_MODE_FILE")'
 sel=$(printf '%s' "$rows" | \
         AI_LAUNCH_MODE_CALLBACK="$0" \
         AI_LAUNCH_MODE_AGENT="$agent" \
@@ -382,10 +382,10 @@ session=${parts[4]}
 note=${parts[5]}
 root=${parts[6]}
 case "$key" in
-  ctrl-n) session=new ;;
-  ctrl-r) session=resume ;;
-  ctrl-f) [ "$supports_fork" = 1 ] && session=fork ;;
-  ctrl-w) session=worktree ;;
+  alt-n) session=new ;;
+  alt-r) session=resume ;;
+  alt-f) [ "$supports_fork" = 1 ] && session=fork ;;
+  alt-w) session=worktree ;;
 esac
 
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$type" "$path" "$branch" "$session" "$note" "$root" "$launch_mode"

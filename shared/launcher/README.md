@@ -9,7 +9,7 @@ helpers are dispatch shims selected through `AI_TOOLS_HOME`, not copied variants
 - `context-gather`: discovers the main checkout, existing worktrees, handoffs,
   branch state, and cached pull-request metadata before presenting the `fzf`
   picker. Handoffs show their `HH:MM` timestamp and are newest-first by full
-  timestamp. Ctrl-P (shown as `ctrl-p=mode`) cycles the launcher's private
+  timestamp. Alt-P (shown as `alt-p=mode`) cycles the launcher's private
   initial-mode state without closing `fzf`: `restore` preserves a resumed
   session's saved mode, followed by
   explicit `plan` and `implement` (Pi) or `auto` (Claude) choices. It keeps
@@ -41,6 +41,9 @@ shared/launcher/context-gather --agent=pi
 
 The `cl` and `pl` Fish functions remain separate. They translate the selected
 context into each agent's own model, session, resume, fork, and prompt flags.
+Picker actions use Alt rather than Ctrl to avoid Orca's intercepted shortcuts:
+Alt-N starts fresh, Alt-R opens resume, Alt-W creates a worktree, and Alt-F forks
+(Claude only). Enter keeps the selected row's default action.
 
 ## Runtime Requirements
 

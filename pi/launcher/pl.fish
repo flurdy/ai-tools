@@ -97,10 +97,10 @@ function pl --description 'Pi launcher: pick a context (main/worktree/handoff/ne
                 echo '  pick a context via fzf, then launch pi there.'
                 echo "  fresh-session defaults: $default_model with $default_thinking thinking"
                 echo "  configure defaults in $config_path"
-                echo '  ctrl-p=mode (cycle restore/plan/implement)  enter=default session  ctrl-n=new  ctrl-r=resume-pick  ctrl-w=worktree'
+                echo '  alt-p=mode (cycle restore/plan/implement)  enter=default session  alt-n=new  alt-r=resume-pick  alt-w=worktree'
                 return 0
             case --plan --implement
-                echo "pl: choose the initial session mode with ctrl-p inside the launcher" >&2
+                echo "pl: choose the initial session mode with alt-p inside the launcher" >&2
                 return 2
             case '*'
                 echo "pl: unknown option: $a" >&2
@@ -162,7 +162,7 @@ function pl --description 'Pi launcher: pick a context (main/worktree/handoff/ne
         set session new
     end
 
-    # ctrl-w: start the selected row in a brand-new worktree. For a handoff row the
+    # alt-w: start the selected row in a brand-new worktree. For a handoff row the
     # note still seeds the fresh session; the recorded pick-up dir is ignored in
     # favour of a clean checkout.
     if test "$session" = worktree

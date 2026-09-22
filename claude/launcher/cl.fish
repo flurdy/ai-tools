@@ -18,10 +18,10 @@ function cl --description 'Claude launcher: pick a context (main/worktree/handof
             case --help -h
                 echo 'cl [--chrome|-C] [--model=ID] [--dry-run|-n] [--list]'
                 echo '  pick a context via fzf, then launch claude there.'
-                echo '  ctrl-p=mode (cycle restore/plan/auto)  enter=default session  ctrl-n=new  ctrl-r=resume-pick  ctrl-f=fork  ctrl-w=worktree'
+                echo '  alt-p=mode (cycle restore/plan/auto)  enter=default session  alt-n=new  alt-r=resume-pick  alt-f=fork  alt-w=worktree'
                 return 0
             case --plan
-                echo "cl: choose the initial permission mode with ctrl-p inside the launcher" >&2
+                echo "cl: choose the initial permission mode with alt-p inside the launcher" >&2
                 return 2
             case '*'
                 echo "cl: unknown option: $a" >&2
@@ -88,7 +88,7 @@ function cl --description 'Claude launcher: pick a context (main/worktree/handof
         set session new
     end
 
-    # ctrl-w: start the selected row in a brand-new worktree. For a handoff row the
+    # alt-w: start the selected row in a brand-new worktree. For a handoff row the
     # note still seeds the fresh session; the recorded pick-up dir (main, a pruned
     # worktree, or a live one) is ignored in favour of a clean checkout.
     if test "$session" = worktree
@@ -141,11 +141,11 @@ function cl --description 'Claude launcher: pick a context (main/worktree/handof
                         echo "cl: ⚠ no saved conversation in $path — starting a fresh session" >&2
                         set session new
                     else
-                        # ctrl-r/ctrl-f explicitly asked for a past conversation;
+                        # alt-r/alt-f explicitly asked for a past conversation;
                         # there is none, so don't silently start the wrong thing.
                         echo "cl: ✗ no saved conversation to $session in $path" >&2
                         echo "cl:   a crashed session can leave no transcript; your git branch is intact." >&2
-                        echo "cl:   → run cl again and press ctrl-n to start a fresh session here." >&2
+                        echo "cl:   → run cl again and press alt-n to start a fresh session here." >&2
                         return 1
                     end
                 end
@@ -173,7 +173,7 @@ function cl --description 'Claude launcher: pick a context (main/worktree/handof
     # handoff: seed an initial prompt so the fresh session loads that exact note.
     # (A handoff is a markdown file, not a resumable conversation — see cl-gather.)
     # note is only ever set for handoff rows, so seed whenever it's present —
-    # covers both the default handoff launch and a ctrl-w fresh-worktree launch.
+    # covers both the default handoff launch and an alt-w fresh-worktree launch.
     set -l seed
     if test -n "$note"
         set seed "Resume from the handoff note at $note. Read that file, summarise where we left off and the open threads, then wait for my go-ahead before doing anything."

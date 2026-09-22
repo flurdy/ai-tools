@@ -29,8 +29,16 @@ fish -n "$PL_FUNCTION"
 fish -n "$CL_FUNCTION"
 pl_help=$(HOME="$home" fish -c 'source "$argv[1]"; pl --help' "$PL_FUNCTION")
 cl_help=$(HOME="$home" fish -c 'source "$argv[1]"; cl --help' "$CL_FUNCTION")
-printf '%s\n' "$pl_help" | grep -q 'ctrl-p=mode ' || fail "Pi help did not label Ctrl-P as mode"
-printf '%s\n' "$cl_help" | grep -q 'ctrl-p=mode ' || fail "Claude help did not label Ctrl-P as mode"
+printf '%s\n' "$pl_help" | grep -q 'alt-p=mode ' || fail "Pi help did not label Alt-P as mode"
+printf '%s\n' "$cl_help" | grep -q 'alt-p=mode ' || fail "Claude help did not label Alt-P as mode"
+for help in "$pl_help" "$cl_help"; do
+  for key in alt-n alt-r alt-w; do
+    printf '%s\n' "$help" | grep -q "$key=" || fail "Help missing $key action"
+  done
+  if printf '%s\n' "$help" | grep -q 'ctrl-'; then fail "Help still advertises Ctrl actions"; fi
+done
+printf '%s\n' "$cl_help" | grep -q 'alt-f=fork' || fail "Claude help missing fork action"
+if printf '%s\n' "$pl_help" | grep -q 'alt-f'; then fail "Pi help advertises fork action"; fi
 nonrepo="$tmp/nonrepo"
 mkdir -p "$nonrepo"
 pl_default=$(HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run' "$PL_FUNCTION" "$nonrepo" 2>/dev/null)
@@ -121,11 +129,11 @@ HOME="$home" PATH="$TEST_PATH" KEYRING_LOG="$tmp/keyring.log" \
 if HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --plan' "$PL_FUNCTION" "$nonrepo" 2>"$tmp/pl-unknown.err"; then
   fail "Pi launcher silently accepted --plan"
 fi
-grep -q 'ctrl-p' "$tmp/pl-unknown.err" || fail "Pi unknown-mode guidance missing"
+grep -q 'alt-p' "$tmp/pl-unknown.err" || fail "Pi unknown-mode guidance missing"
 if HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; cl --plan' "$CL_FUNCTION" "$nonrepo" 2>"$tmp/cl-unknown.err"; then
   fail "Claude launcher silently accepted --plan"
 fi
-grep -q 'ctrl-p' "$tmp/cl-unknown.err" || fail "Claude unknown-mode guidance missing"
+grep -q 'alt-p' "$tmp/cl-unknown.err" || fail "Claude unknown-mode guidance missing"
 
 git -C "$repo" init -q -b main
 git -C "$repo" config user.name "Launcher Test"
@@ -215,8 +223,8 @@ set -euo pipefail
 printf '%s\n' "$*" > "$FZF_LOG"
 for argument in "$@"; do
   case "$argument" in
-    --bind=ctrl-p:transform-header\(*)
-      transform=${argument#--bind=ctrl-p:transform-header(}
+    --bind=alt-p:transform-header\(*)
+      transform=${argument#--bind=alt-p:transform-header(}
       transform=${transform%)}
       for ((i = 0; i < ${FZF_TOGGLE_COUNT:-0}; i += 1)); do
         "${SHELL:-/bin/sh}" -c "$transform" >/dev/null 2>&1 || true
@@ -271,14 +279,14 @@ expected_handoffs=$(printf '%s\n' \
   "handoff: early   (2026-07-15 00:30 · $repo)")
 [ "$handoff_rows" = "$expected_handoffs" ] || fail "handoffs were not timestamped and newest-first"
 
-# The picker mode is a stateful Ctrl-P cycle that does not close fzf. Restore
+# The picker mode is a stateful Alt-P cycle that does not close fzf. Restore
 # preserves a resumed session's saved mode; the other values are explicit.
 mode_file="$tmp/launch-mode"
 printf 'restore\n' > "$mode_file"
 mode_header=$("$PL_GATHER" --agent=pi --toggle-mode-file="$mode_file")
 [ "$(cat "$mode_file")" = plan ] || fail "Pi mode toggle did not select plan"
 printf '%s\n' "$mode_header" | grep -q 'mode=plan' || fail "Pi mode header did not show plan"
-printf '%s\n' "$mode_header" | grep -q 'ctrl-p=mode' || fail "Pi picker did not label Ctrl-P as mode"
+printf '%s\n' "$mode_header" | grep -q 'alt-p=mode' || fail "Pi picker did not label Alt-P as mode"
 mode_header=$("$PL_GATHER" --agent=pi --toggle-mode-file="$mode_file")
 [ "$(cat "$mode_file")" = implement ] || fail "Pi mode toggle did not select implement"
 printf '%s\n' "$mode_header" | grep -q 'mode=implement' || fail "Pi mode header did not show implement"
@@ -292,7 +300,7 @@ if "$PL_GATHER" --agent=pi --toggle-mode-file="$tmp/mode-link" >/dev/null 2>&1; 
 printf 'restore\n' > "$mode_file"
 mode_header=$("$CL_GATHER" --agent=claude --toggle-mode-file="$mode_file")
 [ "$(cat "$mode_file")" = plan ] || fail "Claude mode toggle did not select plan"
-printf '%s\n' "$mode_header" | grep -q 'ctrl-p=mode' || fail "Claude picker did not label Ctrl-P as mode"
+printf '%s\n' "$mode_header" | grep -q 'alt-p=mode' || fail "Claude picker did not label Alt-P as mode"
 "$CL_GATHER" --agent=claude --toggle-mode-file="$mode_file" >/dev/null
 [ "$(cat "$mode_file")" = auto ] || fail "Claude mode toggle did not select auto"
 "$CL_GATHER" --agent=claude --toggle-mode-file="$mode_file" >/dev/null
@@ -301,21 +309,37 @@ printf '%s\n' "$mode_header" | grep -q 'ctrl-p=mode' || fail "Claude picker did 
 # Claude retains its fork capability; Pi does not advertise it.
 claude_desc=$(cd "$repo" && HOME="$home" XDG_CACHE_HOME="$tmp/cache" \
   GH_COUNT="$tmp/gh-count" PATH="$TEST_PATH" FZF_LOG="$tmp/cl.args" \
-  FZF_KEY=ctrl-f "$CL_GATHER")
+  FZF_KEY=alt-f "$CL_GATHER")
 pi_desc=$(cd "$repo" && HOME="$home" XDG_CACHE_HOME="$tmp/cache" \
   GH_COUNT="$tmp/gh-count" PATH="$TEST_PATH" FZF_LOG="$tmp/pl.args" \
   "$PL_GATHER")
 [ "$(printf '%s' "$claude_desc" | cut -f4)" = fork ] || fail "Claude fork action missing"
 [ "$(printf '%s' "$pi_desc" | cut -f4)" = new ] || fail "Pi default action changed"
-grep -q -- '--expect=ctrl-n,ctrl-r,ctrl-f,ctrl-w' "$tmp/cl.args" || fail "Claude keys changed"
-grep -q -- '--expect=ctrl-n,ctrl-r,ctrl-w' "$tmp/pl.args" || fail "Pi keys changed"
-grep -qF -- 'ctrl-p:transform-header("$AI_LAUNCH_MODE_CALLBACK"' "$tmp/cl.args" || fail "Claude mode toggle binding is not value-independent"
-grep -qF -- 'ctrl-p:transform-header("$AI_LAUNCH_MODE_CALLBACK"' "$tmp/pl.args" || fail "Pi mode toggle binding is not value-independent"
+grep -q -- '--expect=alt-n,alt-r,alt-f,alt-w' "$tmp/cl.args" || fail "Claude Alt keys missing"
+grep -q -- '--expect=alt-n,alt-r,alt-w' "$tmp/pl.args" || fail "Pi Alt keys missing"
+grep -qF -- 'alt-p:transform-header("$AI_LAUNCH_MODE_CALLBACK"' "$tmp/cl.args" || fail "Claude mode toggle binding is not value-independent"
+grep -qF -- 'alt-p:transform-header("$AI_LAUNCH_MODE_CALLBACK"' "$tmp/pl.args" || fail "Pi mode toggle binding is not value-independent"
+if grep -q 'ctrl-' "$tmp/cl.args" "$tmp/pl.args"; then fail "Picker still advertises Ctrl actions"; fi
 [ "$(printf '%s' "$claude_desc" | cut -f7)" = restore ] || fail "Claude restore mode missing"
 [ "$(printf '%s' "$pi_desc" | cut -f7)" = restore ] || fail "Pi restore mode missing"
-if grep -q ctrl-f "$tmp/pl.args"; then fail "Pi advertised unsupported fork action"; fi
+if grep -q alt-f "$tmp/pl.args"; then fail "Pi advertised unsupported fork action"; fi
 
-# Exercise the actual fzf Ctrl-P binding and ensure its descriptor reaches each
+# Each Alt action changes only the session field; Enter keeps the row default.
+# Selecting a handoff makes Alt-N distinguishable from Enter's default action.
+for gather in "$CL_GATHER" "$PL_GATHER"; do
+  for action in 'alt-n:new' 'alt-r:resume' 'alt-w:worktree' ':handoff'; do
+    key=${action%%:*}
+    expected=${action#*:}
+    desc=$(cd "$nonrepo" && HOME="$home" XDG_CACHE_HOME="$tmp/action-cache" \
+      PATH="$TEST_PATH" AI_HANDOFF_LIST="$tmp/handoff-list" \
+      FZF_LOG="$tmp/action.args" FZF_KEY="$key" "$gather")
+    [ "$(printf '%s' "$desc" | cut -f1)" = handoff ] || fail "Action fixture did not select a handoff"
+    [ "$(printf '%s' "$desc" | cut -f4)" = "$expected" ] || fail "$gather $key did not select $expected"
+    [ "$(printf '%s' "$desc" | cut -f5)" = "$home/.claude/handoffs/2026-07-15-latest.md" ] || fail "Action lost handoff note"
+  done
+done
+
+# Exercise the actual fzf Alt-P binding and ensure its descriptor reaches each
 # Fish frontend. The private mode file must be removed when the picker returns.
 ln -sfn "$PL_GATHER" "$home/.pi/bin/pl-gather"
 ln -sfn "$CL_GATHER" "$home/.claude/bin/cl-gather"
@@ -336,10 +360,10 @@ mkdir -p "$mode_tmp"
 fish_path=$(command -v fish)
 pl_toggle=$(cd "$repo" && HOME="$home" TMPDIR="$mode_tmp" SHELL="$fish_path" PATH="$TEST_PATH" FZF_LOG="$tmp/pl-toggle.args" FZF_TOGGLE_COUNT=1 \
   fish -c 'source "$argv[1]"; pl --dry-run' "$PL_FUNCTION")
-printf '%s\n' "$pl_toggle" | grep -q -- '--plan' || fail "Pi Ctrl-P did not reach Fish mode translation: $pl_toggle"
+printf '%s\n' "$pl_toggle" | grep -q -- '--plan' || fail "Pi Alt-P did not reach Fish mode translation: $pl_toggle"
 cl_toggle=$(cd "$repo" && HOME="$home" TMPDIR="$mode_tmp" SHELL="$fish_path" PATH="$TEST_PATH" FZF_LOG="$tmp/cl-toggle.args" FZF_TOGGLE_COUNT=1 \
   fish -c 'source "$argv[1]"; cl --dry-run' "$CL_FUNCTION")
-printf '%s\n' "$cl_toggle" | grep -qF 'claude --permission-mode plan' || fail "Claude Ctrl-P did not reach Fish mode translation: $cl_toggle"
+printf '%s\n' "$cl_toggle" | grep -qF 'claude --permission-mode plan' || fail "Claude Alt-P did not reach Fish mode translation: $cl_toggle"
 if find "$tmp" -name 'ai-launch-mode.*' -print -quit | grep -q .; then fail "picker mode tempfile was not cleaned up"; fi
 touch "$tmp/not-a-directory"
 if (cd "$repo" && HOME="$home" TMPDIR="$tmp/not-a-directory" PATH="$TEST_PATH" "$PL_GATHER" --agent=pi >/dev/null 2>&1); then
