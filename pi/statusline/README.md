@@ -67,7 +67,7 @@ The examples below are schematic: they use placeholder values and omit terminal 
 Compact mode is a single line. As space narrows, less-important cells are dropped before the line is truncated.
 
 ```text
-12:34 │ π │ 🔒 │ GPT-5 Terra │ ⚡Hi │ ██░ ctx │ █░░ GPT │ Codex credits 125.50 │ OR $74.75 │ 12m │ ~/project │ main │ ⇡10 ⇣2 │ ◈ session
+12:34 │ π │ 🔒 │ GPT-5 Terra │ ⚡Hi │ ██░ ctx │ █░░ GPT · 125.50 cr │ OR $74.75 │ 12m │ ~/project │ main │ ⇡10 ⇣2 │ ◈ session
 ```
 
 ### Table footer
@@ -132,7 +132,7 @@ The latest prompt is taken from your submitted input, so it can expose task deta
 - `π` agent marker in its own cell; a compact model name (including variants such as Sol, Terra, and Luna), prefixed with `OR` only for OpenRouter; and thinking level
 - cautious context-capacity bar labelled `ctx` (green through 33%, yellow through 66%, then red)
 - cached Codex weekly used-capacity bar labelled `GPT` for OpenAI-Codex models, plus its reset date in table mode
-- ChatGPT/Codex credit balance labelled `Codex credits` (or `Codex credits unlimited`), sharing the quota lookup and visible in either layout when space permits
+- ChatGPT/Codex credit balance folded into the quota cell as `GPT · 125.50 cr` (or `GPT · ∞ cr`), sharing the quota lookup and visible in either layout when space permits
 - optional cached OpenRouter account credit balance labelled `OR`, immediately before the estimated session cost
 - session duration
 - abbreviated cwd
@@ -165,7 +165,7 @@ For OpenAI-Codex models, the quota segment queries the authenticated Codex CLI's
 
 Quota and credits come from the same canonical `rateLimitsByLimitId.codex` snapshot, falling back to `rateLimits` when that bucket is absent. The weekly window is identified by its approximately seven-day duration rather than by assuming it is always primary or secondary. A successful response without a weekly window hides the bar but can still show credits. When an enabled OpenAI-Codex model is active, an initial lookup failure renders a dim `GPT ?` and no credit balance; a later failure retains the last successful snapshot. Both segments stay hidden for other providers and when the lookup is explicitly disabled.
 
-The [`CreditsSnapshot`](https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/schema/typescript/v2/CreditsSnapshot.ts) fields are validated separately, so malformed credits do not hide valid weekly quota. Both flags must be booleans. `unlimited: true` displays `Codex credits unlimited`; otherwise a balance appears only with `hasCredits: true` and a finite, non-negative plain decimal string. The decimal is displayed unchanged, including an explicitly reported zero. Absent, null, malformed, or unavailable credit data is hidden, not converted to zero. A successful refresh replaces the entire snapshot, clearing credits that are no longer reported. Credits share quota refresh, timeout, failure retention, and stale dimming (including a passed weekly reset); there is no second request or timer.
+The [`CreditsSnapshot`](https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/schema/typescript/v2/CreditsSnapshot.ts) fields are validated separately, so malformed credits do not hide valid weekly quota. Both flags must be booleans. `unlimited: true` displays `∞ cr`; otherwise a balance appears only with `hasCredits: true` and a finite, non-negative plain decimal string. The footer rounds numeric balances to two decimal places for a compact display, including an explicitly reported zero. Absent, null, malformed, or unavailable credit data is hidden, not converted to zero. A successful refresh replaces the entire snapshot, clearing credits that are no longer reported. Credits share quota refresh, timeout, failure retention, and stale dimming (including a passed weekly reset); there is no second request or timer.
 
 This is **ChatGPT/Codex credit capacity, not OpenAI API-platform billing credit or a dollar balance**. The displayed quota and credits belong to the account authenticated in the Codex CLI. They represent Pi's active OpenAI-Codex account only when Pi and Codex are signed into the same ChatGPT account; the statusline does not verify account alignment.
 

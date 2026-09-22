@@ -18,6 +18,14 @@ export interface CodexQuotaSnapshot {
 	fetchedAtMs: number;
 }
 
+export function formatCodexCredits(credits: CodexCredits): string {
+	if (credits.kind === "unlimited") return "∞ cr";
+	const [whole = "0", fraction = ""] = credits.balance.split(".");
+	let hundredths = BigInt(whole) * 100n + BigInt(`${fraction}00`.slice(0, 2));
+	if ((fraction[2] ?? "0") >= "5") hundredths++;
+	return `${hundredths / 100n}.${(hundredths % 100n).toString().padStart(2, "0")} cr`;
+}
+
 export interface FetchCodexQuotaOptions {
 	command?: string;
 	args?: string[];

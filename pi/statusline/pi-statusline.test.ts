@@ -261,16 +261,17 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 	}
 }
 
-function verifyCreditLayouts(footer: Footer, label: string, dim = false) {
+function verifyCreditLayouts(footer: Footer, creditText: string, dim = false) {
 	for (const layout of ["compact", "table"]) {
 		process.env.PI_STATUSLINE = layout;
 		const lines = footer.render(240);
 		assert.equal(lines.length, layout === "table" ? 5 : 1);
 		const rendered = lines.join("\n");
 		const plain = stripVTControlCharacters(rendered);
-		assert.ok(plain.includes(label), plain);
-		assert.ok(rendered.includes(`\x1b[${dim ? "2" : "32"}m${label}\x1b[0m`), rendered);
-		assert.doesNotMatch(plain, /Codex \$/);
+		assert.ok(plain.includes("GPT ·") && plain.includes(creditText), plain);
+		const tone = `\x1b[${dim ? "2" : "32"}m`;
+		assert.ok(rendered.includes(`${tone} · ${creditText}\x1b[0m`) || rendered.includes(`${tone}GPT · ${creditText}\x1b[0m`), rendered);
+		assert.doesNotMatch(plain, /Codex credits|Codex \$/);
 		for (const width of [1, 20, 80, 120, 180, 240]) {
 			assert.ok(footer.render(width).every((line) => visibleWidth(line) <= width), `${layout} at ${width}`);
 		}
@@ -280,18 +281,17 @@ function verifyCreditLayouts(footer: Footer, label: string, dim = false) {
 test("renders Codex credits in both layouts using the single cached quota response", async () => {
 	await withCodexServer(rateLimits({ hasCredits: true, unlimited: false, balance: "12.500" }), async (binary, reply, methods) => {
 		await withFooter(async (footer, _statuses, controls) => {
-			verifyCreditLayouts(footer, "Codex credits 12.500");
-			assert.match(stripVTControlCharacters(footer.render(240).join("\n")), /GPT/);
+			verifyCreditLayouts(footer, "12.50 cr");
 			assert.deepEqual(await methods(), ["initialize", "initialized", "account/rateLimits/read"]);
 
 			await reply({ error: { code: -1, message: "offline" } });
 			await controls.refresh();
-			verifyCreditLayouts(footer, "Codex credits 12.500");
+			verifyCreditLayouts(footer, "12.50 cr");
 			assert.equal((await methods()).filter((method) => method === "account/rateLimits/read").length, 2);
 
 			await reply(rateLimits(null));
 			await controls.refresh();
-			assert.doesNotMatch(footer.render(240).join("\n"), /Codex credits/);
+			assert.doesNotMatch(footer.render(240).join("\n"), /\bcr\b|∞/);
 			assert.match(stripVTControlCharacters(footer.render(240).join("\n")), /GPT/);
 		}, { provider: "openai-codex", codexBin: binary, quotaEnabled: true });
 	});
@@ -300,14 +300,13 @@ test("renders Codex credits in both layouts using the single cached quota respon
 test("renders unlimited and zero credits without requiring a weekly window", async () => {
 	await withCodexServer(rateLimits({ hasCredits: false, unlimited: true, balance: null }, false), async (binary, reply) => {
 		await withFooter(async (footer, _statuses, controls) => {
-			verifyCreditLayouts(footer, "Codex credits unlimited");
-			assert.doesNotMatch(stripVTControlCharacters(footer.render(240).join("\n")), /GPT/);
+			verifyCreditLayouts(footer, "∞ cr");
 			await reply(rateLimits({ hasCredits: true, unlimited: false, balance: "0.00" }, false));
 			await controls.refresh();
-			verifyCreditLayouts(footer, "Codex credits 0.00");
+			verifyCreditLayouts(footer, "0.00 cr");
 			await reply(rateLimits(null, false));
 			await controls.refresh();
-			assert.doesNotMatch(footer.render(240).join("\n"), /Codex credits|GPT/);
+			assert.doesNotMatch(footer.render(240).join("\n"), /\bcr\b|∞|GPT/);
 		}, { provider: "openai-codex", codexBin: binary, quotaEnabled: true });
 	});
 });
@@ -315,11 +314,11 @@ test("renders unlimited and zero credits without requiring a weekly window", asy
 test("dims credits with the weekly snapshot and hides malformed data on a successful refresh", async () => {
 	await withCodexServer(rateLimits({ hasCredits: true, unlimited: false, balance: "8" }, true, 1), async (binary, reply) => {
 		await withFooter(async (footer, _statuses, controls) => {
-			verifyCreditLayouts(footer, "Codex credits 8", true);
+			verifyCreditLayouts(footer, "8.00 cr", true);
 			assert.match(footer.render(240).join("\n"), /\x1b\[2mGPT\x1b\[0m/);
 			await reply(rateLimits({ hasCredits: true, unlimited: false, balance: "NaN" }));
 			await controls.refresh();
-			assert.doesNotMatch(footer.render(240).join("\n"), /Codex credits|NaN/);
+			assert.doesNotMatch(footer.render(240).join("\n"), /\bcr\b|∞|NaN/);
 			assert.match(stripVTControlCharacters(footer.render(240).join("\n")), /GPT/);
 		}, { provider: "openai-codex", codexBin: binary, quotaEnabled: true });
 	});
@@ -329,7 +328,7 @@ test("hides credits on initial failure without changing the weekly unavailable i
 	await withCodexServer({ error: { code: -1, message: "offline" } }, async (binary) => {
 		await withFooter((footer) => {
 			assert.match(stripVTControlCharacters(footer.render(240).join("\n")), /GPT \?/);
-			assert.doesNotMatch(footer.render(240).join("\n"), /Codex credits/);
+			assert.doesNotMatch(footer.render(240).join("\n"), /\bcr\b|∞/);
 		}, { provider: "openai-codex", codexBin: binary, quotaEnabled: true });
 	});
 });
@@ -338,17 +337,17 @@ test("scopes Codex credits and lookups to enabled openai-codex models", async ()
 	await withCodexServer(rateLimits({ hasCredits: true, unlimited: false, balance: "8" }), async (binary, _reply, methods) => {
 		for (const provider of ["anthropic", "openrouter", "openai"]) {
 			await withFooter((footer) => {
-				assert.doesNotMatch(footer.render(240).join("\n"), /Codex credits|GPT/);
+				assert.doesNotMatch(footer.render(240).join("\n"), /\bcr\b|∞|GPT/);
 			}, { provider, codexBin: binary, quotaEnabled: true });
 		}
 		await withFooter((footer) => {
-			assert.doesNotMatch(footer.render(240).join("\n"), /Codex credits|GPT/);
+			assert.doesNotMatch(footer.render(240).join("\n"), /\bcr\b|∞|GPT/);
 		}, { provider: "openai-codex", codexBin: binary, quotaEnabled: false });
 		assert.deepEqual(await methods(), []);
 		await withFooter((footer, _statuses, controls) => {
-			verifyCreditLayouts(footer, "Codex credits 8");
+			verifyCreditLayouts(footer, "8.00 cr");
 			controls.setProvider("openrouter");
-			assert.doesNotMatch(footer.render(240).join("\n"), /Codex credits|GPT/);
+			assert.doesNotMatch(footer.render(240).join("\n"), /\bcr\b|∞|GPT/);
 		}, { provider: "openai-codex", codexBin: binary, quotaEnabled: true });
 		assert.deepEqual(await methods(), ["initialize", "initialized", "account/rateLimits/read"]);
 	});
