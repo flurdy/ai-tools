@@ -160,14 +160,14 @@ test("supports credits-only, unlimited, exact zero, and snake-case snapshots", (
 	} })?.credits, { kind: "balance", balance: "7.25" });
 });
 
-test("formats credits compactly with exact decimal rounding", () => {
+test("formats credits as whole units with exact rounding", () => {
 	assert.equal(formatCodexCredits({ kind: "unlimited" }), "∞ cr");
-	assert.equal(formatCodexCredits({ kind: "balance", balance: "0" }), "0.00 cr");
-	assert.equal(formatCodexCredits({ kind: "balance", balance: "12.5" }), "12.50 cr");
-	assert.equal(formatCodexCredits({ kind: "balance", balance: "430.8764750000" }), "430.88 cr");
-	assert.equal(formatCodexCredits({ kind: "balance", balance: "999.994" }), "999.99 cr");
-	assert.equal(formatCodexCredits({ kind: "balance", balance: "999.995" }), "1000.00 cr");
-	assert.equal(formatCodexCredits({ kind: "balance", balance: "9007199254740993.125" }), "9007199254740993.13 cr");
+	assert.equal(formatCodexCredits({ kind: "balance", balance: "0" }), "0 cr");
+	assert.equal(formatCodexCredits({ kind: "balance", balance: "12.5" }), "13 cr");
+	assert.equal(formatCodexCredits({ kind: "balance", balance: "430.8764750000" }), "431 cr");
+	assert.equal(formatCodexCredits({ kind: "balance", balance: "999.494" }), "999 cr");
+	assert.equal(formatCodexCredits({ kind: "balance", balance: "999.5" }), "1000 cr");
+	assert.equal(formatCodexCredits({ kind: "balance", balance: "9007199254740993.125" }), "9007199254740993 cr");
 });
 
 test("hides absent or malformed credits without losing a valid weekly quota", () => {

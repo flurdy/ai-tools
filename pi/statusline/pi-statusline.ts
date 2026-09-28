@@ -440,7 +440,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				}
 				const openRouterCredits = openRouterCreditsCache?.credits;
 				const openRouterBalance = openRouterCredits
-					? theme.fg(openRouterCreditsCache.isStale() ? "dim" : "success", `OR $${openRouterCredits.remainingCredits.toFixed(2)}`)
+					? theme.fg(openRouterCreditsCache.isStale() ? "dim" : "success", `OR $${Math.round(openRouterCredits.remainingCredits)}`)
 					: "";
 				return {
 					clock: theme.fg("dim", fmtTime(new Date())),
@@ -456,7 +456,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					quota,
 					quotaTable,
 					openRouterBalance,
-					cost: theme.fg("success", `est $${usage.cost.toFixed(2)}`),
+					cost: theme.fg("success", `est $${Math.round(usage.cost)}`),
 					duration: theme.fg("dim", fmtDuration(Date.now() - startedAt)),
 					path: theme.fg("muted", ` ${abbrevPath(ctx.cwd)}`),
 					repo: git.isWorktree ? theme.fg("success", `🌳 ${git.repo ?? "worktree"}`) : "",

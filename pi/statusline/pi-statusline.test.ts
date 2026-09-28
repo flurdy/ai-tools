@@ -281,12 +281,12 @@ function verifyCreditLayouts(footer: Footer, creditText: string, dim = false) {
 test("renders Codex credits in both layouts using the single cached quota response", async () => {
 	await withCodexServer(rateLimits({ hasCredits: true, unlimited: false, balance: "12.500" }), async (binary, reply, methods) => {
 		await withFooter(async (footer, _statuses, controls) => {
-			verifyCreditLayouts(footer, "12.50 cr");
+			verifyCreditLayouts(footer, "13 cr");
 			assert.deepEqual(await methods(), ["initialize", "initialized", "account/rateLimits/read"]);
 
 			await reply({ error: { code: -1, message: "offline" } });
 			await controls.refresh();
-			verifyCreditLayouts(footer, "12.50 cr");
+			verifyCreditLayouts(footer, "13 cr");
 			assert.equal((await methods()).filter((method) => method === "account/rateLimits/read").length, 2);
 
 			await reply(rateLimits(null));
@@ -303,7 +303,7 @@ test("renders unlimited and zero credits without requiring a weekly window", asy
 			verifyCreditLayouts(footer, "∞ cr");
 			await reply(rateLimits({ hasCredits: true, unlimited: false, balance: "0.00" }, false));
 			await controls.refresh();
-			verifyCreditLayouts(footer, "0.00 cr");
+			verifyCreditLayouts(footer, "0 cr");
 			await reply(rateLimits(null, false));
 			await controls.refresh();
 			assert.doesNotMatch(footer.render(240).join("\n"), /\bcr\b|∞|GPT/);
@@ -314,7 +314,7 @@ test("renders unlimited and zero credits without requiring a weekly window", asy
 test("dims credits with the weekly snapshot and hides malformed data on a successful refresh", async () => {
 	await withCodexServer(rateLimits({ hasCredits: true, unlimited: false, balance: "8" }, true, 1), async (binary, reply) => {
 		await withFooter(async (footer, _statuses, controls) => {
-			verifyCreditLayouts(footer, "8.00 cr", true);
+			verifyCreditLayouts(footer, "8 cr", true);
 			assert.match(footer.render(240).join("\n"), /\x1b\[2mGPT\x1b\[0m/);
 			await reply(rateLimits({ hasCredits: true, unlimited: false, balance: "NaN" }));
 			await controls.refresh();
@@ -345,7 +345,7 @@ test("scopes Codex credits and lookups to enabled openai-codex models", async ()
 		}, { provider: "openai-codex", codexBin: binary, quotaEnabled: false });
 		assert.deepEqual(await methods(), []);
 		await withFooter((footer, _statuses, controls) => {
-			verifyCreditLayouts(footer, "8.00 cr");
+			verifyCreditLayouts(footer, "8 cr");
 			controls.setProvider("openrouter");
 			assert.doesNotMatch(footer.render(240).join("\n"), /\bcr\b|∞|GPT/);
 		}, { provider: "openai-codex", codexBin: binary, quotaEnabled: true });
