@@ -63,11 +63,11 @@ test("formats compact priority, active, and blocked indicators", () => {
 	);
 	assert.equal(
 		formatBeadsCounts({ openByPriority: [0, 0, 1, 0, 0], inProgress: 0, blocked: 2, successfulSources: 2, unavailableSources: 1 }),
-		"◉ P2:1 ⛔2 ⚠1",
+		"◉ P2:1 ⛔2 ⚠ 1",
 	);
 	assert.equal(
 		formatBeadsCounts({ openByPriority: [0, 0, 0, 0, 0], inProgress: 0, blocked: 0, successfulSources: 0, unavailableSources: 2 }),
-		"◉ ? ⚠2",
+		"◉ ? ⚠ 2",
 	);
 });
 
@@ -116,7 +116,7 @@ test("aggregates a validated workspace root through project-workspace", async ()
 			successfulSources: 2,
 			unavailableSources: 1,
 		});
-		assert.equal(formatBeadsCounts(counts), "◉ P0:1 P4:2 ◐2 ⛔1 ⚠1");
+		assert.equal(formatBeadsCounts(counts), "◉ P0:1 P4:2 ◐2 ⛔1 ⚠ 1");
 	} finally {
 		await rm(directory, { recursive: true, force: true });
 	}

@@ -91,7 +91,7 @@ export function formatBeadsCounts(counts: BeadsCounts | undefined): string {
 	const parts = ["◉", ...summary];
 	if (counts.inProgress > 0) parts.push(`◐${counts.inProgress}`);
 	if (counts.blocked > 0) parts.push(`⛔${counts.blocked}`);
-	if (counts.unavailableSources > 0) parts.push(`⚠${counts.unavailableSources}`);
+	if (counts.unavailableSources > 0) parts.push(`⚠ ${counts.unavailableSources}`);
 	return parts.join(" ");
 }
 
