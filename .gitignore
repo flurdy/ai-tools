@@ -10,4 +10,5 @@ __pycache__/
 *.db
 .beads/dolt/
 .beads-credential-key
+.beads.gate.lock*
 .envrc
