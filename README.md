@@ -88,6 +88,11 @@ shared/
 docs/
 ```
 
+## Experiments
+
+- [Goal baseline fixture](pi/experiments/goal-baseline/) — no-model CSV repair fixture
+  and frozen checks; preparation only, with no sandbox or execution runner.
+
 ## Notes
 
 These scripts are extracted from my own environment, so they intentionally keep some local workflow assumptions. The per-tool READMEs call those out where they matter.

@@ -1,0 +1,15 @@
+[
+  {"id": "plain", "fields": ["alpha", "beta"], "expected": "alpha,beta\r\n"},
+  {"id": "comma", "fields": ["a,b", "c"], "expected": "\"a,b\",c\r\n"},
+  {"id": "quote", "fields": ["say \"hi\"", "tail"], "expected": "\"say \"\"hi\"\"\",tail\r\n"},
+  {"id": "repeated-quotes", "fields": ["\"\"", "\""], "expected": "\"\"\"\"\"\",\"\"\"\"\r\n"},
+  {"id": "quote-with-comma-and-newline", "fields": ["a,\"b\"\nc"], "expected": "\"a,\"\"b\"\"\nc\"\r\n"},
+  {"id": "lf", "fields": ["a\nb", "c"], "expected": "\"a\nb\",c\r\n"},
+  {"id": "cr", "fields": ["a\rb"], "expected": "\"a\rb\"\r\n"},
+  {"id": "crlf", "fields": ["a\r\nb"], "expected": "\"a\r\nb\"\r\n"},
+  {"id": "unicode", "fields": ["café", "東京", "🙂"], "expected": "café,東京,🙂\r\n"},
+  {"id": "spaces", "fields": [" leading", "trailing ", "a b"], "expected": " leading,trailing ,a b\r\n"},
+  {"id": "empty-fields", "fields": ["", "middle", ""], "expected": ",middle,\r\n"},
+  {"id": "single-empty-field", "fields": [""], "expected": "\"\"\r\n"},
+  {"id": "empty-row", "fields": [], "expected": "\r\n"}
+]

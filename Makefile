@@ -4,11 +4,12 @@ PI_THEMES_DIR ?= $(PI_AGENT_DIR)/themes
 
 .DEFAULT_GOAL := help
 
-.PHONY: help apply verify-apply check check-notify
+.PHONY: help apply verify-apply check check-notify check-goal-baseline
 
 help:
-	@echo "make check         Test artifact-hygiene gates, resource ownership and Pi notifications"
+	@echo "make check         Test artifact-hygiene gates, resource ownership, Pi notifications and goal fixture"
 	@echo "make check-notify  Test Pi notifications and managed installation (Node >=22.19)"
+	@echo "make check-goal-baseline  Check the goal fixture without launching models (Node >=22.19)"
 	@echo "make apply         Link reviewed local Pi resources into $(PI_AGENT_DIR)"
 	@echo "make verify-apply  Verify the managed Pi resource links"
 
@@ -18,9 +19,13 @@ check:
 	@tests/test-watch-loop-extraction.sh
 	@bash tests/test-session-mode-extraction.sh
 	$(MAKE) check-notify
+	$(MAKE) check-goal-baseline
 
 check-notify:
 	node --test pi/notify/pi-notify.test.ts tests/pi-apply.test.mjs
+
+check-goal-baseline:
+	node --test tests/goal-baseline.test.mjs
 
 apply:
 	@set -e; check_link() { \
