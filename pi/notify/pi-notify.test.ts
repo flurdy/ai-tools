@@ -19,7 +19,10 @@ test("explicit protocols and off mode are bounded and fail closed", () => {
 	assert.equal(resolveProtocol({ PI_NOTIFY_PROTOCOL: "osc99" }), "osc99");
 	assert.equal(resolveProtocol({ PI_NOTIFY_PROTOCOL: "osc777" }), "osc777");
 	assert.equal(resolveProtocol({ PI_NOTIFY_PROTOCOL: "auto", TERM: "xterm-kitty" }), "osc99");
-	for (const value of ["off", "invalid", "OSC99"]) {
+	assert.equal(resolveProtocol({ PI_NOTIFY_PROTOCOL: "", TERM: "xterm-kitty" }), "osc99");
+	assert.equal(resolveProtocol({ PI_NOTIFY_PROTOCOL: "", TERM_PROGRAM: "ghostty" }), "osc777");
+	assert.equal(resolveProtocol({ PI_NOTIFY_PROTOCOL: "" }), undefined);
+	for (const value of ["off", "invalid", "OSC99", " ", "\t", "\n"]) {
 		assert.equal(resolveProtocol({ PI_NOTIFY_PROTOCOL: value, KITTY_WINDOW_ID: "1" }), undefined);
 	}
 });

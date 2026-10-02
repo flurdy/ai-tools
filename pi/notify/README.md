@@ -30,7 +30,7 @@ Before installing, disable any other completion notifier, including an unmanaged
 
 Only a TUI with terminal stdout and an idle agent emits output. The message is fixed: no prompts, responses, paths, session names or credentials leave the process. No shell commands, network calls, terminal queries, timers or OS-notification subprocesses are used. Terminal write errors are swallowed. Desktop delivery still depends on terminal support, OS permissions and notification settings; it is not acknowledged by the extension.
 
-`PI_NOTIFY_PROTOCOL` selects `auto` (default), `off`, `osc99`, or `osc777`. An explicit protocol can support a terminal not auto-detected; use it only after checking that terminal's documentation. Unknown values disable output. Overrides never bypass Orca, multiplexer, dumb-terminal, non-TUI, non-TTY or idle guards. For another host integration that already alerts, set `PI_NOTIFY_PROTOCOL=off` before launching Pi.
+`PI_NOTIFY_PROTOCOL` selects `auto` (default when unset or empty), `off`, `osc99`, or `osc777`. An explicit protocol can support a terminal not auto-detected; use it only after checking that terminal's documentation. Other unrecognized values, including whitespace-only values, disable output. Overrides never bypass Orca, multiplexer, dumb-terminal, non-TUI, non-TTY or idle guards. For another host integration that already alerts, set `PI_NOTIFY_PROTOCOL=off` before launching Pi.
 
 On rivelino inside Orca, this extension deliberately adds **no second alert**. Host completion reporting is not proof that an OS popup is enabled; configure and verify that in Orca. In standalone Kitty, let Pi finish a prompt while another window has focus and check for a single notification.
 
