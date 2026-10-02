@@ -335,10 +335,10 @@ process.on("SIGTERM", () => {});
 });
 
 test("shortens GPT variants and only prefixes OpenRouter", () => {
-	assert.equal(shortModel("gpt-5.6-terra"), "GPT-5.6 Terra");
-	assert.equal(shortModel("openai/gpt-5.6-sol"), "GPT-5.6 Sol");
-	assert.equal(shortModel("gpt-5.6-luna"), "GPT-5.6 Luna");
-	assert.equal(modelLabel("openai-codex", "gpt-5.6-terra"), "GPT-5.6 Terra");
-	assert.equal(modelLabel("openrouter", "openai/gpt-5.6-terra"), "OR GPT-5.6 Terra");
-	assert.equal(modelLabel("anthropic", "claude-sonnet-4-6"), "Claude Sonnet 4.6");
+	assert.equal(shortModel("gpt-5.6-terra"), "Terra 5.6");
+	assert.equal(shortModel("openai/gpt-5.6-sol"), "Sol 5.6");
+	assert.equal(shortModel("gpt-5.6-luna"), "Luna 5.6");
+	assert.equal(modelLabel("openai-codex", "gpt-5.6-terra"), "Terra 5.6");
+	assert.equal(modelLabel("openrouter", "openai/gpt-5.6-terra"), "OR Terra 5.6");
+	assert.equal(modelLabel("anthropic", "claude-sonnet-4-6"), "Sonnet 4.6");
 });

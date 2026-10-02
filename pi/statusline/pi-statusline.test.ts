@@ -81,7 +81,7 @@ test("wires continuing turns to threshold crossing without tool-loop spam", () =
 type Footer = { render(width: number): string[]; dispose(): void };
 
 type FooterControls = { refresh(): Promise<void>; setProvider(provider: string): void };
-type FooterOptions = { provider?: string; codexBin?: string; quotaEnabled?: boolean };
+type FooterOptions = { provider?: string; modelId?: string; codexBin?: string; quotaEnabled?: boolean };
 
 async function waitFor(check: () => boolean): Promise<void> {
 	const deadline = Date.now() + 3000;
@@ -126,7 +126,7 @@ async function withFooter(
 		const ctx = {
 			cwd: "/tmp",
 			mode: "tui",
-			model: { provider: options.provider ?? "test", id: "model", contextWindow: 1000 },
+			model: { provider: options.provider ?? "test", id: options.modelId ?? "model", contextWindow: 1000 },
 			getContextUsage: () => ({ tokens: 0 }),
 			sessionManager: { getBranch: () => [], getSessionId: () => "footer-test" },
 			ui: {
@@ -222,6 +222,30 @@ test("updates the unified cell as scopes change and disappear", () => withFooter
 	assert.doesNotMatch(footer.render(180).join("\n"), /🔒|✅|leases:/);
 }));
 
+for (const [provider, modelId, label] of [
+	["openai-codex", "gpt-6.1-sol", "Sol 6.1"],
+	["openrouter", "openai/gpt-6.1-sol-pro", "OR Sol 6.1+"],
+	["anthropic", "claude-sonnet-5-5", "Sonnet 5.5"],
+	["anthropic", "claude-opus-5.5", "Opus 5.5"],
+	["anthropic", "claude-fable-5-1", "Fable 5.1"],
+	["anthropic", "claude-haiku-4-5", "Haiku 4.5"],
+]) {
+	test(`renders ${label} in compact and table footers without overflow`, () => withFooter((footer) => {
+		for (const layout of ["compact", "table"]) {
+			process.env.PI_STATUSLINE = layout;
+			for (const width of [1, 8, 20, 30, 80, 120, 180, 240]) {
+				const lines = footer.render(width);
+				assert.ok(lines.every((line) => visibleWidth(line) <= width), `${layout} at ${width}`);
+				if (width === 240) {
+					assert.equal(lines.length, layout === "table" ? 5 : 1);
+					const cells = stripVTControlCharacters(lines.join("\n")).split(/[│\n]/).map((cell) => cell.trim());
+					assert.equal(cells.filter((cell) => cell === label).length, 1);
+				}
+			}
+		}
+	}, { provider, modelId }));
+}
+
 function rateLimits(credits: unknown, weekly = true, resetsAt = Math.floor(Date.now() / 1000) + 3600) {
 	return { result: { rateLimits: {
 		primary: weekly ? { usedPercent: 40, windowDurationMins: 10080, resetsAt } : null,
@@ -282,6 +306,7 @@ test("renders Codex credits in both layouts using the single cached quota respon
 	await withCodexServer(rateLimits({ hasCredits: true, unlimited: false, balance: "12.500" }), async (binary, reply, methods) => {
 		await withFooter(async (footer, _statuses, controls) => {
 			verifyCreditLayouts(footer, "13 cr");
+			assert.match(stripVTControlCharacters(footer.render(240).join("\n")), /Sol 6\.1/);
 			assert.deepEqual(await methods(), ["initialize", "initialized", "account/rateLimits/read"]);
 
 			await reply({ error: { code: -1, message: "offline" } });
@@ -293,7 +318,7 @@ test("renders Codex credits in both layouts using the single cached quota respon
 			await controls.refresh();
 			assert.doesNotMatch(footer.render(240).join("\n"), /\bcr\b|∞/);
 			assert.match(stripVTControlCharacters(footer.render(240).join("\n")), /GPT/);
-		}, { provider: "openai-codex", codexBin: binary, quotaEnabled: true });
+		}, { provider: "openai-codex", modelId: "gpt-6.1-sol", codexBin: binary, quotaEnabled: true });
 	});
 });
 

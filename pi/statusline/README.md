@@ -67,7 +67,7 @@ The examples below are schematic: they use placeholder values and omit terminal 
 Compact mode is a single line. As space narrows, less-important cells are dropped before the line is truncated.
 
 ```text
-12:34 │ π │ 🔒 │ GPT-5 Terra │ ⚡Hi │ ██░ ctx │ █░░ GPT · 126 cr │ OR $75 │ 12m │ ~/project │ main │ ⇡10 ⇣2 │ ◈ session
+12:34 │ π │ 🔒 │ Terra 5 │ ⚡Hi │ ██░ ctx │ █░░ GPT · 126 cr │ OR $75 │ 12m │ ~/project │ main │ ⇡10 ⇣2 │ ◈ session
 ```
 
 ### Table footer
@@ -78,7 +78,7 @@ Table mode uses two bordered rows: location/session information on top, then mod
 ┌──────────────┬───────────┬──────┬──────────────────────┬────────────────┐
 │ example-host │ ~/project │ main │ ⇡10 ⇣2 │ ◉ P4:4 ◐1         │ ◈ session      │
 ├───┬──────────┴──┬─────┬──┴──────┴──┬──────────┬────────┴──┬─────┬───────┤
-│ π │ 🔒2 │ GPT-5 Terra │ ⚡Hi │ ███░░░ ctx │ OR $75 │ est $0 │ 12m │ 12:34 │
+│ π │ 🔒2 │ Terra 5 │ ⚡Hi │ ███░░░ ctx │ OR $75 │ est $0 │ 12m │ 12:34 │
 └───┴─────────────┴─────┴────────────┴──────────┴───────────┴─────┴───────┘
 ```
 
@@ -114,7 +114,7 @@ Last [12:34]: [submitted prompt, truncated to the terminal width]
 While an agent run is active, it separately adds the active parent-run model and thinking level above that prompt; this line updates if a model-tier router changes either during the run:
 
 ```text
-Running: GPT-5 Terra · thinking high
+Running: Terra 5 · thinking high
 Last [12:34]: [submitted prompt, truncated to the terminal width]
 ```
 
@@ -129,7 +129,7 @@ The latest prompt is taken from your submitted input, so it can expose task deta
 - current `kubectl` context when available
 - current session name (truncated when necessary)
 - one session guard cell, pinned in narrow and wide layouts, with a worktree count only for multiple implement leases and a documented text fallback
-- `π` agent marker in its own cell; a compact model name (including variants such as Sol, Terra, and Luna), prefixed with `OR` only for OpenRouter; and thinking level
+- `π` agent marker in its own cell; a compact model name such as `Sol 6.1`, `Terra 5.6`, or `Sonnet 5.5`, with `+` for a trailing GPT Pro variant and `OR` only for OpenRouter; and thinking level
 - cautious context-capacity bar labelled `ctx` (green through 33%, yellow through 66%, then red)
 - cached Codex weekly used-capacity bar labelled `GPT` for OpenAI-Codex models, plus its reset date in table mode
 - ChatGPT/Codex credit balance folded into the quota cell as `GPT · 126 cr` (or `GPT · ∞ cr`), sharing the quota lookup and visible in either layout when space permits

@@ -15,7 +15,8 @@ export function shortModel(id: string): string {
 		const isPro = variantWords.at(-1) === "pro";
 		if (isPro) variantWords.pop();
 		const variant = titleModelWords(variantWords.join(" "));
-		return `GPT-${gpt[1]}${variant ? ` ${variant}` : ""}${isPro ? "+" : ""}`;
+		const model = variant ? `${variant} ${gpt[1]}` : `GPT-${gpt[1]}`;
+		return `${model}${isPro ? "+" : ""}`;
 	}
 	const gemini = s.match(/^gemini[-_ ]?(\d+(?:\.\d+)?)(?:[-_ ]+(.+))?$/);
 	if (gemini) {
@@ -25,13 +26,13 @@ export function shortModel(id: string): string {
 		return `Gemini ${gemini[1]}${variant ? ` ${variant}` : ""}`;
 	}
 	const opus = s.match(/opus[-_ ]?(\d+(?:[.-]\d+)?)/);
-	if (opus) return `Claude Opus ${opus[1].replace("-", ".")}`;
+	if (opus) return `Opus ${opus[1].replace("-", ".")}`;
 	const sonnet = s.match(/sonnet[-_ ]?(\d+(?:[.-]\d+)?)/);
-	if (sonnet) return `Claude Sonnet ${sonnet[1].replace("-", ".")}`;
+	if (sonnet) return `Sonnet ${sonnet[1].replace("-", ".")}`;
 	const haiku = s.match(/haiku[-_ ]?(\d+(?:[.-]\d+)?)/);
-	if (haiku) return `Claude Haiku ${haiku[1].replace("-", ".")}`;
+	if (haiku) return `Haiku ${haiku[1].replace("-", ".")}`;
 	const fable = s.match(/fable[-_ ]?(\d+(?:[.-]\d+)?)/);
-	if (fable) return `Claude Fable ${fable[1].replace("-", ".")}`;
+	if (fable) return `Fable ${fable[1].replace("-", ".")}`;
 	if (s.includes("codex")) return "Codex";
 	return titleModelWords(raw.replace(/^claude-/, "").replace(/^gpt-/, "GPT-"));
 }
