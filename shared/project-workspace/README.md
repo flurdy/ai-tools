@@ -192,10 +192,12 @@ configuration. Beads queries use `--readonly`, remain
 independent per repository, and show bounded in-progress and ready work without
 synchronizing stores.
 `project-workspace beads-counts --workspace PATH` provides the same validated workspace
-scope as compact JSON for statusline consumers. It queries all stores concurrently,
-includes every open P0–P4 issue, and reports unavailable sources separately from the
-healthy aggregate instead of counting failures as zero. `--timeout` bounds each concurrent
-command.
+scope as compact JSON for statusline consumers. It queries up to 16 stores concurrently,
+with serial `list` and `blocked` reads within each store to avoid competing embedded-Dolt opens.
+It includes every open P0–P4 issue and reports unavailable sources separately from the
+healthy aggregate instead of counting failures as zero. All reads and queued stores share
+one `--timeout` deadline; a failed first read skips the second. This does not serialize
+separate CLI invocations or other Beads clients.
 Each section is titled and separated by a blank line, and Git and Beads both render one
 pipe-delimited row per line—one registered checkout or actionable alternate worktree per
 Git row, and one issue per Beads row—so the combined output stays scannable.

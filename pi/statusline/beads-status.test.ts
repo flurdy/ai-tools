@@ -3,6 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { BeadsCountsCache, fetchBeadsCounts, findBeadsRoot, formatBeadsCounts, parseBeadsCounts, type BeadsCounts } from "./beads-status.ts";
 
@@ -187,6 +188,128 @@ test("force-kills a Beads command that ignores the timeout signal", async () => 
 		assert.ok(Date.now() - started < 1000);
 		const pid = Number(await readFile(pidFile, "utf8"));
 		assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
+});
+
+test("serializes local reads and skips blocked after a failed list", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "pi-statusline-beads-serial-"));
+	try {
+		const command = join(directory, "bd-test");
+		await writeFile(command, `#!/usr/bin/env bash
+set -e
+mkdir reading || exit 7
+trap 'rmdir reading' EXIT
+printf '%s\\n' "$1" >> calls
+if [[ "$1" == list ]]; then
+  sleep 0.1
+  [[ ! -f fail ]] || exit 1
+fi
+printf '[]\\n'
+`);
+		await chmod(command, 0o755);
+		assert.equal((await fetchBeadsCounts(directory, { command })).successfulSources, 1);
+		assert.equal(await readFile(join(directory, "calls"), "utf8"), "list\nblocked\n");
+		await writeFile(join(directory, "calls"), "");
+		await writeFile(join(directory, "fail"), "");
+		await assert.rejects(fetchBeadsCounts(directory, { command }));
+		assert.equal(await readFile(join(directory, "calls"), "utf8"), "list\n");
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
+});
+
+test("shares one deadline across sequential local reads", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "pi-statusline-beads-budget-"));
+	try {
+		const command = join(directory, "bd-test");
+		await writeFile(command, "#!/usr/bin/env bash\nsleep 0.3\nprintf '[]\\n'\n");
+		await chmod(command, 0o755);
+		const started = Date.now();
+		await assert.rejects(fetchBeadsCounts(directory, { command, timeoutMs: 500 }), /timed out/);
+		assert.ok(Date.now() - started < 1000);
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
+});
+
+async function processRunning(pid: number): Promise<boolean> {
+	try {
+		process.kill(pid, 0);
+		if (process.platform === "linux") {
+			const stat = await readFile(`/proc/${pid}/stat`, "utf8");
+			return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0] !== "Z";
+		}
+		return true;
+	} catch (error) {
+		if (["ESRCH", "ENOENT"].includes((error as NodeJS.ErrnoException).code ?? "")) return false;
+		throw error;
+	}
+}
+
+for (const abort of [false, true]) {
+	for (const inheritPipes of [false, true]) {
+		test(`cleans a TERM-ignoring descendant on ${abort ? "abort" : "timeout"}, ${inheritPipes ? "workspace/inherited pipes" : "local/closed pipes"}`, {
+			skip: process.platform === "win32",
+		}, async () => {
+			const directory = await mkdtemp(join(tmpdir(), "pi-statusline-beads-tree-"));
+			const pidFile = join(directory, "reader-pid");
+			const command = join(directory, "bd-test");
+			const controller = new AbortController();
+			let readerPid: number | undefined;
+			try {
+				if (inheritPipes) {
+					for (const name of [".git", ".beads", "repos", "infrastructure"]) await mkdir(join(directory, name));
+					for (const name of ["workspace.json", "README.md", "AGENTS.md", "Makefile"]) await writeFile(join(directory, name), "{}\n");
+				}
+				const reader = `process.on("SIGTERM", () => {}); require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000);`;
+				await writeFile(command, `#!${process.execPath}
+if (process.argv[2] === "blocked") { console.log("[]"); process.exit(0); }
+require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(reader)}], { stdio: ${JSON.stringify(inheritPipes ? "inherit" : "ignore")} });
+process.on("SIGTERM", () => process.exit(0));
+setInterval(() => {}, 1000);
+`);
+				await chmod(command, 0o755);
+				const pending = assert.rejects(fetchBeadsCounts(directory, {
+					command, workspaceCommand: command, timeoutMs: abort ? 5000 : 500, signal: controller.signal,
+				}), abort ? /aborted/ : /timed out/);
+				const deadline = Date.now() + 2000;
+				while (!readerPid && Date.now() < deadline) {
+					try { readerPid = Number(await readFile(pidFile, "utf8")); } catch {}
+					if (!readerPid) await delay(10);
+				}
+				assert.ok(readerPid, "descendant started before cancellation");
+				if (abort) controller.abort();
+				await pending;
+				const exitDeadline = Date.now() + 1000;
+				while (await processRunning(readerPid) && Date.now() < exitDeadline) await delay(10);
+				assert.equal(await processRunning(readerPid), false, "descendant still running after query settled");
+			} finally {
+				controller.abort();
+				if (readerPid) { try { process.kill(readerPid, "SIGKILL"); } catch {} }
+				await rm(directory, { recursive: true, force: true });
+			}
+		});
+	}
+}
+
+test("rejects missing commands and pre-aborted requests", async () => {
+	const controller = new AbortController();
+	controller.abort();
+	await assert.rejects(fetchBeadsCounts(tmpdir(), { command: "/missing/beads-test", signal: controller.signal }), /aborted/);
+	await assert.rejects(fetchBeadsCounts(tmpdir(), { command: "/missing/beads-test" }), /ENOENT/);
+});
+
+test("bounds count output and rejects failed queries", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "pi-statusline-beads-output-"));
+	try {
+		const command = join(directory, "bd-test");
+		await writeFile(command, `#!${process.execPath}\nprocess.stdout.write("x".repeat(2 * 1024 * 1024));\n`);
+		await chmod(command, 0o755);
+		await assert.rejects(fetchBeadsCounts(directory, { command }), /exceeded output limit/);
+		await writeFile(command, `#!${process.execPath}\nprocess.exit(3);\n`);
+		await assert.rejects(fetchBeadsCounts(directory, { command }), /failed \(3\)/);
 	} finally {
 		await rm(directory, { recursive: true, force: true });
 	}

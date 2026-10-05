@@ -283,7 +283,8 @@ cache_beads() {
         if [ "$workspace_mode" -eq 1 ]; then
           local source_timeout=0.5
           [ "$timeout_seconds" -gt 1 ] && source_timeout=$((timeout_seconds - 1))
-          if aggregate=$(cd "$root" && "$timeout_cmd" --kill-after=1 "$timeout_seconds" project-workspace beads-counts --workspace "$root" --timeout "$source_timeout" 2>/dev/null) &&
+          # Kill the read-only group at the hard deadline, even if its leader exits first.
+          if aggregate=$(cd "$root" && "$timeout_cmd" --signal=KILL "$timeout_seconds" project-workspace beads-counts --workspace "$root" --timeout "$source_timeout" 2>/dev/null) &&
              payload=$(jq -nr --argjson counts "$aggregate" '
                def nonnegative_integer:
                  type == "number" and . == floor and . >= 0;
@@ -318,8 +319,8 @@ cache_beads() {
           else
             : > "$tmp"
           fi
-        elif issues=$(cd "$root" && "$timeout_cmd" --kill-after=1 "$timeout_seconds" bd list --json --limit 0 --readonly 2>/dev/null) &&
-             blocked=$(cd "$root" && "$timeout_cmd" --kill-after=1 "$timeout_seconds" bd blocked --json --readonly 2>/dev/null) &&
+        elif issues=$(cd "$root" && "$timeout_cmd" --signal=KILL "$timeout_seconds" bd list --json --limit 0 --readonly 2>/dev/null) &&
+             blocked=$(cd "$root" && "$timeout_cmd" --signal=KILL "$timeout_seconds" bd blocked --json --readonly 2>/dev/null) &&
              payload=$(jq -nr --argjson issues "$issues" --argjson blocked "$blocked" '
                def valid:
                  ($issues | type == "array") and

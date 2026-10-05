@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -107,15 +107,20 @@ function runCommand(command: string, root: string, args: string[], options: Fetc
 		let terminatingError: Error | undefined;
 		let forceKillTimeout: ReturnType<typeof setTimeout> | undefined;
 		let timeout: ReturnType<typeof setTimeout> | undefined;
-		const child = execFile(
-			command,
-			args,
-			{ cwd: root, encoding: "utf8", windowsHide: true },
-			(error, stdout) => settle(terminatingError ?? error ?? undefined, stdout),
-		);
+		const processGroup = process.platform !== "win32";
+		const child = spawn(command, args, {
+			cwd: root,
+			windowsHide: true,
+			detached: processGroup,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		let stdout = "";
+		let stdoutBytes = 0;
 		function settle(error?: Error, stdout?: string) {
 			if (settled) return;
 			settled = true;
+			// A collector can exit before its descendants, including with closed pipes.
+			kill("SIGKILL");
 			if (timeout) clearTimeout(timeout);
 			if (forceKillTimeout) clearTimeout(forceKillTimeout);
 			options.signal?.removeEventListener("abort", onAbort);
@@ -123,8 +128,10 @@ function runCommand(command: string, root: string, args: string[], options: Fetc
 			else resolve(stdout ?? "");
 		}
 		function kill(signal: NodeJS.Signals) {
+			if (child.pid === undefined) return;
 			try {
-				child.kill(signal);
+				if (processGroup) process.kill(-child.pid, signal);
+				else if (child.exitCode === null) child.kill(signal);
 			} catch {}
 		}
 		function terminate(error: Error) {
@@ -132,15 +139,27 @@ function runCommand(command: string, root: string, args: string[], options: Fetc
 			terminatingError = error;
 			kill("SIGTERM");
 			forceKillTimeout = setTimeout(() => {
-				if (child.exitCode === null) kill("SIGKILL");
+				kill("SIGKILL");
 				child.stdout?.destroy();
 				child.stderr?.destroy();
-				settle(error);
 			}, 100);
 		}
 		function onAbort() {
 			terminate(new Error("Beads count query aborted"));
 		}
+		child.stdout.setEncoding("utf8");
+		child.stdout.on("data", (chunk: string) => {
+			if (terminatingError) return;
+			stdoutBytes += Buffer.byteLength(chunk);
+			if (stdoutBytes > 1024 * 1024) terminate(new Error("Beads count query exceeded output limit"));
+			else stdout += chunk;
+		});
+		child.stderr.resume();
+		child.on("error", (error) => settle(terminatingError ?? error));
+		child.on("close", (code, signal) => settle(
+			terminatingError ?? (code === 0 ? undefined : new Error(`Beads count query failed (${signal ?? code})`)),
+			stdout,
+		));
 		timeout = setTimeout(() => terminate(new Error(`Beads count query timed out after ${timeoutMs}ms`)), timeoutMs);
 		options.signal?.addEventListener("abort", onAbort, { once: true });
 		if (options.signal?.aborted) onAbort();
@@ -194,10 +213,15 @@ export async function fetchBeadsCounts(root: string, options: FetchBeadsCountsOp
 		return counts;
 	}
 
-	const [issuesStdout, blockedStdout] = await Promise.all([
-		runCommand(options.command ?? "bd", root, ["list", "--json", "--limit", "0", "--readonly"], options),
-		runCommand(options.command ?? "bd", root, ["blocked", "--json", "--readonly"], options),
-	]);
+	const timeoutMs = options.timeoutMs ?? 2000;
+	const deadline = performance.now() + timeoutMs;
+	const run = (args: string[]) => {
+		const remaining = deadline - performance.now();
+		if (remaining <= 0) throw new Error(`Beads count query timed out after ${timeoutMs}ms`);
+		return runCommand(options.command ?? "bd", root, args, { ...options, timeoutMs: Math.ceil(remaining) });
+	};
+	const issuesStdout = await run(["list", "--json", "--limit", "0", "--readonly"]);
+	const blockedStdout = await run(["blocked", "--json", "--readonly"]);
 	const counts = parseBeadsCounts(issuesStdout, blockedStdout);
 	if (!counts) throw new Error("Invalid bd count response");
 	return counts;

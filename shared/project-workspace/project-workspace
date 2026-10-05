@@ -2045,77 +2045,61 @@ def parse_beads_count_source(
     return open_by_priority, in_progress, len(blocked)
 
 
+def read_beads_counts(
+    directory: Path, deadline: float, timeout: float
+) -> tuple[tuple[list[int], int, int] | None, str | None]:
+    results: list[str] = []
+    for command in (
+        ["bd", "list", "--json", "--limit", "0", "--no-pager", "--readonly"],
+        ["bd", "blocked", "--json", "--readonly"],
+    ):
+        result, error = run_repository_command_before(
+            command, directory, deadline, timeout
+        )
+        if error is not None:
+            return None, error
+        assert result is not None
+        results.append(result.stdout)
+    counts = parse_beads_count_source(*results)
+    if counts is None:
+        return None, "invalid bd JSON: expected countable issue lists"
+    return counts, None
+
+
 def beads_count_payload(
     root: Path, manifest: dict[str, object], timeout: float
 ) -> dict[str, object]:
     targets = beads_store_targets(root, manifest)
     diagnostics: list[str] = []
-    outputs: dict[
-        int,
-        dict[str, tuple[subprocess.CompletedProcess[str] | None, str | None]],
-    ] = {}
     futures: list[
-        tuple[
-            int,
-            str,
-            Future[tuple[subprocess.CompletedProcess[str] | None, str | None]],
-        ]
+        tuple[str, Future[tuple[tuple[list[int], int, int] | None, str | None]]]
     ] = []
-
-    commands = (
-        ("issues", ["bd", "list", "--json", "--limit", "0", "--no-pager", "--readonly"]),
-        ("blocked", ["bd", "blocked", "--json", "--readonly"]),
-    )
     request_count = sum(
-        2 for _, _, directory in targets if (directory / ".beads").is_dir()
+        1 for _, _, directory in targets if (directory / ".beads").is_dir()
     )
     deadline = monotonic() + timeout
     with ThreadPoolExecutor(
         max_workers=max(1, min(request_count, STATUS_COUNT_WORKERS))
     ) as executor:
-        for index, (name, relative_path, directory) in enumerate(targets):
+        for name, relative_path, directory in targets:
             label = f"{name} ({relative_path})"
             if not (directory / ".beads").is_dir():
                 diagnostics.append(f"{label}: Beads store is not initialized")
                 continue
-            outputs[index] = {}
-            for kind, command in commands:
-                futures.append(
-                    (
-                        index,
-                        kind,
-                        executor.submit(
-                            run_repository_command_before,
-                            command,
-                            directory,
-                            deadline,
-                            timeout,
-                        ),
-                    )
-                )
-        for index, kind, future in futures:
-            outputs[index][kind] = future.result()
+            futures.append(
+                (label, executor.submit(read_beads_counts, directory, deadline, timeout))
+            )
 
     open_by_priority = [0, 0, 0, 0, 0]
     in_progress = 0
     blocked = 0
     successful_sources = 0
-    for index, (name, relative_path, _directory) in enumerate(targets):
-        source = outputs.get(index)
-        if source is None:
-            continue
-        label = f"{name} ({relative_path})"
-        issues_result, issues_error = source["issues"]
-        blocked_result, blocked_error = source["blocked"]
-        error = issues_error or blocked_error
+    for label, future in futures:
+        counts, error = future.result()
         if error is not None:
             diagnostics.append(f"{label}: {error}")
             continue
-        assert issues_result is not None and blocked_result is not None
-        counts = parse_beads_count_source(issues_result.stdout, blocked_result.stdout)
-        if counts is None:
-            diagnostics.append(f"{label}: invalid bd JSON: expected countable issue lists")
-            continue
+        assert counts is not None
         source_priorities, source_in_progress, source_blocked = counts
         open_by_priority = [
             total + source_count

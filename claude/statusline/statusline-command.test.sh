@@ -4,7 +4,8 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 STATUSLINE="$SCRIPT_DIR/statusline-command.sh"
 TEST_ROOT=$(mktemp -d)
-trap 'rm -rf "$TEST_ROOT"' EXIT
+TEST_READER_PID=""
+trap '[ -z "$TEST_READER_PID" ] || kill -KILL "$TEST_READER_PID" 2>/dev/null || true; rm -rf "$TEST_ROOT"' EXIT
 
 mkdir -p \
   "$TEST_ROOT/bin" \
@@ -37,6 +38,12 @@ chmod +x "$TEST_ROOT/bin/bd"
 cat > "$TEST_ROOT/bin/project-workspace" <<'EOF'
 #!/usr/bin/env bash
 [[ "${1:-}" == "beads-counts" ]] || exit 2
+if [ -f "$PROJECT_WORKSPACE_FIXTURES/orphan-reader" ]; then
+  bash -c 'trap "" TERM; printf "%s" "$BASHPID" > "$PROJECT_WORKSPACE_FIXTURES/reader-pid"; exec sleep 30' </dev/null >/dev/null 2>&1 &
+  trap 'exit 0' TERM
+  wait
+  exit
+fi
 [ -f "$PROJECT_WORKSPACE_FIXTURES/workspace-fail" ] && exit 1
 cat "$PROJECT_WORKSPACE_FIXTURES/workspace-counts.json"
 EOF
@@ -200,6 +207,27 @@ wait_for_cache "$TEST_ROOT/project"
 output=$(render "$TEST_ROOT/project")
 assert_not_contains "$output" "◉"
 rm -f "$PROJECT_WORKSPACE_FIXTURES/workspace-fail"
+
+clear_cache_for "$TEST_ROOT/project"
+touch "$PROJECT_WORKSPACE_FIXTURES/orphan-reader"
+render "$TEST_ROOT/project" >/dev/null
+wait_for_cache "$TEST_ROOT/project"
+TEST_READER_PID=$(< "$PROJECT_WORKSPACE_FIXTURES/reader-pid")
+reader_running() {
+  local state
+  state=$(ps -o stat= -p "$TEST_READER_PID" 2>/dev/null) || return 1
+  [[ -n "$state" && "$state" != *Z* ]]
+}
+for _ in {1..50}; do
+  reader_running || break
+  sleep 0.02
+done
+if reader_running; then
+  printf 'Workspace timeout left a TERM-ignoring descendant running\n' >&2
+  exit 1
+fi
+TEST_READER_PID=""
+rm -f "$PROJECT_WORKSPACE_FIXTURES/orphan-reader"
 
 printf '[]\n' > "$BD_FIXTURES/issues.json"
 printf '[]\n' > "$BD_FIXTURES/blocked.json"

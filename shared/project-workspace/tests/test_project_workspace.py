@@ -1513,6 +1513,89 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.assertIn("bd list --json --limit 0 --no-pager --readonly", commands)
         self.assertIn("bd blocked --json --readonly", commands)
 
+    def test_beads_counts_serializes_each_store_but_not_independent_stores(self) -> None:
+        workspace = self.create_workspace("serial-counts")
+        service = self.create_repository("service")
+        self.run_cli("add-repo", str(service), "--workspace", str(workspace))
+        for repository in (workspace, service):
+            self.set_beads_status(repository, [], [])
+        self.environment["COUNT_WORKSPACE"] = str(workspace)
+        self.environment["COUNT_SERVICE"] = str(service)
+        self.write_command(
+            "bd",
+            'mkdir .beads/reading 2>/dev/null || { echo "overlapping reads" >&2; exit 7; }\n'
+            "trap 'rmdir .beads/reading' EXIT\n"
+            'echo "$PWD:$1" >> "$COMMAND_LOG"\n'
+            'if [[ "$1" == list ]]; then\n'
+            '  touch .beads/list-started\n'
+            '  peer="$COUNT_SERVICE"\n'
+            '  [[ "$PWD" != "$COUNT_WORKSPACE" ]] && peer="$COUNT_WORKSPACE"\n'
+            '  until [[ -f "$peer/.beads/list-started" ]]; do sleep 0.01; done\n'
+            '  sleep 0.05\n'
+            'fi\n'
+            "echo '[]'\n",
+        )
+        self.command_log.write_text("", encoding="utf-8")
+
+        result = self.run_cli(
+            "beads-counts", "--workspace", str(workspace), "--timeout", "2"
+        )
+
+        payload = json.loads(result.stdout)
+        self.assertEqual(2, payload["successfulSources"], payload["diagnostics"])
+        self.assertEqual([], payload["diagnostics"])
+        calls = self.command_log.read_text(encoding="utf-8").splitlines()
+        for repository in (workspace, service):
+            self.assertEqual(
+                [f"{repository}:list", f"{repository}:blocked"],
+                [line for line in calls if line.startswith(f"{repository}:")],
+            )
+
+    def test_beads_counts_does_not_start_blocked_read_after_list_failure(self) -> None:
+        workspace = self.create_workspace("failed-counts")
+        self.set_beads_status(workspace, [], [])
+        self.write_command(
+            "bd",
+            'echo "$1" >> "$COMMAND_LOG"\n'
+            '[[ "$1" == list ]] && { echo "read failed" >&2; exit 1; }\n'
+            "echo '[]'\n",
+        )
+        self.command_log.write_text("", encoding="utf-8")
+
+        payload = json.loads(self.run_cli("beads-counts", "--workspace", str(workspace)).stdout)
+
+        self.assertEqual(0, payload["successfulSources"])
+        self.assertEqual(1, payload["unavailableSources"])
+        calls = self.command_log.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(["list"], [line for line in calls if not line.startswith("git ")])
+
+    def test_beads_counts_shares_deadline_and_reaps_timed_out_reader(self) -> None:
+        workspace = self.create_workspace("deadline-counts")
+        self.set_beads_status(workspace, [], [])
+        self.write_command(
+            "bd",
+            'if [[ "$1" == list ]]; then\n'
+            '  sleep 0.6\n'
+            "  echo '[]'\n"
+            'else\n'
+            '  echo $$ > .beads/reader-pid\n'
+            '  exec sleep 10\n'
+            'fi\n',
+        )
+
+        started = time.monotonic()
+        payload = json.loads(self.run_cli(
+            "beads-counts", "--workspace", str(workspace), "--timeout", "1"
+        ).stdout)
+
+        self.assertLess(time.monotonic() - started, 1.4)
+        self.assertEqual(0, payload["successfulSources"])
+        self.assertEqual(1, payload["unavailableSources"])
+        self.assertIn("timed out after 1.0 seconds", payload["diagnostics"][0])
+        pid = int((workspace / ".beads" / "reader-pid").read_text())
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
+
     def test_beads_counts_reports_partial_sources_without_counting_them_as_zero(self) -> None:
         workspace = self.create_workspace("partial-counts")
         failing = self.create_repository("failing")
@@ -1573,7 +1656,7 @@ class ProjectWorkspaceTest(unittest.TestCase):
 
     def test_beads_counts_caps_workers_and_does_not_restart_queued_timeouts(self) -> None:
         workspace = self.create_workspace("queued-counts")
-        repositories = [self.create_repository(f"slow-{index}") for index in range(9)]
+        repositories = [self.create_repository(f"slow-{index}") for index in range(17)]
         for repository in repositories:
             self.run_cli("add-repo", str(repository), "--workspace", str(workspace))
         for repository in [workspace, *repositories]:
@@ -1598,7 +1681,7 @@ class ProjectWorkspaceTest(unittest.TestCase):
         self.assertGreater(len(count_commands), 0)
         self.assertLessEqual(len(count_commands), 16)
         self.assertEqual(0, payload["successfulSources"])
-        self.assertEqual(10, payload["unavailableSources"])
+        self.assertEqual(18, payload["unavailableSources"])
 
     def test_beads_counts_rejects_malformed_workspace_topology(self) -> None:
         workspace = self.create_workspace("malformed-counts")
