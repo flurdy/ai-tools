@@ -445,7 +445,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				return {
 					clock: theme.fg("dim", fmtTime(new Date())),
 					host: theme.fg("accent", ` ${hostname().split(".")[0]}`),
-					k8s: k8sContext ? theme.fg("accent", `☸ ${k8sContext}`) : "",
+					k8s: k8sContext ? theme.fg("accent", `󱃾 ${k8sContext}`) : "",
 					agent: theme.fg("success", theme.bold("π")),
 					guard: formatSessionGuard(sessionMode, process.env.PI_STATUSLINE_GUARD_EMOJI !== "0", leaseScopes),
 					model: theme.fg("success", theme.bold(model)),

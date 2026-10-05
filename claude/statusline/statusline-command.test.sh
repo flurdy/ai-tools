@@ -149,6 +149,28 @@ assert_not_contains() {
 output=$(render "$TEST_ROOT/plain")
 assert_not_contains "$output" "◉"
 
+cat > "$TEST_ROOT/bin/kubectl" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == "config current-context" ]] || exit 2
+printf 'fixture-context\n'
+EOF
+chmod +x "$TEST_ROOT/bin/kubectl"
+for layout in compact table; do
+  output=$(theme_display_k8s_context=yes render "$TEST_ROOT/plain" "$layout")
+  assert_contains "$output" $'\U000F10FE fixture-context'
+  assert_contains "$output" $'\033[38;2;95;135;175m\U000F10FE fixture-context\033[0m'
+  assert_not_contains "$output" $'\u2638'
+  assert_not_contains "$output" $'\uFE0E'
+  plain=$(printf '%s\n' "$output" | sed $'s/\x1b\\[[0-9;]*m//g')
+  if [[ "$layout" == table ]]; then
+    [[ $(printf '%s\n' "$plain" | wc -l) == 5 ]]
+    [[ $(printf '%s\n' "$plain" | while IFS= read -r line; do printf '%s\n' "$line" | wc -L; done | sort -u | wc -l) == 1 ]]
+  else
+    [[ "$plain" != *$'\n'* ]]
+  fi
+done
+rm -f "$TEST_ROOT/bin/kubectl"
+
 cat > "$BD_FIXTURES/issues.json" <<'EOF'
 [
   {"status":"open","priority":0},

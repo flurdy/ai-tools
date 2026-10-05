@@ -200,6 +200,34 @@ for (const emojiEnabled of [true, false]) {
 	}
 }
 
+test("renders the Nerd Font Kubernetes glyph with spacing in both layouts", () => withFooter(async (footer) => {
+	const directory = await mkdtemp(join(tmpdir(), "pi-statusline-k8s-"));
+	const previousPath = process.env.PATH;
+	try {
+		await writeFile(join(directory, "kubectl"), '#!/bin/sh\nprintf "fixture-context\\n"\n', { mode: 0o700 });
+		process.env.PATH = `${directory}:${previousPath ?? ""}`;
+		process.env.PI_STATUSLINE_K8S_CONTEXT = "1";
+		for (const layout of ["compact", "table"]) {
+			process.env.PI_STATUSLINE = layout;
+			for (const width of [1, 30, 80, 120, 180, 240]) {
+				const lines = footer.render(width);
+				assert.ok(lines.every((line) => visibleWidth(line) <= width), `${layout} at ${width}`);
+				const plain = stripVTControlCharacters(lines.join("\n"));
+				assert.doesNotMatch(plain, /\u2638|\uFE0E/);
+				if (width === 240) {
+					assert.ok(plain.includes("\u{F10FE} fixture-context"));
+					assert.equal(lines.length, layout === "table" ? 5 : 1);
+					if (layout === "table") assert.equal(new Set(lines.map(visibleWidth)).size, 1);
+				}
+			}
+		}
+	} finally {
+		if (previousPath === undefined) delete process.env.PATH;
+		else process.env.PATH = previousPath;
+		await rm(directory, { recursive: true, force: true });
+	}
+}));
+
 test("keeps non-implement states distinct without persistent lease or occupancy cells", () => withFooter((footer, statuses) => {
 	statuses.set("session-mode-leases", "leases:32 api, web");
 	for (const [state, emoji] of [["acquiring", "⏳"], ["plan", "🔍"], ["conflict", "⛔"], ["lost", "💥"], ["unguarded", "🚨"]]) {

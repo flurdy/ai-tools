@@ -519,7 +519,7 @@ if [ "${theme_display_k8s_context}" = "yes" ] || [ "${theme_display_k8s_context}
   if command -v kubectl &>/dev/null; then
     k8s_ctx=$(kubectl config current-context 2>/dev/null)
     if [ -n "$k8s_ctx" ]; then
-      segment_k8s="${C_K8S}☸ ${k8s_ctx}${RST}"
+      segment_k8s="${C_K8S}󱃾 ${k8s_ctx}${RST}"
     fi
   fi
 fi
