@@ -1,8 +1,9 @@
 # Pi startup skill spotlight
 
 An opt-in, dependency-free Pi extension that shows one randomly selected loaded skill near the
-editor when starting a fresh interactive session. It displays the native `/skill:name` command
-and a short description. It never runs the command, reads the skill body, adds a message to model
+editor when starting a fresh interactive session. It displays a compact `/name` label and a
+short description. Discovery still uses Pi's native `skill:name` metadata; this display-only
+shorthand does not register command aliases, and explicit `/skill:name` remains available. It never runs the command, reads the skill body, adds a message to model
 context, or calls a model.
 
 ## Install and enable

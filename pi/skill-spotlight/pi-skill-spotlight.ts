@@ -49,7 +49,7 @@ export default function registerSkillSpotlight(
 				|| (entry.type === "message" && (entry.message.role === "user" || entry.message.role === "assistant")))) return;
 			const tip = chooseSkill(pi.getCommands(), runtime.random);
 			if (!tip) return;
-			ctx.ui.setWidget(WIDGET, [`Skill spotlight · ${tip.command}`, tip.description], { placement: "aboveEditor" });
+			ctx.ui.setWidget(WIDGET, [`Skill spotlight · ${tip.command.replace("/skill:", "/")}`, tip.description], { placement: "aboveEditor" });
 			shown = true;
 			visible = true;
 		} catch {

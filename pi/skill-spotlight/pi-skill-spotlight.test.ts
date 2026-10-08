@@ -61,7 +61,7 @@ test("opt-in creates one small above-editor widget and never queries skills when
 	assert.equal(h.widgets.length, 1);
 	assert.deepEqual(h.widgets[0], {
 		key: "flurdy-skill-spotlight",
-		content: ["Skill spotlight · /skill:review", "Review a change before shipping it."],
+		content: ["Skill spotlight · /review", "Review a change before shipping it."],
 		options: { placement: "aboveEditor" },
 	});
 	assert.equal(h.queries(), 1);

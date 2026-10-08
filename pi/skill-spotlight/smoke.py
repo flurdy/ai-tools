@@ -66,7 +66,8 @@ def main():
                 if name == "fresh":
                     assert screen.count("Skill spotlight") == 1, screen
                     assert screen.index("[Skills]") < screen.index("Skill spotlight"), screen
-                    assert "/skill:spotlight-fixture" in screen, screen
+                    assert "/spotlight-fixture" in screen, screen
+                    assert "/skill:spotlight-fixture" not in screen, screen
                     assert "Learn one available skill without loading it." in screen, screen
                     print("TUI PASS: header/resources precede one tip; skill body not loaded.")
                 else:
