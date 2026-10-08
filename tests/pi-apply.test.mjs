@@ -10,6 +10,7 @@ const resources = [
 	["extensions/flurdy-statusline", "pi/statusline"],
 	["extensions/flurdy-kitty-tab-title.ts", "pi/kitty-tab-title/pi-kitty-tab-title.ts"],
 	["extensions/flurdy-notify.ts", "pi/notify/pi-notify.ts"],
+	["extensions/flurdy-skill-spotlight.ts", "pi/skill-spotlight/pi-skill-spotlight.ts"],
 	["themes/flurdy-dark.json", "pi/theme/flurdy-dark.json"],
 ];
 

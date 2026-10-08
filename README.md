@@ -21,6 +21,7 @@ This repo is meant to be the shareable, curated version of tools that also live 
 | [Pi settings starter](pi/settings/) | Pi | Redacted global settings starter, component catalog, and explicit safe-MCP configuration boundary. |
 | [Pi Kitty tab title](pi/kitty-tab-title/) | Pi | Pi extension for showing repo/session state in Kitty tab titles, matching the Claude/Codex workflow. |
 | [Pi completion notifications](pi/notify/) | Pi | Terminal notifications after a run fully settles; defers to Orca's host integration. |
+| [Pi skill spotlight](pi/skill-spotlight/) | Pi | Opt-in startup tip featuring one loaded skill, outside model context. |
 | [Claude launcher](claude/launcher/) | Claude Code | Fish `cl` launcher that picks main checkout, worktree, handoff, or new worktree before starting Claude. |
 | [Pi launcher](pi/launcher/) | Pi | Fish `pl` launcher that picks main checkout, worktree, handoff, or new worktree before starting Pi. |
 | [Launcher internals](shared/launcher/) | Shared | Provider-neutral context picker and worktree creator used by `cl` and `pl`. |
@@ -51,7 +52,8 @@ The Kitty tab title write-up is at <https://flurdy.com/docs/kitty-ai-tabs/>.
 make apply
 ```
 
-`make apply` links the statusline, Kitty tab title, completion notifier and theme into `~/.pi/agent`.
+`make apply` links the statusline, Kitty tab title, completion notifier, skill spotlight and theme into `~/.pi/agent`.
+The spotlight stays off until `PI_SKILL_SPOTLIGHT=1`; see [startup tips](pi/skill-spotlight/README.md).
 It refuses conflicting resources rather than overwriting them and leaves unrelated settings untouched.
 Disable other completion notifiers first; see [notification delivery and limitations](pi/notify/README.md).
 Install session-mode separately for guard indicators and `/leases`; statusline reads its published
@@ -80,6 +82,7 @@ pi/
   settings/
   kitty-tab-title/
   notify/
+  skill-spotlight/
   launcher/
 shared/
   launcher/
