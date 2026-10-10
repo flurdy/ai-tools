@@ -1,6 +1,7 @@
 PI_AGENT_DIR ?= $(HOME)/.pi/agent
 PI_EXTENSIONS_DIR ?= $(PI_AGENT_DIR)/extensions
 PI_THEMES_DIR ?= $(PI_AGENT_DIR)/themes
+BIN_DIR ?= $(HOME)/bin
 
 .DEFAULT_GOAL := help
 
@@ -12,8 +13,9 @@ help:
 	@echo "make check-notify  Test Pi notifications and managed installation (Node >=22.19)"
 	@echo "make check-goal-baseline  Check the goal fixture without launching models (Node >=22.19)"
 	@echo "make check-quota   Test the codex-quota helper against a fake Codex CLI (Node >=22.19)"
-	@echo "make apply         Link reviewed local Pi resources into $(PI_AGENT_DIR)"
-	@echo "make verify-apply  Verify the managed Pi resource links"
+	@echo "make apply         Link reviewed Pi resources into $(PI_AGENT_DIR) and codex-quota into $(BIN_DIR)"
+	@echo "make verify-apply  Verify the managed resource and helper links"
+	@echo "BIN_DIR=$(BIN_DIR) (override with an absolute directory on your PATH)"
 
 check:
 	$(MAKE) -C claude/artifact-hygiene-gate test
@@ -38,7 +40,8 @@ check-goal-baseline:
 	node --test tests/goal-baseline.test.mjs
 
 apply:
-	@set -e; check_link() { \
+	@set -e; case "$(BIN_DIR)" in ""|/|[!/]*) echo "BIN_DIR must be an absolute non-root path" >&2; exit 1;; esac; \
+	check_link() { \
 		if [ -e "$$2" ] || [ -L "$$2" ]; then \
 			if [ "$$(readlink "$$2")" != "$$1" ]; then \
 				echo "Refusing to replace $$2; inspect and relocate the conflicting resource first." >&2; exit 1; \
@@ -50,15 +53,18 @@ apply:
 	check_link "$(CURDIR)/pi/kitty-tab-title/pi-kitty-tab-title.ts" "$(PI_EXTENSIONS_DIR)/flurdy-kitty-tab-title.ts"; \
 	check_link "$(CURDIR)/pi/notify/pi-notify.ts" "$(PI_EXTENSIONS_DIR)/flurdy-notify.ts"; \
 	check_link "$(CURDIR)/pi/skill-spotlight/pi-skill-spotlight.ts" "$(PI_EXTENSIONS_DIR)/flurdy-skill-spotlight.ts"; \
-	check_link "$(CURDIR)/pi/theme/flurdy-dark.json" "$(PI_THEMES_DIR)/flurdy-dark.json"
-	mkdir -p "$(PI_EXTENSIONS_DIR)" "$(PI_THEMES_DIR)"
+	check_link "$(CURDIR)/pi/theme/flurdy-dark.json" "$(PI_THEMES_DIR)/flurdy-dark.json"; \
+	test -x "$(CURDIR)/pi/quota/codex-quota.ts"; \
+	check_link "$(CURDIR)/pi/quota/codex-quota.ts" "$(BIN_DIR)/codex-quota"
+	mkdir -p "$(PI_EXTENSIONS_DIR)" "$(PI_THEMES_DIR)" "$(BIN_DIR)"
 	ln -sfn "$(CURDIR)/pi/statusline" "$(PI_EXTENSIONS_DIR)/flurdy-statusline"
 	ln -sfn "$(CURDIR)/pi/kitty-tab-title/pi-kitty-tab-title.ts" "$(PI_EXTENSIONS_DIR)/flurdy-kitty-tab-title.ts"
 	ln -sfn "$(CURDIR)/pi/notify/pi-notify.ts" "$(PI_EXTENSIONS_DIR)/flurdy-notify.ts"
 	ln -sfn "$(CURDIR)/pi/skill-spotlight/pi-skill-spotlight.ts" "$(PI_EXTENSIONS_DIR)/flurdy-skill-spotlight.ts"
 	ln -sfn "$(CURDIR)/pi/theme/flurdy-dark.json" "$(PI_THEMES_DIR)/flurdy-dark.json"
+	ln -sfn "$(CURDIR)/pi/quota/codex-quota.ts" "$(BIN_DIR)/codex-quota"
 	$(MAKE) verify-apply
-	@echo "Restart Pi to discover newly linked extensions."
+	@echo "Restart Pi to discover newly linked extensions; ensure $(BIN_DIR) is on Pi's PATH for codex-quota."
 
 verify-apply:
 	test "$$(readlink "$(PI_EXTENSIONS_DIR)/flurdy-statusline")" = "$(CURDIR)/pi/statusline"
@@ -68,3 +74,5 @@ verify-apply:
 	test "$$(readlink "$(PI_EXTENSIONS_DIR)/flurdy-skill-spotlight.ts")" = "$(CURDIR)/pi/skill-spotlight/pi-skill-spotlight.ts"
 	test -f "$(PI_EXTENSIONS_DIR)/flurdy-skill-spotlight.ts"
 	test "$$(readlink "$(PI_THEMES_DIR)/flurdy-dark.json")" = "$(CURDIR)/pi/theme/flurdy-dark.json"
+	test "$$(readlink "$(BIN_DIR)/codex-quota")" = "$(CURDIR)/pi/quota/codex-quota.ts"
+	test -x "$(BIN_DIR)/codex-quota"

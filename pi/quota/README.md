@@ -14,13 +14,28 @@ provider Pi is currently using.
 ## Install
 
 Requires Node.js 22.19 or later and a signed-in [Codex CLI](https://github.com/openai/codex) on
-`PATH`. Link the executable somewhere on your `PATH`, for example:
+`PATH`. From the ai-tools root:
 
 ```bash
-ln -s "$PWD/pi/quota/codex-quota.ts" ~/.local/bin/codex-quota
+make apply
+make verify-apply
 ```
 
-`make apply` does not install it: the helper is a shell command, not a Pi extension.
+This installs the existing Pi resources and an executable `~/bin/codex-quota` symlink into this
+checkout. It refuses conflicting files, directories and symlinks before installing any links,
+and verification checks the helper's target and executable bit. Keep this checkout available:
+copying the entry file alone would break its relative imports.
+
+Override the commands directory explicitly with `BIN_DIR` (absolute, non-root path):
+
+```bash
+make apply BIN_DIR="/absolute/path/to/bin"
+make verify-apply BIN_DIR="/absolute/path/to/bin"
+```
+
+Ensure the selected directory is on the PATH inherited by Pi, not only your interactive shell.
+This is a standalone Node CLI, not a Pi extension; `/quota` remains the separately installed
+agent-skills prompt.
 
 ## Use
 

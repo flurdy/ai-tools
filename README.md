@@ -47,13 +47,15 @@ the tools here:
 
 The Kitty tab title write-up is at <https://flurdy.com/docs/kitty-ai-tabs/>.
 
-## Install reviewed local Pi resources
+## Install reviewed local resources
 
 ```bash
 make apply
 ```
 
-`make apply` links the statusline, Kitty tab title, completion notifier, skill spotlight and theme into `~/.pi/agent`.
+`make apply` links the statusline, Kitty tab title, completion notifier, skill spotlight and theme into `~/.pi/agent`,
+and the `codex-quota` CLI into `~/bin` (`BIN_DIR` overrides that commands directory). Keep it on Pi's inherited PATH;
+see [quota helper installation](pi/quota/README.md#install). `make verify-apply` checks every managed link.
 The spotlight stays off until `PI_SKILL_SPOTLIGHT=1`; see [startup tips](pi/skill-spotlight/README.md).
 It refuses conflicting resources rather than overwriting them and leaves unrelated settings untouched.
 Disable other completion notifiers first; see [notification delivery and limitations](pi/notify/README.md).

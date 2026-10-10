@@ -12,6 +12,7 @@ const resources = [
 	["extensions/flurdy-notify.ts", "pi/notify/pi-notify.ts"],
 	["extensions/flurdy-skill-spotlight.ts", "pi/skill-spotlight/pi-skill-spotlight.ts"],
 	["themes/flurdy-dark.json", "pi/theme/flurdy-dark.json"],
+	["bin/codex-quota", "pi/quota/codex-quota.ts"],
 ];
 
 function fixture(run) {
@@ -21,9 +22,15 @@ function fixture(run) {
 	try { run(dir); } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
-function make(dir, target) {
-	return spawnSync("make", ["--no-print-directory", target, `PI_AGENT_DIR=${dir}`, `PI_EXTENSIONS_DIR=${dir}/extensions`, `PI_THEMES_DIR=${dir}/themes`], {
-		cwd: root, encoding: "utf8", timeout: 15_000,
+function make(dir, target, variables = {}) {
+	const env = { ...process.env, HOME: dir };
+	delete env.BIN_DIR;
+	return spawnSync("make", [
+		"--no-print-directory", target, `HOME=${dir}`, `PI_AGENT_DIR=${dir}`,
+		`PI_EXTENSIONS_DIR=${dir}/extensions`, `PI_THEMES_DIR=${dir}/themes`,
+		...Object.entries(variables).map(([key, value]) => `${key}=${value}`),
+	], {
+		cwd: root, env, encoding: "utf8", timeout: 15_000,
 	});
 }
 
@@ -33,6 +40,8 @@ function succeeded(result) {
 
 test("apply and verify-apply install all managed links idempotently without touching user files", () => fixture((dir) => {
 	mkdirSync(join(dir, "extensions"));
+	mkdirSync(join(dir, "bin"));
+	writeFileSync(join(dir, "bin/unrelated"), "preserve this command\n");
 	writeFileSync(join(dir, "settings.json"), '{"theme":"personal"}\n');
 	writeFileSync(join(dir, "extensions/unrelated.ts"), "// unrelated extension\n");
 	succeeded(make(dir, "apply"));
@@ -44,9 +53,41 @@ test("apply and verify-apply install all managed links idempotently without touc
 	succeeded(make(dir, "verify-apply"));
 	assert.equal(readFileSync(join(dir, "settings.json"), "utf8"), '{"theme":"personal"}\n');
 	assert.equal(readFileSync(join(dir, "extensions/unrelated.ts"), "utf8"), "// unrelated extension\n");
+	assert.equal(readFileSync(join(dir, "bin/unrelated"), "utf8"), "preserve this command\n");
+	const help = spawnSync("codex-quota", ["--help"], {
+		cwd: dir, env: { ...process.env, HOME: dir, PATH: `${dir}/bin:${process.env.PATH}` },
+		encoding: "utf8", timeout: 5000,
+	});
+	succeeded(help);
+	assert.match(help.stdout, /usage: codex-quota/);
+	rmSync(join(dir, "bin/codex-quota"));
+	assert.notEqual(make(dir, "verify-apply").status, 0, "missing helper must fail verification");
+	symlinkSync(join(root, "pi/quota/codex-quota.ts"), join(dir, "bin/codex-quota"));
 	rmSync(join(dir, "extensions/flurdy-notify.ts"));
 	assert.notEqual(make(dir, "verify-apply").status, 0, "missing notifier must fail verification");
 }));
+
+test("apply honours an absolute BIN_DIR override with spaces", () => fixture((dir) => {
+	const bin = join(dir, "shared commands");
+	const variables = { BIN_DIR: bin };
+	succeeded(make(dir, "apply", variables));
+	succeeded(make(dir, "apply", variables));
+	assert.equal(readlinkSync(join(bin, "codex-quota")), join(root, "pi/quota/codex-quota.ts"));
+	assert.equal(existsSync(join(dir, "bin")), false, "override must not also install into default bin");
+	succeeded(make(dir, "verify-apply", variables));
+	rmSync(join(bin, "codex-quota"));
+	symlinkSync(join(dir, "missing-target"), join(bin, "codex-quota"));
+	assert.notEqual(make(dir, "verify-apply", variables).status, 0, "wrong helper target must fail verification");
+}));
+
+for (const bin of ["", "relative/bin", "/"]) {
+	test(`apply rejects unsafe BIN_DIR ${JSON.stringify(bin)} before creating links`, () => fixture((dir) => {
+		const result = make(dir, "apply", { BIN_DIR: bin });
+		assert.notEqual(result.status, 0);
+		assert.match(result.stderr, /BIN_DIR/);
+		for (const [destination] of resources) assert.equal(existsSync(join(dir, destination)), false);
+	}));
+}
 
 for (const [destination] of resources) {
 	for (const kind of ["file", "directory", "symlink"]) {
