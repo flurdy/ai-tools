@@ -22,6 +22,7 @@ This repo is meant to be the shareable, curated version of tools that also live 
 | [Pi Kitty tab title](pi/kitty-tab-title/) | Pi | Pi extension for showing repo/session state in Kitty tab titles, matching the Claude/Codex workflow. |
 | [Pi completion notifications](pi/notify/) | Pi | Terminal notifications after a run fully settles; defers to Orca's host integration. |
 | [Pi skill spotlight](pi/skill-spotlight/) | Pi | Opt-in startup tip featuring one loaded skill, outside model context. |
+| [Codex quota helper](pi/quota/) | Pi / shell | `codex-quota` prints the Codex CLI account's weekly GPT quota, reset time, and credits as JSON for the `/quota` prompt or a direct check without a model turn. |
 | [Claude launcher](claude/launcher/) | Claude Code | Fish `cl` launcher that picks main checkout, worktree, handoff, or new worktree before starting Claude. |
 | [Pi launcher](pi/launcher/) | Pi | Fish `pl` launcher that picks main checkout, worktree, handoff, or new worktree before starting Pi. |
 | [Launcher internals](shared/launcher/) | Shared | Provider-neutral context picker and worktree creator used by `cl` and `pl`. |
@@ -83,6 +84,7 @@ pi/
   kitty-tab-title/
   notify/
   skill-spotlight/
+  quota/
   launcher/
 shared/
   launcher/

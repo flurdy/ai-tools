@@ -4,13 +4,14 @@ PI_THEMES_DIR ?= $(PI_AGENT_DIR)/themes
 
 .DEFAULT_GOAL := help
 
-.PHONY: help apply verify-apply check check-notify check-goal-baseline check-skill-spotlight
+.PHONY: help apply verify-apply check check-notify check-goal-baseline check-skill-spotlight check-quota
 
 help:
 	@echo "make check         Test artifact-hygiene gates, resource ownership, Pi UI extensions and goal fixture"
 	@echo "make check-skill-spotlight  Test the opt-in startup skill tip (Node >=22.19)"
 	@echo "make check-notify  Test Pi notifications and managed installation (Node >=22.19)"
 	@echo "make check-goal-baseline  Check the goal fixture without launching models (Node >=22.19)"
+	@echo "make check-quota   Test the codex-quota helper against a fake Codex CLI (Node >=22.19)"
 	@echo "make apply         Link reviewed local Pi resources into $(PI_AGENT_DIR)"
 	@echo "make verify-apply  Verify the managed Pi resource links"
 
@@ -22,6 +23,10 @@ check:
 	$(MAKE) check-notify
 	$(MAKE) check-skill-spotlight
 	$(MAKE) check-goal-baseline
+	$(MAKE) check-quota
+
+check-quota:
+	node --test pi/quota/codex-quota-report.test.ts
 
 check-notify:
 	node --test pi/notify/pi-notify.test.ts tests/pi-apply.test.mjs
