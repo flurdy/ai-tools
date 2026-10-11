@@ -133,6 +133,7 @@ The latest prompt is taken from your submitted input, so it can expose task deta
 - cautious context-capacity bar labelled `ctx` (green through 33%, yellow through 66%, then red)
 - cached Codex weekly used-capacity bar labelled `GPT` for OpenAI-Codex models, plus its reset date in table mode
 - ChatGPT/Codex credit balance folded into the quota cell as `GPT · 126 cr` (or `GPT · ∞ cr`), sharing the quota lookup and visible in either layout when space permits
+- for `pi-claude-cli` models only, the Claude subscription window the adapter last reported (`5h`, `Wk`, `Wk Opus`, `Wk Sonnet` or `Extra`), with a used-capacity bar when utilization is reported and its reset in table mode
 - optional cached OpenRouter account credit balance labelled `OR`, immediately before the estimated session cost
 - session duration
 - abbreviated cwd
@@ -168,6 +169,14 @@ Quota and credits come from the same canonical `rateLimitsByLimitId.codex` snaps
 The [`CreditsSnapshot`](https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/schema/typescript/v2/CreditsSnapshot.ts) fields are validated separately, so malformed credits do not hide valid weekly quota. Both flags must be booleans. `unlimited: true` displays `∞ cr`; otherwise a balance appears only with `hasCredits: true` and a finite, non-negative plain decimal string. The footer rounds numeric balances to whole credits for a compact display, including an explicitly reported zero. Absent, null, malformed, or unavailable credit data is hidden, not converted to zero. A successful refresh replaces the entire snapshot, clearing credits that are no longer reported. Credits share quota refresh, timeout, failure retention, and stale dimming (including a passed weekly reset); there is no second request or timer.
 
 This is **ChatGPT/Codex credit capacity, not OpenAI API-platform billing credit or a dollar balance**. The displayed quota and credits belong to the account authenticated in the Codex CLI. They represent Pi's active OpenAI-Codex account only when Pi and Codex are signed into the same ChatGPT account; the statusline does not verify account alignment.
+
+## Claude subscription window source
+
+For `pi-claude-cli` models, the quota cell reads the `claude-rate-limit` extension status published by that adapter. It performs no lookup or polling, reads no credentials, and never appears for native `anthropic`, GitHub or OpenRouter Claude models. The adapter reports only the **binding** window per turn, so the cell shows that one window, never a simultaneous 5-hour and weekly dashboard.
+
+A bar appears only when `utilization` is a finite, non-negative number; a reported `0` shows an empty bar, while missing utilization shows the label alone rather than `0%`. Above 100% the bar stays full and the label adds `>100%`. Tone is the more severe of the reported status and the shared quota thresholds: `allowed_warning` is at least yellow, `rejected` (labelled `limit`) and over-100% are red. `isUsingOverage` adds `· extra`. Subscription usage is separate from the `ctx` bar and from credit balances.
+
+The cell is hidden for an `allowed` window without utilization or extra usage, for unknown status values or window types, for malformed JSON, after the adapter clears the status (model change, session tree, compaction or shutdown), and once `resetsAt` has passed. A reading without a valid `resetsAt` is hidden because nothing else bounds its age: `observedAt` only changes when the payload changes, so it is not used as freshness evidence.
 
 ## OpenRouter credit source
 

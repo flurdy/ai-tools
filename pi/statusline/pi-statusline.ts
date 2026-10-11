@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { hostname } from "node:os";
 import { dirname } from "node:path";
 import { BeadsCountsCache, fetchBeadsCounts, findBeadsRoot, formatBeadsCounts } from "./beads-status.ts";
+import { CLAUDE_QUOTA_STATUS_KEY, claudeQuotaTone, claudeQuotaView, type ClaudeQuotaView } from "./claude-quota.ts";
 import {
 	codexQuotaDisplayState,
 	fetchCodexQuotaSnapshot,
@@ -73,6 +74,10 @@ function fmtTime(date: Date): string {
 
 function fmtQuotaReset(timestampMs: number): string {
 	return new Date(timestampMs).toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function fmtNearReset(timestampMs: number, nowMs: number): string {
+	return timestampMs - nowMs < 24 * 60 * 60_000 ? fmtTime(new Date(timestampMs)) : fmtQuotaReset(timestampMs);
 }
 
 function envMilliseconds(name: string, fallback: number, minimum: number): number {
@@ -392,6 +397,17 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				empty: (s: string) => theme.fg("dim", s),
 			};
 
+			function claudeQuotaCells(view: ClaudeQuotaView, nowMs: number): { compact: string; table: string } {
+				const tone = claudeQuotaTone(view);
+				const fill = (s: string) => theme.fg(tone, s);
+				const barColors = { ok: fill, warn: fill, crit: fill, empty: colors.empty };
+				const gauge = (width: number) => view.usedPercent === null ? "" : `${bar(view.usedPercent, width, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, barColors)} `;
+				const label = theme.fg(tone, `${view.window}${view.over ? " >100%" : ""}${view.state === "rejected" ? " limit" : ""}`);
+				const extra = view.extraUsage ? theme.fg("warning", " · extra") : "";
+				const reset = theme.fg("dim", ` · ${fmtNearReset(view.resetsAtMs, nowMs)}`);
+				return { compact: `${gauge(3)}${label}${extra}`, table: `${gauge(6)}${label}${extra}${reset}` };
+			}
+
 			function segments() {
 				const git = getGitInfo(ctx.cwd, footerData.getGitBranch());
 				void gitDivergenceCache?.refresh(git.branch);
@@ -438,6 +454,9 @@ export default function piStatusline(pi: ExtensionAPI): void {
 						quotaTable = quota;
 					}
 				}
+				const nowMs = Date.now();
+				const claudeQuota = claudeQuotaView(ctx.model?.provider, statuses.get(CLAUDE_QUOTA_STATUS_KEY), nowMs);
+				if (claudeQuota) ({ compact: quota, table: quotaTable } = claudeQuotaCells(claudeQuota, nowMs));
 				const openRouterCredits = openRouterCreditsCache?.credits;
 				const openRouterBalance = openRouterCredits
 					? theme.fg(openRouterCreditsCache.isStale() ? "dim" : "success", `OR $${Math.round(openRouterCredits.remainingCredits)}`)

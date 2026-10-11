@@ -405,3 +405,76 @@ test("scopes Codex credits and lookups to enabled openai-codex models", async ()
 		assert.deepEqual(await methods(), ["initialize", "initialized", "account/rateLimits/read"]);
 	});
 });
+
+function claudeStatus(fields: Record<string, unknown> = {}): string {
+	return JSON.stringify({
+		status: "allowed_warning",
+		resetsAt: Math.floor(Date.now() / 1000) + 3600,
+		rateLimitType: "five_hour",
+		isUsingOverage: false,
+		utilization: 0.62,
+		observedAt: Math.floor(Date.now() / 1000),
+		...fields,
+	});
+}
+
+function claudeCells(footer: Footer, layout: string): string[] {
+	process.env.PI_STATUSLINE = layout;
+	for (const width of [1, 20, 80, 120, 180, 240]) {
+		assert.ok(footer.render(width).every((line) => visibleWidth(line) <= width), `${layout} at ${width}`);
+	}
+	const lines = footer.render(240);
+	assert.equal(lines.length, layout === "table" ? 5 : 1);
+	return stripVTControlCharacters(lines.join("\n")).split(/[│\n]/).map((cell) => cell.trim());
+}
+
+const CLAUDE_QUOTA_CELL = /(?:^|\s)(?:5h|Wk|Extra)(?:\s|$)|▮|>100%|· extra/;
+
+test("renders the reported Claude window with its bar in both layouts", () => withFooter((footer, statuses) => {
+	statuses.set("claude-rate-limit", claudeStatus());
+	const compact = claudeCells(footer, "compact");
+	assert.ok(compact.includes("▮▯▯ 5h"), compact.join(" | "));
+	const table = claudeCells(footer, "table");
+	assert.ok(table.some((cell) => /^▮▮▮▯▯▯ 5h · \d/.test(cell)), table.join(" | "));
+	assert.doesNotMatch(table.join(" "), /\bWk\b|GPT/);
+}, { provider: "pi-claude-cli", modelId: "claude-opus-5-5" }));
+
+test("marks overage, extra usage and rejection, and shows a label without unknown utilization", () => withFooter((footer, statuses) => {
+	statuses.set("claude-rate-limit", claudeStatus({ rateLimitType: "overage", utilization: 1.01, isUsingOverage: true }));
+	assert.ok(claudeCells(footer, "compact").includes("▮▮▮ Extra >100% · extra"));
+
+	statuses.set("claude-rate-limit", claudeStatus({ status: "rejected", rateLimitType: "seven_day", utilization: null }));
+	const rejected = claudeCells(footer, "compact");
+	assert.ok(rejected.includes("Wk limit"), rejected.join(" | "));
+	assert.doesNotMatch(rejected.filter((cell) => !cell.endsWith("ctx")).join(" "), /▮|▯/);
+
+	statuses.set("claude-rate-limit", claudeStatus({ status: "allowed", utilization: 0 }));
+	assert.ok(claudeCells(footer, "compact").includes("▯▯▯ 5h"));
+}, { provider: "pi-claude-cli", modelId: "claude-opus-5-5" }));
+
+test("hides the Claude cell when quiet, malformed, expired, cleared or for another provider", () => withFooter((footer, statuses, controls) => {
+	const hidden = () => {
+		for (const layout of ["compact", "table"]) {
+			const cells = claudeCells(footer, layout).filter((cell) => !/ctx$/.test(cell));
+			assert.doesNotMatch(cells.join(" | "), CLAUDE_QUOTA_CELL, layout);
+		}
+	};
+	for (const text of [
+		claudeStatus({ status: "allowed", utilization: null }),
+		"{not json",
+		claudeStatus({ status: "mystery" }),
+		claudeStatus({ resetsAt: Math.floor(Date.now() / 1000) - 1 }),
+	]) {
+		statuses.set("claude-rate-limit", text);
+		hidden();
+	}
+	statuses.delete("claude-rate-limit");
+	hidden();
+
+	statuses.set("claude-rate-limit", claudeStatus());
+	assert.ok(claudeCells(footer, "compact").includes("▮▯▯ 5h"));
+	for (const provider of ["anthropic", "github-copilot", "openrouter", "openai-codex"]) {
+		controls.setProvider(provider);
+		hidden();
+	}
+}, { provider: "pi-claude-cli", modelId: "claude-opus-5-5" }));
