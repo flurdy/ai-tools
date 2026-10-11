@@ -97,6 +97,8 @@ docs/
 
 ## Experiments
 
+- [Gondolin bounded pilot](pi/experiments/gondolin/) — explicit disposable-checkout native-tool
+  routing through a pinned KVM guest; not approved for daily/global activation.
 - [Goal baseline fixture](pi/experiments/goal-baseline/) — no-model CSV repair fixture
   and frozen checks; preparation only, with no sandbox or execution runner.
 

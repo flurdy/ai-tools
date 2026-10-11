@@ -5,7 +5,7 @@ BIN_DIR ?= $(HOME)/bin
 
 .DEFAULT_GOAL := help
 
-.PHONY: help apply verify-apply check check-notify check-goal-baseline check-skill-spotlight check-quota
+.PHONY: help apply verify-apply check check-notify check-goal-baseline check-skill-spotlight check-quota check-gondolin-pilot apply-gondolin-pilot verify-gondolin-pilot
 
 help:
 	@echo "make check         Test artifact-hygiene gates, resource ownership, Pi UI extensions and goal fixture"
@@ -13,6 +13,8 @@ help:
 	@echo "make check-notify  Test Pi notifications and managed installation (Node >=22.19)"
 	@echo "make check-goal-baseline  Check the goal fixture without launching models (Node >=22.19)"
 	@echo "make check-quota   Test the codex-quota helper against a fake Codex CLI (Node >=22.19)"
+	@echo "make check-gondolin-pilot  Syntax and pure confinement policy tests; no VM or download"
+	@echo "make apply-gondolin-pilot PILOT_AGENT_DIR=/absolute/path  Isolated .artifacts agent only"
 	@echo "make apply         Link reviewed Pi resources into $(PI_AGENT_DIR) and codex-quota into $(BIN_DIR)"
 	@echo "make verify-apply  Verify the managed resource and helper links"
 	@echo "BIN_DIR=$(BIN_DIR) (override with an absolute directory on your PATH)"
@@ -26,6 +28,19 @@ check:
 	$(MAKE) check-skill-spotlight
 	$(MAKE) check-goal-baseline
 	$(MAKE) check-quota
+	$(MAKE) check-gondolin-pilot
+
+check-gondolin-pilot:
+	node --check pi/experiments/gondolin/index.ts
+	node --check pi/experiments/gondolin/runtime.ts
+	node --check pi/experiments/gondolin/install.mjs
+	node --test pi/experiments/gondolin/policy.test.ts pi/experiments/gondolin/install.test.mjs
+
+apply-gondolin-pilot:
+	node pi/experiments/gondolin/install.mjs "$(PILOT_AGENT_DIR)"
+
+verify-gondolin-pilot:
+	node pi/experiments/gondolin/install.mjs "$(PILOT_AGENT_DIR)" --check
 
 check-quota:
 	node --test pi/quota/codex-quota-report.test.ts
