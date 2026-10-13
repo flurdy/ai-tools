@@ -18,12 +18,16 @@ It can launch from:
 
 ## Install
 
+From the `ai-tools` repository root, install the Fish functions and point the required helpers at this checkout:
+
 ```bash
-mkdir -p ~/.config/fish/functions ~/.claude/bin
-cp cl.fish watchprs.fish watchrelease.fish ~/.config/fish/functions/
-# Dotfiles helpers dispatch to this canonical checkout rather than copying it.
-export AI_TOOLS_HOME="$PWD"
+mkdir -p "$HOME/.config/fish/functions" "$HOME/.claude/bin"
+cp -f claude/launcher/cl.fish claude/launcher/watchprs.fish claude/launcher/watchrelease.fish "$HOME/.config/fish/functions/"
+ln -s "$PWD/claude/launcher/cl-gather" "$HOME/.claude/bin/cl-gather"
+ln -s "$PWD/claude/launcher/cl-mkworktree" "$HOME/.claude/bin/cl-mkworktree"
 ```
+
+Keep this checkout in place: the helper links resolve through it to `shared/launcher/`. For an existing dotfiles setup, its helper shims may dispatch to this checkout via `AI_TOOLS_HOME`; follow that setup's instructions instead of replacing its shims.
 
 ## Usage
 

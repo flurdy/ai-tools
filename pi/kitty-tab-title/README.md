@@ -24,12 +24,14 @@ pi -e ./pi/kitty-tab-title/pi-kitty-tab-title.ts
 
 ## Install globally
 
+From the `ai-tools` repository root, use the conflict-checked installer:
+
 ```bash
-mkdir -p ~/.pi/agent/extensions
-ln -sf "$PWD/pi/kitty-tab-title/pi-kitty-tab-title.ts" ~/.pi/agent/extensions/flurdy-kitty-tab-title.ts
+make apply
+make verify-apply
 ```
 
-Then restart Pi or run `/reload`. Session-name refresh requires Pi 0.82.1 or newer.
+This links the extension into `~/.pi/agent/extensions/` along with the other managed Pi resources. Restart Pi after first installation or run `/reload` for later source changes. Session-name refresh requires Pi 0.82.1 or newer.
 
 ## States
 

@@ -1,8 +1,8 @@
 # AI Tools
 
-Personal tools and config glue for working with AI coding agents, mostly Claude Code with Codex and Pi support.
+Personal tools and configuration for Claude Code, Codex, and Pi.
 
-This repo is meant to be the shareable, curated version of tools that also live in my dotfiles. The live setup may still be in [flurdy/dotfiles](https://github.com/flurdy/dotfiles); this repo keeps the pieces easier to browse, copy, and discuss.
+This repository is the maintained source for the components documented here. Some existing dotfiles installations still provide dispatch shims or local configuration; see each component's README for its installation boundary.
 
 ## Tools
 
@@ -47,23 +47,22 @@ the tools here:
 
 The Kitty tab title write-up is at <https://flurdy.com/docs/kitty-ai-tabs/>.
 
-## Install reviewed local resources
+## Install reviewed Pi resources
+
+From the repository root:
 
 ```bash
 make apply
+make verify-apply
 ```
 
-`make apply` links the statusline, Kitty tab title, completion notifier, skill spotlight and theme into `~/.pi/agent`,
-and the `codex-quota` CLI into `~/bin` (`BIN_DIR` overrides that commands directory). Keep it on Pi's inherited PATH;
-see [quota helper installation](pi/quota/README.md#install). `make verify-apply` checks every managed link.
-The spotlight stays off until `PI_SKILL_SPOTLIGHT=1`; see [startup tips](pi/skill-spotlight/README.md).
-It refuses conflicting resources rather than overwriting them and leaves unrelated settings untouched.
-Disable other completion notifiers first; see [notification delivery and limitations](pi/notify/README.md).
-Install session-mode separately for guard indicators and `/leases`; statusline reads its published
-statuses without a package dependency. See [statusline installation](pi/statusline/README.md).
+This links the statusline, Kitty tab title, completion notifier, skill spotlight, and theme into `~/.pi/agent`, and links the `codex-quota` CLI into `~/bin`. Override the CLI destination with `BIN_DIR`; keep it on Pi's inherited `PATH` (see [quota helper installation](pi/quota/README.md#install)). The installer refuses conflicting resources and leaves unrelated settings untouched. The spotlight remains opt-in via `PI_SKILL_SPOTLIGHT=1` (see [startup tip details](pi/skill-spotlight/README.md)); disable other completion notifiers first (see [notification behavior](pi/notify/README.md)).
 
-This does not install settings, launchers, `APPEND_SYSTEM.md`, session-mode, skill-model-router or
-watch-loop. Restart Pi after first linking an extension; `/reload` is sufficient for later changes.
+This does not install settings, launchers, `APPEND_SYSTEM.md`, session-mode, skill-model-router, or watch-loop. Install session-mode separately for guard indicators and `/leases`; the statusline reads its published statuses without a package dependency (see [statusline installation](pi/statusline/README.md)). Restart Pi after first linking an extension; `/reload` loads later changes.
+
+## Verify
+
+`make check` runs the root suites listed in the [Makefile](Makefile), including both artifact-hygiene gates, extraction contracts, Pi notification and skill-spotlight tests, quota and goal-fixture tests, and Gondolin policy checks. It is not every component's full verification suite. For component-specific tests and checks—such as statusline typechecking, launcher integration tests, or the project-workspace suite—use the commands in that component's README.
 
 
 ## Layout
@@ -104,7 +103,7 @@ docs/
 
 ## Notes
 
-These scripts are extracted from my own environment, so they intentionally keep some local workflow assumptions. The per-tool READMEs call those out where they matter.
+These tools reflect personal workflows and have component-specific prerequisites and limitations. Start with the relevant README before installing or adopting a component.
 
 ## Author
 

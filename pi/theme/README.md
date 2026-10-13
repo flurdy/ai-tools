@@ -12,15 +12,14 @@ The change applies throughout Pi, including the custom statusline, diffs, Markdo
 
 ## Install globally
 
-From this repository:
+From the `ai-tools` repository root, use the conflict-checked installer:
 
 ```bash
-mkdir -p ~/.pi/agent/themes
-ln -sfn "$PWD/pi/theme/flurdy-dark.json" \
-  ~/.pi/agent/themes/flurdy-dark.json
+make apply
+make verify-apply
 ```
 
-Select `flurdy-dark` from `/settings`, or set it in `~/.pi/agent/settings.json`:
+This links the theme into `~/.pi/agent/themes/` along with the other managed Pi resources. Select `flurdy-dark` from `/settings`, or set it in `~/.pi/agent/settings.json`:
 
 ```json
 {

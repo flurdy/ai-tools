@@ -25,7 +25,7 @@ Kitty must allow remote title updates. The longer explanation is in <https://flu
 - Uses `jq` for hook payload parsing.
 - Uses `kitten @ set-tab-title` locally.
 - Can use Kitty escape commands over SSH when `SSH_TTY` is available.
-- Can show Beads context if `.beads/db.jsonl` exists in the repo.
+- Can show Beads context if `.beads/issues.jsonl` exists in the repo.
 
 Useful environment variables:
 

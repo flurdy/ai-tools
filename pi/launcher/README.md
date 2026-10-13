@@ -18,19 +18,23 @@ It can launch from:
 
 ## Install
 
-For the live dotfiles layout:
+From the `ai-tools` repository root, install the Fish function and point the required helpers at this checkout:
 
 ```bash
-mkdir -p ~/.dotfiles/.config/fish/functions ~/.dotfiles/.pi/bin ~/.pi/bin ~/.pi/agent
-cp -f pl.fish ~/.dotfiles/.config/fish/functions/pl.fish
-test -f ~/.pi/agent/pl-launcher.json || cp -f pl-launcher.json.example ~/.pi/agent/pl-launcher.json
-# Dotfiles helpers dispatch to this canonical checkout rather than copying it.
-export AI_TOOLS_HOME="$PWD"
-ln -sfn ~/.dotfiles/.pi/bin/pl-gather ~/.pi/bin/pl-gather
-ln -sfn ~/.dotfiles/.pi/bin/pl-mkworktree ~/.pi/bin/pl-mkworktree
+mkdir -p "$HOME/.config/fish/functions" "$HOME/.pi/bin"
+cp -f pi/launcher/pl.fish "$HOME/.config/fish/functions/pl.fish"
+ln -s "$PWD/pi/launcher/pl-gather" "$HOME/.pi/bin/pl-gather"
+ln -s "$PWD/pi/launcher/pl-mkworktree" "$HOME/.pi/bin/pl-mkworktree"
 ```
 
-Or copy `pl.fish` to any directory Fish autoloads from.
+Keep this checkout in place: the helper links resolve through it to `shared/launcher/`. Optionally create the launcher config to pin your preferred fresh-session model and thinking level:
+
+```bash
+mkdir -p "$HOME/.pi/agent"
+test -f "$HOME/.pi/agent/pl-launcher.json" || cp -n pi/launcher/pl-launcher.json.example "$HOME/.pi/agent/pl-launcher.json"
+```
+
+For an existing dotfiles setup, its helper shims may dispatch to this checkout via `AI_TOOLS_HOME`; use that setup's documented shim links rather than replacing them. Fish can also load `pl.fish` from any configured autoload directory, but the helper executables must still be on `PATH`.
 
 ## Usage
 
