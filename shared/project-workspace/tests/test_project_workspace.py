@@ -85,6 +85,12 @@ class ProjectWorkspaceTest(unittest.TestCase):
             "fi\n"
             'if [[ "$1" == "rev-list" ]]; then\n'
             '  require_local_comparison "$@"\n'
+            '  if [[ "$*" == "rev-list --left-right --count HEAD...@{upstream}" ]]; then\n'
+            '    [[ -f .git/counts-delay ]] && exec sleep 10\n'
+            '    [[ -f .git/counts ]] || exit 1\n'
+            '    cat .git/counts\n'
+            '    exit\n'
+            '  fi\n'
             '  if [[ -f .git/project-workspace-rev-list-fail ]]; then\n'
             '    cat .git/project-workspace-rev-list-fail >&2\n'
             "    exit 2\n"
@@ -1471,6 +1477,102 @@ class ProjectWorkspaceTest(unittest.TestCase):
         commands = self.command_log.read_text(encoding="utf-8")
         self.assertIn("--readonly", commands)
         self.assertNotIn(" fetch ", commands)
+
+    def test_git_counts_preserves_source_order_and_partial_failures(self) -> None:
+        workspace = self.create_workspace("git-counts")
+        for name, counts in (("first", "4 2"), ("clean", "0 0"), ("bad", "invalid"), ("missing", None)):
+            repository = self.create_repository(name)
+            self.run_cli("add-repo", str(repository), "--workspace", str(workspace))
+            if counts is not None:
+                (repository / ".git/counts").write_text(counts)
+        (workspace / ".git/counts").write_text("1 0")
+        self.command_log.write_text("")
+        payload = json.loads(self.run_cli("git-counts", "--workspace", str(workspace)).stdout)
+        self.assertEqual(payload["version"], 1)
+        self.assertEqual(payload["repositories"], [
+            {"repository": "workspace", "path": ".", "ahead": 1, "behind": 0},
+            {"repository": "first", "path": "repos/first", "ahead": 4, "behind": 2},
+            {"repository": "clean", "path": "repos/clean", "ahead": 0, "behind": 0},
+        ])
+        self.assertEqual(payload["successfulSources"], 3)
+        self.assertEqual(payload["unavailableSources"], 2)
+        self.assertEqual(len(payload["diagnostics"]), 2)
+        commands = self.command_log.read_text()
+        self.assertEqual(commands.count("git rev-list --left-right --count HEAD...@{upstream}"), 5)
+        for forbidden in ("git status", "git fetch", "bd ", "git worktree"):
+            self.assertNotIn(forbidden, commands)
+
+    def test_git_counts_shared_deadline_retains_healthy_sources(self) -> None:
+        workspace = self.create_workspace("git-counts-timeout")
+        service = self.create_repository("service")
+        self.run_cli("add-repo", str(service), "--workspace", str(workspace))
+        (workspace / ".git/counts-delay").touch()
+        (service / ".git/counts").write_text("0 3")
+        started = time.monotonic()
+        payload = json.loads(self.run_cli("git-counts", "--workspace", str(workspace), "--timeout", "0.2").stdout)
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertEqual(payload["successfulSources"], 1)
+        self.assertEqual(payload["unavailableSources"], 1)
+        self.assertEqual(payload["repositories"][0]["behind"], 3)
+        self.assertIn("timed out", payload["diagnostics"][0])
+
+    @unittest.skipUnless(shutil.which("git"), "Git is required for divergence tests")
+    def test_git_counts_real_repositories_and_missing_upstreams(self) -> None:
+        real_git = self.use_real_git()
+
+        def git(directory: Path, *arguments: str) -> str:
+            return subprocess.run(
+                [real_git, "-c", "core.hooksPath=/dev/null", *arguments], cwd=directory,
+                check=True, capture_output=True, text=True, env=self.environment,
+            ).stdout.strip()
+
+        workspace = self.create_workspace("real-counts")
+        service = self.root / "service"
+        service.mkdir()
+        git(service, "init", "-b", "main")
+        self.run_cli("add-repo", str(service), "--workspace", str(workspace))
+        for repository in (workspace, service):
+            git(repository, "config", "user.name", "Test")
+            git(repository, "config", "user.email", "test@example.invalid")
+            git(repository, "commit", "--allow-empty", "-m", "initial")
+        git(service, "switch", "-c", "upstream")
+        git(service, "commit", "--allow-empty", "-m", "remote")
+        upstream = git(service, "rev-parse", "HEAD")
+        git(service, "switch", "main")
+        for index in range(2):
+            git(service, "commit", "--allow-empty", "-m", f"local {index}")
+        git(service, "config", "remote.origin.url", str(self.root / "not-a-remote"))
+        git(service, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
+        git(service, "update-ref", "refs/remotes/origin/main", upstream)
+        git(service, "branch", "--set-upstream-to", "origin/main")
+        payload = json.loads(self.run_cli("git-counts", "--workspace", str(workspace)).stdout)
+        self.assertEqual(payload["repositories"], [
+            {"repository": "service", "path": "repos/service", "ahead": 2, "behind": 1},
+        ])
+        self.assertEqual(payload["unavailableSources"], 1)
+        git(workspace, "checkout", "--detach")
+        payload = json.loads(self.run_cli("git-counts", "--workspace", str(workspace)).stdout)
+        self.assertEqual(payload["successfulSources"], 1)
+        self.assertEqual(payload["unavailableSources"], 1)
+        git(service, "checkout", "--detach")
+        payload = json.loads(self.run_cli("git-counts", "--workspace", str(workspace)).stdout)
+        self.assertEqual(payload["repositories"], [])
+        self.assertEqual(payload["unavailableSources"], 2)
+        git(service, "checkout", "--orphan", "unborn")
+        payload = json.loads(self.run_cli("git-counts", "--workspace", str(workspace)).stdout)
+        self.assertEqual(payload["successfulSources"], 0)
+        self.assertEqual(payload["unavailableSources"], 2)
+
+    def test_git_counts_rejects_invalid_timeout_and_topology(self) -> None:
+        workspace = self.create_workspace("invalid-git-counts")
+        for timeout in ("0", "-1", "nan", "inf"):
+            result = self.run_cli("git-counts", "--workspace", str(workspace), "--timeout", timeout, check=False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, "")
+        (workspace / "workspace.json").write_text("{}")
+        result = self.run_cli("git-counts", "--workspace", str(workspace), check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
 
     def test_beads_counts_aggregates_all_registered_stores_and_p4_work(self) -> None:
         workspace = self.create_workspace("aggregate-counts")

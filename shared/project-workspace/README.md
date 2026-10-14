@@ -191,6 +191,20 @@ directory, disable automatic lazy object fetching, and never contact remotes or 
 configuration. Beads queries use `--readonly`, remain
 independent per repository, and show bounded in-progress and ready work without
 synchronizing stores.
+`project-workspace git-counts --workspace PATH --timeout 2` returns compact version-1
+JSON for statuslines: `repositories` contains successful `{repository, path, ahead, behind}`
+rows (workspace first, then registered repositories in manifest order), accompanied by
+`successfulSources`, `unavailableSources`, and one string in `diagnostics` per failed source.
+It compares each checked-out `HEAD` with its configured upstream using local refs only,
+without dirty scans, alternate-worktree discovery, locks or lazy object fetching.
+Missing upstreams, detached/unborn branches, malformed results and query failures are
+unavailable rather than zero. Successful zero-count rows remain in JSON so consumers can
+omit them without confusing clean with unknown. Counts are never summed across repositories.
+Up to 16 readers share one `--timeout` deadline after the usual strict topology/README
+validation. Invalid topology fails the command; individual query failures return partial
+JSON with exit status zero. Statusline callers additionally bound the whole process group,
+including validation. `make git-status` remains the detailed human-readable view.
+
 `project-workspace beads-counts --workspace PATH` provides the same validated workspace
 scope as compact JSON for statusline consumers. It queries up to 16 stores concurrently,
 with serial `list` and `blocked` reads within each store to avoid competing embedded-Dolt opens.

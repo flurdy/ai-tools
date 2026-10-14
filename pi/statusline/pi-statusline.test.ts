@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
@@ -81,7 +81,10 @@ test("wires continuing turns to threshold crossing without tool-loop spam", () =
 type Footer = { render(width: number): string[]; dispose(): void };
 
 type FooterControls = { refresh(): Promise<void>; setProvider(provider: string): void };
-type FooterOptions = { provider?: string; modelId?: string; codexBin?: string; quotaEnabled?: boolean };
+type FooterOptions = {
+	provider?: string; modelId?: string; codexBin?: string; quotaEnabled?: boolean;
+	cwd?: string; divergenceEnabled?: boolean; branch?: string | null;
+};
 
 async function waitFor(check: () => boolean): Promise<void> {
 	const deadline = Date.now() + 3000;
@@ -120,11 +123,12 @@ async function withFooter(
 	process.env.PI_STATUSLINE_CODEX_QUOTA_TIMEOUT = "2000";
 	if (options.codexBin) process.env.PI_STATUSLINE_CODEX_BIN = options.codexBin;
 	if (options.quotaEnabled) process.env.PI_STATUSLINE_CODEX_QUOTA = "1";
+	if (options.divergenceEnabled) process.env.PI_STATUSLINE_GIT_DIVERGENCE = "1";
 	let renders = 0;
 	const handlers = registeredHandlers();
 	try {
 		const ctx = {
-			cwd: "/tmp",
+			cwd: options.cwd ?? "/tmp",
 			mode: "tui",
 			model: { provider: options.provider ?? "test", id: options.modelId ?? "model", contextWindow: 1000 },
 			getContextUsage: () => ({ tokens: 0 }),
@@ -143,7 +147,7 @@ async function withFooter(
 				bold: (text: string) => `\x1b[1m${text}\x1b[0m`,
 			},
 			{
-				getGitBranch: () => "feature/statusline-layout-test",
+				getGitBranch: () => options.branch === undefined ? "feature/statusline-layout-test" : options.branch,
 				getExtensionStatuses: () => statuses,
 				onBranchChange: () => () => undefined,
 			},
@@ -166,6 +170,41 @@ async function withFooter(
 		}
 	}
 }
+
+test("renders cached per-repository divergence in both layouts without a root branch", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "pi-workspace-footer-"));
+	const previousPath = process.env.PATH;
+	try {
+		for (const name of [".git", ".beads", "repos", "infrastructure"]) await mkdir(join(directory, name));
+		for (const name of ["workspace.json", "README.md", "AGENTS.md", "Makefile"]) await writeFile(join(directory, name), "");
+		const payload = {
+			version: 1,
+			repositories: [{ repository: "workspace", path: ".", ahead: 1, behind: 0 }, { repository: "member", path: "repos/member", ahead: 4, behind: 2 }],
+			successfulSources: 2, unavailableSources: 1, diagnostics: ["unavailable"],
+		};
+		await writeFile(join(directory, "project-workspace"), `#!/usr/bin/env node\nif (process.argv[2] !== 'git-counts') process.exit(2);\nsetTimeout(()=>console.log(${JSON.stringify(JSON.stringify(payload))}), 600);\n`, { mode: 0o700 });
+		process.env.PATH = `${directory}:${previousPath ?? ""}`;
+		await withFooter(async (footer) => {
+			const first = stripVTControlCharacters(footer.render(240).join("\n"));
+			assert.doesNotMatch(first, /⇡1 ⇡4/);
+			await waitFor(() => stripVTControlCharacters(footer.render(240).join("\n")).includes("⇡1 ⇡4 ⇣2 ⚠1"));
+			for (const layout of ["compact", "table"]) {
+				process.env.PI_STATUSLINE = layout;
+				for (const width of [1, 30, 80, 240]) {
+					const lines = footer.render(width);
+					assert.ok(lines.every(line => visibleWidth(line) <= width));
+					const plain = stripVTControlCharacters(lines.join("\n"));
+					if (width === 240) assert.match(plain, /⇡1 ⇡4 ⇣2 ⚠1/);
+					assert.doesNotMatch(plain, /⇡5|repos\/member|/);
+				}
+			}
+		}, { cwd: directory, branch: null, divergenceEnabled: true });
+	} finally {
+		if (previousPath === undefined) delete process.env.PATH;
+		else process.env.PATH = previousPath;
+		await rm(directory, { recursive: true, force: true });
+	}
+});
 
 function verifyLayouts(footer: Footer, expectedGuard: string) {
 	for (const layout of ["compact", "table"]) {

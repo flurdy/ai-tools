@@ -36,7 +36,7 @@ Avoid loading a second copy of an already installed extension when using `-e`.
 - `PI_STATUSLINE_PR_TTL=120000` — PR cache TTL in milliseconds.
 - `PI_STATUSLINE_GIT_DIVERGENCE=0` — hide the upstream ahead/behind commit counts.
 - `PI_STATUSLINE_GIT_DIVERGENCE_TTL=30000` — upstream-divergence cache interval in milliseconds (minimum one second).
-- `PI_STATUSLINE_GIT_DIVERGENCE_TIMEOUT=500` — timeout for one local upstream comparison in milliseconds (minimum 100 ms).
+- `PI_STATUSLINE_GIT_DIVERGENCE_TIMEOUT` — lookup timeout in milliseconds (minimum 100 ms); defaults to 500 for a single repository and 2000 at a project-workspace root.
 - `PI_STATUSLINE_GUARD_EMOJI=0` — show the session guard's full text label instead of its compact emoji.
 - `PI_STATUSLINE_LAST_PROMPT=0` — hide the active-run/latest-prompt widget above the editor (recommended when prompts may be visible to others).
 - `PI_STATUSLINE_K8S_CONTEXT=0` — hide the current `kubectl` context (shown by default when available).
@@ -154,7 +154,11 @@ Set `PI_STATUSLINE_OPENROUTER_WARN=0` to disable the advisory. Set either interv
 
 ## Git upstream source
 
-The optional divergence cell asynchronously compares the cache-keyed branch with its locally available upstream tracking ref using `git rev-list --left-right --count <branch>@{upstream}...<branch>`. It shows only non-zero directions: `⇡N` for local commits absent upstream and `⇣N` for upstream commits absent locally. It never fetches from a remote, so its value reflects the most recent fetch performed elsewhere. The lookup is cached, timeout-bounded, and hidden when both counts are zero or data is unavailable.
+At a validated project-workspace root, the divergence cell uses `project-workspace git-counts` to show separate counts for the root and each registered repository, in manifest order: `⇡1 ⇡4 ⇣2 ⇡1 ⇡2`. Clean repositories and zero directions are omitted; both directions for a diverged repository stay together. It does not show names, a repository-count suffix, or a summed total. Use `make git-status` for repository identities and detail. Branch and dirty markers still describe only the cwd repository.
+
+Detection checks only the canonical cwd, never a parent workspace. Inside a member or outside a workspace, the existing cache-keyed `<branch>@{upstream}...<branch>` comparison remains unchanged. Counts use local tracking refs, disable lazy object fetching, and never fetch from remotes. The asynchronous lookup is cached and timeout-bounded; workspace collectors own a process group cleaned on completion, timeout or abort on Unix-like hosts.
+
+Healthy workspace counts survive individual source failures, with `⚠N` for unavailable sources (including missing upstreams, detached or unborn branches). If all sources fail, the cell shows `? ⚠N`; unavailable collectors, invalid topology or malformed output show `? ⚠` with no invented source count. These failures are cached too. A fully clean workspace hides the cell. Single-repository zero counts and unavailable data still stay hidden.
 
 ## Beads count source
 

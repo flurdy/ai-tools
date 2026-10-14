@@ -2011,6 +2011,63 @@ def load_status_issues(
     return issues, None
 
 
+def read_git_counts(
+    directory: Path, deadline: float, timeout: float
+) -> tuple[tuple[int, int] | None, str | None]:
+    environment = os.environ.copy()
+    environment["GIT_NO_LAZY_FETCH"] = "1"
+    environment["GIT_OPTIONAL_LOCKS"] = "0"
+    result, error = run_repository_command_before(
+        ["git", "rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
+        directory, deadline, timeout, environment,
+    )
+    if error is not None:
+        return None, error
+    assert result is not None
+    match = re.fullmatch(r"([0-9]+)\s+([0-9]+)", result.stdout.strip())
+    if match is None:
+        return None, "invalid Git divergence counts"
+    ahead, behind = (int(value) for value in match.groups())
+    return (ahead, behind), None
+
+
+def git_count_payload(
+    root: Path, manifest: dict[str, object], timeout: float
+) -> dict[str, object]:
+    targets = status_targets(root, manifest)
+    deadline = monotonic() + timeout
+    with ThreadPoolExecutor(max_workers=min(len(targets), STATUS_COUNT_WORKERS)) as executor:
+        futures = [
+            (name, path, executor.submit(read_git_counts, directory, deadline, timeout))
+            for name, path, directory in targets
+        ]
+    repositories: list[dict[str, object]] = []
+    diagnostics: list[str] = []
+    for name, path, future in futures:
+        counts, error = future.result()
+        if error is not None:
+            diagnostics.append(f"{name} ({path}): {error}")
+        else:
+            assert counts is not None
+            ahead, behind = counts
+            repositories.append({
+                "repository": name, "path": path, "ahead": ahead, "behind": behind,
+            })
+    return {
+        "version": 1,
+        "repositories": repositories,
+        "successfulSources": len(repositories),
+        "unavailableSources": len(diagnostics),
+        "diagnostics": diagnostics,
+    }
+
+
+def print_git_counts(root: Path, timeout: float) -> None:
+    workspace_root = Path(os.path.abspath(root.expanduser()))
+    manifest, _readme = load_workspace_manifest(workspace_root)
+    print(json.dumps(git_count_payload(workspace_root, manifest, timeout), separators=(",", ":")))
+
+
 def parse_beads_count_source(
     issues_output: str, blocked_output: str
 ) -> tuple[list[int], int, int] | None:
@@ -2437,6 +2494,17 @@ def parser() -> argparse.ArgumentParser:
         help="per-command timeout in seconds",
     )
 
+    git_counts = subcommands.add_parser(
+        "git-counts", help="print per-repository workspace upstream counts as JSON"
+    )
+    git_counts.add_argument(
+        "--workspace", type=Path, default=Path.cwd(), help="workspace root"
+    )
+    git_counts.add_argument(
+        "--timeout", type=float, default=STATUS_TIMEOUT_SECONDS,
+        help="shared count-query deadline in seconds (after topology validation)",
+    )
+
     status = subcommands.add_parser("status", help="show repository and work status")
     status.add_argument(
         "--workspace", type=Path, default=Path.cwd(), help="workspace root"
@@ -2504,6 +2572,10 @@ def main() -> int:
             create_workspace(workspace, arguments.dry_run)
         elif arguments.command == "doctor":
             doctor_workspace(arguments.workspace)
+        elif arguments.command == "git-counts":
+            if not math.isfinite(arguments.timeout) or arguments.timeout <= 0:
+                raise WorkspaceError("git-counts timeout must be greater than zero")
+            print_git_counts(arguments.workspace, arguments.timeout)
         elif arguments.command == "beads-counts":
             if not math.isfinite(arguments.timeout) or arguments.timeout <= 0:
                 raise WorkspaceError("beads-counts timeout must be greater than zero")

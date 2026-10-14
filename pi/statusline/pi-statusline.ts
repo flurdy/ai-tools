@@ -14,7 +14,7 @@ import {
 	showsCodexQuota,
 	type CodexQuotaSnapshot,
 } from "./codex-quota.ts";
-import { fetchGitDivergence, formatGitDivergence, GitDivergenceCache } from "./git-divergence.ts";
+import { fetchGitDivergence, findGitWorkspaceRoot, formatGitDivergence, GitDivergenceCache } from "./git-divergence.ts";
 import { activeModelLabel, modelLabel } from "./model-label.ts";
 import { OpenRouterCostAdvisory, openRouterAdvisoryConfig, sharedOpenRouterAdvisoryState } from "./openrouter-advisory.ts";
 import { createOpenRouterCreditsCache, openRouterCreditsApiKey } from "./openrouter-credits.ts";
@@ -350,10 +350,12 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				})
 				: undefined;
 			const gitDivergenceRefreshMs = envMilliseconds("PI_STATUSLINE_GIT_DIVERGENCE_TTL", 30_000, 1000);
-			const gitDivergenceTimeoutMs = envMilliseconds("PI_STATUSLINE_GIT_DIVERGENCE_TIMEOUT", 500, 100);
+			const gitWorkspaceRoot = findGitWorkspaceRoot(ctx.cwd);
+			const gitDivergenceTimeoutMs = envMilliseconds("PI_STATUSLINE_GIT_DIVERGENCE_TIMEOUT", gitWorkspaceRoot ? 2000 : 500, 100);
 			const gitDivergenceCache = process.env.PI_STATUSLINE_GIT_DIVERGENCE === "0"
 				? undefined
 				: new GitDivergenceCache({
+					workspace: Boolean(gitWorkspaceRoot),
 					load: (branch, signal) => fetchGitDivergence(ctx.cwd, branch, { timeoutMs: gitDivergenceTimeoutMs, signal }),
 					ttlMs: gitDivergenceRefreshMs,
 					onChange: () => tui.requestRender(),

@@ -34,7 +34,7 @@ Useful environment variables:
 - `CLAUDE_STATUSLINE_PR_TTL=120`
 - `CLAUDE_STATUSLINE_GIT_DIVERGENCE=0`
 - `CLAUDE_STATUSLINE_GIT_DIVERGENCE_TTL=30`
-- `CLAUDE_STATUSLINE_GIT_DIVERGENCE_TIMEOUT=1`
+- `CLAUDE_STATUSLINE_GIT_DIVERGENCE_TIMEOUT` — seconds; defaults to 1 for a single repository, 2 at a project-workspace root
 - `CLAUDE_STATUSLINE_BEADS=0`
 - `CLAUDE_STATUSLINE_BEADS_TTL=30`
 - `CLAUDE_STATUSLINE_BEADS_TIMEOUT=2`
@@ -42,7 +42,11 @@ Useful environment variables:
 
 ## Git upstream status
 
-A warning-coloured divergence cell appears after the branch and shows only non-zero directions: `⇡N` for local commits absent upstream and `⇣N` for upstream commits absent locally. The detached lookup runs `git rev-list --left-right --count <branch>@{upstream}...<branch>` with a hard timeout and caches the result, so rendering never waits for Git. It never runs `git fetch`; the counts reflect the locally available tracking ref from the most recent fetch performed elsewhere. Zero directions are omitted, while missing upstreams, unavailable commands, timeouts, and other failures hide the whole cell. The timeout is measured in seconds and clamped to 1–10 seconds.
+At a validated project-workspace root, the warning-coloured divergence cell uses `project-workspace git-counts` and shows separate groups for the root and each registered repository in manifest order, for example `⇡1 ⇡4 ⇣2 ⇡1 ⇡2`. Both directions stay together for a diverged repository; clean repositories and zero directions are omitted. No names, repository-count suffix or summed total appears. Use `make git-status` for identities and details; branch and dirty markers remain cwd-only.
+
+Only the canonical cwd is checked, not parent workspaces. Members and non-workspace repositories keep their existing `<branch>@{upstream}...<branch>` comparison. The detached, cached lookup never fetches (including lazy object fetching), so counts reflect locally available tracking refs. The timeout covers the collector process group and is clamped to 1–10 seconds; workspace mode defaults to 2 seconds.
+
+Workspace source failures retain healthy groups and add `⚠N`; missing upstreams, detached and unborn branches are unavailable, not zero. An entirely unavailable set shows `? ⚠N`. Missing collectors, invalid topology, malformed output and outer timeouts show `? ⚠`, without inventing how many sources failed. Failure results are cached. A fully clean workspace hides the cell; single-repository failures and zero counts remain hidden.
 
 ## Beads work
 

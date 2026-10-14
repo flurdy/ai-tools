@@ -8,14 +8,12 @@ cwd=$(echo "$input" | jq -r '.cwd // empty')
 [ -z "$cwd" ] && cwd="$PWD"
 
 # --- Parse JSON fields ---
-model_name=$(echo "$input" | jq -r '.model.display_name // empty')
 model_id=$(echo "$input" | jq -r '.model.id // empty')
 cost_usd=$(echo "$input" | jq -r '.cost.total_cost_usd // 0')
 duration_ms=$(echo "$input" | jq -r '.cost.total_duration_ms // 0')
 ctx_pct=$(echo "$input" | jq -r '.context_window.used_percentage // 0')
 rate_5h_pct=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // 0')
 rate_7d_pct=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // 0')
-git_worktree=$(echo "$input" | jq -r '.workspace.git_worktree // empty')
 session_id=$(echo "$input" | jq -r '.session_id // empty')
 
 host=$(hostname -s)
@@ -103,18 +101,30 @@ cache_git_status() {
 }
 
 # --- Non-blocking upstream-divergence lookup (cached) ---
-# Prints positive ahead and behind counts as "ahead|behind" for the current
-# branch's locally fetched upstream tracking ref. It never fetches remotely.
+# Uses the exact cwd only: a member never inherits the workspace aggregate.
+is_project_workspace_root() {
+  local root="$1" path
+  for path in .git .beads workspace.json README.md AGENTS.md Makefile repos infrastructure; do
+    [ -e "$root/$path" ] || return 1
+  done
+}
+
 cache_git_divergence() {
-  local branch="$1"
-  [ -z "$branch" ] && return
+  local branch="$1" root workspace_mode=0 default_timeout=1
   [ "${CLAUDE_STATUSLINE_GIT_DIVERGENCE:-1}" = "0" ] && return
+  root=$(cd "$cwd" 2>/dev/null && pwd -P) || return
+  if is_project_workspace_root "$root"; then
+    workspace_mode=1
+    default_timeout=2
+    branch=workspace
+  fi
+  [ -z "$branch" ] && return
 
   local timeout_cmd
   timeout_cmd=$(command -v gtimeout 2>/dev/null || command -v timeout 2>/dev/null) || return
 
   local ttl="${CLAUDE_STATUSLINE_GIT_DIVERGENCE_TTL:-30}"
-  local timeout_seconds="${CLAUDE_STATUSLINE_GIT_DIVERGENCE_TIMEOUT:-1}"
+  local timeout_seconds="${CLAUDE_STATUSLINE_GIT_DIVERGENCE_TIMEOUT:-$default_timeout}"
   case "$ttl" in ''|*[!0-9]*) ttl=30 ;; esac
   case "$timeout_seconds" in ''|*[!0-9]*) timeout_seconds=1 ;; esac
   [ "$ttl" -lt 1 ] && ttl=1
@@ -122,8 +132,8 @@ cache_git_divergence() {
   [ "$timeout_seconds" -gt 10 ] && timeout_seconds=10
 
   local key cache lock now age
-  key=$(printf '%s' "$cwd|$branch" | cksum | tr -cd '0-9' | cut -c1-12)
-  cache="/tmp/statusline-git-divergence-$key"
+  key=$(printf '%s' "$root|$workspace_mode|$branch" | cksum | tr -cd '0-9' | cut -c1-12)
+  cache="/tmp/statusline-git-divergence-v2-$key"
   lock="$cache.lock"
   now=$(date +%s)
 
@@ -148,12 +158,41 @@ cache_git_divergence() {
       refresh_age=$ttl
       [ -f "$cache" ] && refresh_age=$(( refresh_now - $(stat -c %Y "$cache" 2>/dev/null || stat -f %m "$cache" 2>/dev/null || echo 0) ))
       if [ "$refresh_age" -ge "$ttl" ]; then
-        counts=$("$timeout_cmd" --kill-after=1 "$timeout_seconds" git -C "$cwd" rev-list --left-right --count "${branch}@{upstream}...${branch}" 2>/dev/null) || counts=""
-        read -r behind ahead extra <<< "$counts"
-        if [[ "$behind" =~ ^[0-9]+$ ]] && [[ "$ahead" =~ ^[0-9]+$ ]] && [ -z "$extra" ] && { [ "$ahead" -gt 0 ] || [ "$behind" -gt 0 ]; }; then
-          printf '%s|%s\n' "$ahead" "$behind" > "$tmp"
+        if [ "$workspace_mode" -eq 1 ]; then
+          local aggregate formatted source_timeout
+          source_timeout=$(( timeout_seconds - 1 ))
+          [ "$source_timeout" -lt 1 ] && source_timeout=0.5
+          if aggregate=$("$timeout_cmd" --signal=KILL "$timeout_seconds" project-workspace git-counts --workspace "$root" --timeout "$source_timeout" 2>/dev/null) &&
+            formatted=$(printf '%s' "$aggregate" | jq -er '
+              def count: type == "number" and . >= 0 and . <= 9007199254740991 and floor == .;
+              if .version == 1 and (.repositories | type == "array") and
+                 (.successfulSources | count) and (.unavailableSources | count) and
+                 .successfulSources + .unavailableSources > 0 and
+                 (.repositories | length) == .successfulSources and
+                 (.diagnostics | type == "array") and
+                 (.diagnostics | length) == .unavailableSources and
+                 all(.diagnostics[]; type == "string") and
+                 all(.repositories[]; (.repository | type == "string") and (.path | type == "string") and (.ahead | count) and (.behind | count))
+              then [
+                (.repositories[] | (if .ahead > 0 then "⇡\(.ahead)" else empty end), (if .behind > 0 then "⇣\(.behind)" else empty end)),
+                (if .successfulSources == 0 then "?" else empty end),
+                (if .unavailableSources > 0 then "⚠\(.unavailableSources)" else empty end)
+              ] | join(" ")
+              else error("invalid workspace Git counts") end
+            ' 2>/dev/null); then
+            printf '%s\n' "$formatted" > "$tmp"
+          else
+            printf '? ⚠\n' > "$tmp"
+          fi
         else
-          : > "$tmp"
+          counts=$(GIT_NO_LAZY_FETCH=1 GIT_OPTIONAL_LOCKS=0 "$timeout_cmd" --kill-after=1 "$timeout_seconds" git -C "$root" rev-list --left-right --count "${branch}@{upstream}...${branch}" 2>/dev/null) || counts=""
+          read -r behind ahead extra <<< "$counts"
+          local parts=()
+          if [[ "$behind" =~ ^[0-9]+$ ]] && [[ "$ahead" =~ ^[0-9]+$ ]] && [ -z "$extra" ]; then
+            [ "$ahead" -gt 0 ] && parts+=("⇡${ahead}")
+            [ "$behind" -gt 0 ] && parts+=("⇣${behind}")
+          fi
+          printf '%s\n' "${parts[*]}" > "$tmp"
         fi
         mv -f "$tmp" "$cache" 2>/dev/null
       fi
@@ -201,7 +240,7 @@ cache_pr() {
       # unconditionally (gh exits non-zero when a branch has no PR) so the empty
       # "no PR" result is cached too and isn't re-queried until the TTL lapses.
       # `timeout` bounds a hung gh so background refreshes can't pile up.
-      ( cd "$cwd" 2>/dev/null
+      ( cd "$cwd" 2>/dev/null || exit
         timeout 8 gh pr view "$branch" --json number,state,isDraft \
            --jq '"\(.number)|\(.state)|\(.isDraft)"' 2>/dev/null > "$cache.tmp"
         mv -f "$cache.tmp" "$cache" 2>/dev/null
@@ -364,7 +403,6 @@ cache_beads() {
 # --- Colors ---
 RST='\033[0m'
 BOLD='\033[1m'
-DIM='\033[2m'
 
 C_HOST='\033[38;2;37;94;135m'
 C_K8S='\033[38;2;95;135;175m'
@@ -373,12 +411,10 @@ C_DIR='\033[1;37m'
 C_GIT='\033[38;2;24;147;3m'
 C_GIT_DIRTY='\033[38;2;204;153;0m'
 C_GIT_DIVERGENCE='\033[38;2;204;153;0m'
-C_SEP='\033[38;2;100;100;100m'
 C_MODEL='\033[38;2;0;200;170m'
 C_COST='\033[38;2;120;200;80m'
 C_TIME='\033[38;2;180;180;180m'
 C_EFFORT='\033[38;2;160;140;200m'
-C_MODE='\033[38;2;200;160;60m'
 C_BAR_FILL='\033[38;2;80;200;80m'
 C_BAR_EMPTY='\033[38;2;60;60;60m'
 C_BAR_WARN='\033[38;2;220;180;40m'
@@ -389,19 +425,18 @@ C_PR_OPEN='\033[38;2;87;171;90m'     # open PR
 C_PR_DRAFT='\033[38;2;140;140;140m'  # draft PR
 C_PR_MERGED='\033[38;2;163;113;247m' # merged PR
 
-SEP="${C_SEP} │ ${RST}"
 
 # --- Helper: short model name ---
 short_model() {
   case "$1" in
-    *fable*5*|*fable-5*)     echo "Fable 5" ;;
-    *opus*4*8*|*opus-4-8*)   echo "Opus 4.8" ;;
-    *opus*4*7*|*opus-4-7*)   echo "Opus 4.7" ;;
-    *opus*4*6*|*opus-4-6*)   echo "Opus 4.6" ;;
-    *opus*4*5*|*opus-4-5*)   echo "Opus 4.5" ;;
-    *sonnet*4*6*|*sonnet-4-6*) echo "Sonnet 4.6" ;;
-    *sonnet*4*5*|*sonnet-4-5*) echo "Sonnet 4.5" ;;
-    *haiku*4*5*|*haiku-4-5*) echo "Haiku 4.5" ;;
+    *fable*5*)     echo "Fable 5" ;;
+    *opus*4*8*)   echo "Opus 4.8" ;;
+    *opus*4*7*)   echo "Opus 4.7" ;;
+    *opus*4*6*)   echo "Opus 4.6" ;;
+    *opus*4*5*)   echo "Opus 4.5" ;;
+    *sonnet*4*6*) echo "Sonnet 4.6" ;;
+    *sonnet*4*5*) echo "Sonnet 4.5" ;;
+    *haiku*4*5*) echo "Haiku 4.5" ;;
     *fable*)  echo "Fable" ;;
     *opus*)   echo "Opus" ;;
     *sonnet*) echo "Sonnet" ;;
@@ -468,7 +503,8 @@ progress_bar() {
   local width=${2:-10}
   local warn_pct=${3:-60}
   local crit_pct=${4:-80}
-  local filled=$(banded_fill "$pct" "$width" "$warn_pct" "$crit_pct")
+  local filled
+  filled=$(banded_fill "$pct" "$width" "$warn_pct" "$crit_pct")
   local empty=$(( width - filled ))
 
   # Color based on severity
@@ -515,7 +551,7 @@ segment_host="${C_HOST}${BOLD}$(printf '\xef\x84\x88') ${host}${RST}"
 
 # K8s context
 segment_k8s=""
-if [ "${theme_display_k8s_context}" = "yes" ] || [ "${theme_display_k8s_context}" = "true" ]; then
+if [ "${theme_display_k8s_context:-}" = "yes" ] || [ "${theme_display_k8s_context:-}" = "true" ]; then
   if command -v kubectl &>/dev/null; then
     k8s_ctx=$(kubectl config current-context 2>/dev/null)
     if [ -n "$k8s_ctx" ]; then
@@ -587,14 +623,9 @@ fi
 
 # Positive ahead/behind counts against the locally fetched upstream → one cell.
 segment_git_divergence=""
-if [ -n "$branch" ]; then
-  IFS='|' read -r git_ahead git_behind <<< "$(cache_git_divergence "$branch")"
-  divergence_parts=()
-  [[ "$git_ahead" =~ ^[0-9]+$ ]] && [ "$git_ahead" -gt 0 ] && divergence_parts+=("⇡${git_ahead}")
-  [[ "$git_behind" =~ ^[0-9]+$ ]] && [ "$git_behind" -gt 0 ] && divergence_parts+=("⇣${git_behind}")
-  if [ "${#divergence_parts[@]}" -gt 0 ]; then
-    segment_git_divergence="${C_GIT_DIVERGENCE}${divergence_parts[*]}${RST}"
-  fi
+git_divergence=$(cache_git_divergence "$branch")
+if [ -n "$git_divergence" ]; then
+  segment_git_divergence="${C_GIT_DIVERGENCE}${git_divergence}${RST}"
 fi
 
 # Pull request for the current branch (cached, non-blocking) → its own cell.
@@ -682,7 +713,8 @@ render_compact() {
   mini_bar() {
     local pct=${1%.*} width=3
     local warn_pct=${2:-60} crit_pct=${3:-80}
-    local filled=$(banded_fill "$pct" "$width" "$warn_pct" "$crit_pct")
+    local filled
+    filled=$(banded_fill "$pct" "$width" "$warn_pct" "$crit_pct")
     local empty=$(( width - filled ))
     local fill_color="$C_BAR_FILL"
     (( pct >= crit_pct )) && fill_color="$C_BAR_CRIT"
@@ -904,13 +936,13 @@ render_table() {
 
   # Divider positions
   local r1_divs=() r2_divs=() pos
-  pos=1; for ((i=0; i<${#r1_widths[@]}-1; i++)); do pos=$(( pos + r1_widths[i] )); r1_divs+=($pos); pos=$(( pos + 1 )); done
-  pos=1; for ((i=0; i<${#r2_widths[@]}-1; i++)); do pos=$(( pos + r2_widths[i] )); r2_divs+=($pos); pos=$(( pos + 1 )); done
+  pos=1; for ((i=0; i<${#r1_widths[@]}-1; i++)); do pos=$(( pos + r1_widths[i] )); r1_divs+=("$pos"); pos=$(( pos + 1 )); done
+  pos=1; for ((i=0; i<${#r2_widths[@]}-1; i++)); do pos=$(( pos + r2_widths[i] )); r2_divs+=("$pos"); pos=$(( pos + 1 )); done
 
   # Top border
   local top_args=("$total_width" "─" 0 "┌")
-  for p in "${r1_divs[@]}"; do top_args+=($p "┬"); done
-  top_args+=($pR "┐")
+  for p in "${r1_divs[@]}"; do top_args+=("$p" "┬"); done
+  top_args+=("$pR" "┐")
 
   # Middle border
   declare -A mid_jmap
@@ -920,12 +952,12 @@ render_table() {
     [[ "${mid_jmap[$p]}" == "┴" ]] && mid_jmap[$p]="┼" || mid_jmap[$p]="┬"
   done
   local mid_args=("$total_width" "─")
-  for p in "${!mid_jmap[@]}"; do mid_args+=($p "${mid_jmap[$p]}"); done
+  for p in "${!mid_jmap[@]}"; do mid_args+=("$p" "${mid_jmap[$p]}"); done
 
   # Bottom border
   local bot_args=("$total_width" "─" 0 "└")
-  for p in "${r2_divs[@]}"; do bot_args+=($p "┴"); done
-  bot_args+=($pR "┘")
+  for p in "${r2_divs[@]}"; do bot_args+=("$p" "┴"); done
+  bot_args+=("$pR" "┘")
 
   # Render row helper
   render_row() {

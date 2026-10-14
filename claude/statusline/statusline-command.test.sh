@@ -37,6 +37,13 @@ EOF
 chmod +x "$TEST_ROOT/bin/bd"
 cat > "$TEST_ROOT/bin/project-workspace" <<'EOF'
 #!/usr/bin/env bash
+if [[ "${1:-}" == "git-counts" ]]; then
+  printf '%s\n' "$*" >> "$PROJECT_WORKSPACE_FIXTURES/git-calls"
+  [ -f "$PROJECT_WORKSPACE_FIXTURES/git-fail" ] && exit 1
+  [ -f "$PROJECT_WORKSPACE_FIXTURES/git-delay" ] && sleep 10
+  cat "$PROJECT_WORKSPACE_FIXTURES/git-counts.json"
+  exit
+fi
 [[ "${1:-}" == "beads-counts" ]] || exit 2
 if [ -f "$PROJECT_WORKSPACE_FIXTURES/orphan-reader" ]; then
   bash -c 'trap "" TERM; printf "%s" "$BASHPID" > "$PROJECT_WORKSPACE_FIXTURES/reader-pid"; exec sleep 30' </dev/null >/dev/null 2>&1 &
@@ -80,9 +87,11 @@ wait_for_cache() {
 }
 
 git_divergence_cache_path() {
-  local root=$1 branch=$2 key
-  key=$(printf '%s' "$root|$branch" | cksum | tr -cd '0-9' | cut -c1-12)
-  printf '/tmp/statusline-git-divergence-%s' "$key"
+  local root=$1 branch=$2 key mode=0
+  root=$(cd "$root" && pwd -P)
+  if [ -f "$root/workspace.json" ]; then mode=1; branch=workspace; fi
+  key=$(printf '%s' "$root|$mode|$branch" | cksum | tr -cd '0-9' | cut -c1-12)
+  printf '/tmp/statusline-git-divergence-v2-%s' "$key"
 }
 
 clear_git_divergence_cache() {
@@ -400,6 +409,51 @@ assert_not_contains "$output" "⇣"
 
 clear_git_divergence_cache "$GIT_WORKSPACE" main
 clear_git_divergence_cache "$GIT_LOCAL" main
+clear_git_status_cache
+
+# Workspace counts replace, rather than sum, per-repository groups. No branch required.
+: > "$PROJECT_WORKSPACE_FIXTURES/git-calls"
+cat > "$PROJECT_WORKSPACE_FIXTURES/git-counts.json" <<'EOF'
+{"version":1,"repositories":[{"repository":"workspace","path":".","ahead":1,"behind":0},{"repository":"clean","path":"repos/clean","ahead":0,"behind":0},{"repository":"service","path":"repos/service","ahead":4,"behind":2}],"successfulSources":3,"unavailableSources":1,"diagnostics":["missing upstream"]}
+EOF
+clear_git_divergence_cache "$TEST_ROOT/project" workspace
+CLAUDE_STATUSLINE_GIT_DIVERGENCE=1 CLAUDE_STATUSLINE_BEADS=0 render "$TEST_ROOT/project" >/dev/null
+wait_for_git_divergence_cache "$TEST_ROOT/project" workspace
+output=$(CLAUDE_STATUSLINE_GIT_DIVERGENCE=1 CLAUDE_STATUSLINE_BEADS=0 render "$TEST_ROOT/project")
+assert_contains "$output" "⇡1 ⇡4 ⇣2 ⚠1"
+assert_not_contains "$output" "⇡5"
+[ "$(wc -l < "$PROJECT_WORKSPACE_FIXTURES/git-calls")" -eq 1 ]
+output=$(CLAUDE_STATUSLINE_GIT_DIVERGENCE=1 CLAUDE_STATUSLINE_BEADS=0 render "$TEST_ROOT/project" compact)
+assert_contains "$output" "⇡1 ⇡4 ⇣2 ⚠1"
+
+# A member with no .beads of its own must not inherit the aggregate.
+rm -rf "$TEST_ROOT/project/repos/service/.beads"
+clear_git_status_cache
+CLAUDE_STATUSLINE_GIT_DIVERGENCE=1 CLAUDE_STATUSLINE_BEADS=0 render "$TEST_ROOT/project/repos/service" >/dev/null
+[ "$(wc -l < "$PROJECT_WORKSPACE_FIXTURES/git-calls")" -eq 1 ]
+
+for fixture in \
+  '{"version":1,"repositories":[],"successfulSources":0,"unavailableSources":2,"diagnostics":["a","b"]}' \
+  '{"version":1,"repositories":[],"successfulSources":1,"unavailableSources":0,"diagnostics":[]}' \
+  'not json'; do
+  printf '%s\n' "$fixture" > "$PROJECT_WORKSPACE_FIXTURES/git-counts.json"
+  clear_git_divergence_cache "$TEST_ROOT/project" workspace
+  CLAUDE_STATUSLINE_GIT_DIVERGENCE=1 CLAUDE_STATUSLINE_BEADS=0 render "$TEST_ROOT/project" >/dev/null
+  wait_for_git_divergence_cache "$TEST_ROOT/project" workspace
+  output=$(CLAUDE_STATUSLINE_GIT_DIVERGENCE=1 CLAUDE_STATUSLINE_BEADS=0 render "$TEST_ROOT/project")
+  assert_contains "$output" "? ⚠"
+  assert_not_contains "$output" "⇡"
+done
+
+# The collector timeout is detached; failures are visible and cached.
+touch "$PROJECT_WORKSPACE_FIXTURES/git-delay"
+clear_git_divergence_cache "$TEST_ROOT/project" workspace
+CLAUDE_STATUSLINE_GIT_DIVERGENCE=1 CLAUDE_STATUSLINE_BEADS=0 CLAUDE_STATUSLINE_GIT_DIVERGENCE_TIMEOUT=1 render "$TEST_ROOT/project" >/dev/null
+wait_for_git_divergence_cache "$TEST_ROOT/project" workspace
+output=$(CLAUDE_STATUSLINE_GIT_DIVERGENCE=1 CLAUDE_STATUSLINE_BEADS=0 render "$TEST_ROOT/project")
+assert_contains "$output" "? ⚠"
+rm -f "$PROJECT_WORKSPACE_FIXTURES/git-delay"
+clear_git_divergence_cache "$TEST_ROOT/project" workspace
 clear_git_status_cache
 
 # Worktree co-tenancy: a second live session in the same worktree is flagged on
