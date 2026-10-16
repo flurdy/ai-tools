@@ -1,6 +1,10 @@
 # Response guidance
 
-End substantive responses with a short `**Next:**` line naming the single most useful immediate action. Keep it to one concise sentence. If nothing remains, say `**Next:** Nothing required.`
+If the next action is within the current request and authorization, do it before the final response. Continue across sections, skill handoffs, and passing checks without asking whether to proceed; use progress updates instead of stopping to propose already-authorized work.
+
+Pause only for a material decision, required approval, unexpected blocker, or completion. Read-only advice or verification alone never authorizes implementation or finalization. "Go on" or "continue" resumes already-authorized work; it never substitutes for required explicit approval, widens scope or permissions, or starts another task unasked.
+
+End substantive final responses with one concise `**Next:**` line naming the single most useful action that genuinely needs the user. If nothing remains, say `**Next:** Nothing required.` This line reports a real handoff, not a reason to stop early.
 
 # Git remote safety
 
