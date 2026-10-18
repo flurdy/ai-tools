@@ -5,15 +5,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import {
-	buildCodexQuotaReport,
-	describeCodexQuotaError,
-	formatDuration,
-	formatLocal,
-	parseCodexQuotaArgs,
-	runCodexQuota,
-	SOURCE_CAVEATS,
-} from "./codex-quota-report.ts";
+import { buildCodexQuotaReport, describeCodexQuotaError, runCodexQuota, SOURCE_CAVEATS } from "./codex-quota-report.ts";
+import { formatDuration, formatLocal, parseQuotaArgs } from "./quota-common.ts";
 
 const NOW = Date.UTC(2026, 9, 10, 12, 0, 0);
 const RESET = NOW + (3 * 86_400 + 17 * 3_600 + 5 * 60 + 30) * 1000;
@@ -122,11 +115,11 @@ test("classifies failures and sanitizes messages without leaking raw output", ()
 });
 
 test("parses only the documented arguments", () => {
-	assert.deepEqual(parseCodexQuotaArgs([]), { timeoutMs: 10_000 });
-	assert.deepEqual(parseCodexQuotaArgs(["--timeout-ms", "2500"]), { timeoutMs: 2500 });
-	assert.deepEqual(parseCodexQuotaArgs(["--help"]), { help: true });
+	assert.deepEqual(parseQuotaArgs([]), { timeoutMs: 10_000 });
+	assert.deepEqual(parseQuotaArgs(["--timeout-ms", "2500"]), { timeoutMs: 2500 });
+	assert.deepEqual(parseQuotaArgs(["--help"]), { help: true });
 	for (const argv of [["--bogus"], ["extra"], ["--timeout-ms"], ["--timeout-ms", "abc"], ["--timeout-ms", "50"], ["--timeout-ms", "999999"]]) {
-		assert.ok("error" in parseCodexQuotaArgs(argv), argv.join(" "));
+		assert.ok("error" in parseQuotaArgs(argv), argv.join(" "));
 	}
 });
 
