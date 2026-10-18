@@ -130,6 +130,9 @@ if HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --plan' "$PL_FUNCT
   fail "Pi launcher silently accepted --plan"
 fi
 grep -q 'alt-p' "$tmp/pl-unknown.err" || fail "Pi unknown-mode guidance missing"
+if HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --lazy' "$PL_FUNCTION" "$nonrepo" 2>/dev/null; then
+  fail "Pi launcher silently accepted --lazy"
+fi
 if HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; cl --plan' "$CL_FUNCTION" "$nonrepo" 2>"$tmp/cl-unknown.err"; then
   fail "Claude launcher silently accepted --plan"
 fi
@@ -168,6 +171,12 @@ printf 'worktree\\t%s\\tmain\\tcontinue\\t\\timplement\\n' '$repo'
 EOF
 pl_implement=$(HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run' "$PL_FUNCTION" "$repo")
 printf '%s\n' "$pl_implement" | grep -qxF 'pi --implement --continue' || fail "Pi picker implement mode was ignored"
+cat > "$home/.pi/bin/pl-gather" <<EOF
+#!/usr/bin/env bash
+printf 'worktree\\t%s\\tmain\\tcontinue\\t\\tlazy\\n' '$repo'
+EOF
+pl_lazy=$(HOME="$home" fish -c 'source "$argv[1]"; cd "$argv[2]"; pl --dry-run' "$PL_FUNCTION" "$repo")
+printf '%s\n' "$pl_lazy" | grep -qxF 'pi --lazy --continue' || fail "Pi picker lazy mode was ignored"
 cat > "$home/.pi/bin/pl-gather" <<EOF
 #!/usr/bin/env bash
 printf 'worktree\\t%s\\tmain\\tcontinue\\t\\trestore\\n' '$repo'
@@ -284,6 +293,9 @@ expected_handoffs=$(printf '%s\n' \
 mode_file="$tmp/launch-mode"
 printf 'restore\n' > "$mode_file"
 mode_header=$("$PL_GATHER" --agent=pi --toggle-mode-file="$mode_file")
+[ "$(cat "$mode_file")" = lazy ] || fail "Pi mode toggle did not select lazy"
+printf '%s\n' "$mode_header" | grep -q 'mode=lazy' || fail "Pi mode header did not show lazy"
+mode_header=$("$PL_GATHER" --agent=pi --toggle-mode-file="$mode_file")
 [ "$(cat "$mode_file")" = plan ] || fail "Pi mode toggle did not select plan"
 printf '%s\n' "$mode_header" | grep -q 'mode=plan' || fail "Pi mode header did not show plan"
 printf '%s\n' "$mode_header" | grep -q 'alt-p=mode' || fail "Pi picker did not label Alt-P as mode"
@@ -360,7 +372,7 @@ mkdir -p "$mode_tmp"
 fish_path=$(command -v fish)
 pl_toggle=$(cd "$repo" && HOME="$home" TMPDIR="$mode_tmp" SHELL="$fish_path" PATH="$TEST_PATH" FZF_LOG="$tmp/pl-toggle.args" FZF_TOGGLE_COUNT=1 \
   fish -c 'source "$argv[1]"; pl --dry-run' "$PL_FUNCTION")
-printf '%s\n' "$pl_toggle" | grep -q -- '--plan' || fail "Pi Alt-P did not reach Fish mode translation: $pl_toggle"
+printf '%s\n' "$pl_toggle" | grep -q -- '--lazy' || fail "Pi Alt-P did not reach Fish mode translation: $pl_toggle"
 cl_toggle=$(cd "$repo" && HOME="$home" TMPDIR="$mode_tmp" SHELL="$fish_path" PATH="$TEST_PATH" FZF_LOG="$tmp/cl-toggle.args" FZF_TOGGLE_COUNT=1 \
   fish -c 'source "$argv[1]"; cl --dry-run' "$CL_FUNCTION")
 printf '%s\n' "$cl_toggle" | grep -qF 'claude --permission-mode plan' || fail "Claude Alt-P did not reach Fish mode translation: $cl_toggle"

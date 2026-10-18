@@ -44,8 +44,8 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$agent" in
-  claude) supports_fork=1; default_mode="auto" ;;
-  pi) supports_fork=0; default_mode="implement" ;;
+  claude) supports_fork=1 ;;
+  pi) supports_fork=0 ;;
   "") echo "$prog: agent not specified (use --agent=claude or --agent=pi)" >&2; exit 2 ;;
   *) echo "$prog: unsupported agent: $agent" >&2; exit 2 ;;
 esac
@@ -70,10 +70,12 @@ if [ -n "$TOGGLE_MODE_FILE" ]; then
     echo "$prog: failed to read mode state" >&2
     exit 1
   fi
-  case "$current" in
-    restore) next=plan ;;
-    plan) next="$default_mode" ;;
-    "$default_mode") next=restore ;;
+  case "$agent:$current" in
+    claude:restore) next=plan ;;
+    claude:plan) next=auto ;;
+    pi:restore) next=lazy ;;
+    pi:lazy) next=plan ;;
+    pi:plan) next=implement ;;
     *) next=restore ;;
   esac
   mode_tmp=$(mktemp "${TOGGLE_MODE_FILE}.tmp.XXXXXX") || { echo "$prog: failed to create mode state" >&2; exit 1; }

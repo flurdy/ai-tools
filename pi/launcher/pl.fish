@@ -97,9 +97,9 @@ function pl --description 'Pi launcher: pick a context (main/worktree/handoff/ne
                 echo '  pick a context via fzf, then launch pi there.'
                 echo "  fresh-session defaults: $default_model with $default_thinking thinking"
                 echo "  configure defaults in $config_path"
-                echo '  alt-p=mode (cycle restore/plan/implement)  enter=default session  alt-n=new  alt-r=resume-pick  alt-w=worktree'
+                echo '  alt-p=mode (cycle restore/lazy/plan/implement)  enter=default session  alt-n=new  alt-r=resume-pick  alt-w=worktree'
                 return 0
-            case --plan --implement
+            case --plan --implement --lazy
                 echo "pl: choose the initial session mode with alt-p inside the launcher" >&2
                 return 2
             case '*'
@@ -211,6 +211,8 @@ function pl --description 'Pi launcher: pick a context (main/worktree/handoff/ne
     test -n "$thinking"; and set pargs $pargs --thinking $thinking
     test -n "$name"; and set pargs $pargs --name $name
     switch $session_mode
+        case lazy
+            set pargs $pargs --lazy
         case plan
             set pargs $pargs --plan
         case implement

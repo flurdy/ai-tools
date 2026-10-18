@@ -12,7 +12,8 @@ helpers are dispatch shims selected through `AI_TOOLS_HOME`, not copied variants
   timestamp. Alt-P (shown as `alt-p=mode`) cycles the launcher's private
   initial-mode state without closing `fzf`: `restore` preserves a resumed
   session's saved mode, followed by
-  explicit `plan` and `implement` (Pi) or `auto` (Claude) choices. It keeps
+  explicit `lazy`, `plan` and `implement` (Pi) or `plan` and `auto` (Claude)
+  choices. It keeps
   agent-specific picker capabilities such as Claude's fork action behind
   `--agent`.
 - `mkworktree`: creates or reuses a worktree and carries local project setup

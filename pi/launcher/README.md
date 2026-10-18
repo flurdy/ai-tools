@@ -60,13 +60,13 @@ model; use `--model` and `--thinking` to override either value explicitly.
 
 Picker keys (Alt avoids Orca's intercepted Ctrl shortcuts):
 
-- `alt-p` (shown as `alt-p=mode`): cycle the displayed mode through `restore`, `plan`, and `implement` without closing the picker
+- `alt-p` (shown as `alt-p=mode`): cycle the displayed mode through `restore`, `lazy`, `plan`, and `implement` without closing the picker
 - `enter`: launch the selected row in the displayed mode (`main` starts fresh, worktrees continue, handoffs start fresh with the note loaded)
 - `alt-n`: force fresh Pi session
 - `alt-r`: Pi resume picker
 - `alt-w`: start the row in a fresh worktree (prompts for a branch; a handoff row also seeds its note)
 
-The default `restore` state passes no mode flag, preserving a resumed session's saved mode while a fresh session uses the extension's `implement` default. Explicit `plan` and `implement` selections translate to the corresponding startup flag. `pl --plan` and `pl --implement` are intentionally rejected so explicit choices remain visible in the picker; use Pi directly when testing extension flags.
+The default `restore` state passes no mode flag, preserving a resumed session's saved mode while a fresh session uses the extension's default (`lazy` in session-mode after 0.5.0, cwd `implement` before). Explicit `lazy`, `plan` and `implement` selections translate to the corresponding startup flag; `lazy` forces lazy mode even for a resumed session. Reload session-mode to a version that supports `--lazy` before using that choice. `pl --lazy`, `pl --plan` and `pl --implement` are intentionally rejected so explicit choices remain visible in the picker; use Pi directly when testing extension flags.
 
 ## Atlassian credentials
 
