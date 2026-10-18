@@ -23,7 +23,7 @@ This repository is the maintained source for the components documented here. Som
 | [Pi completion notifications](pi/notify/) | Pi | Terminal notifications after a run fully settles; defers to Orca's host integration. |
 | [Pi prompt shortcuts](pi/prompt-shortcuts/) | Pi | Manual Continue, Checkpoint, Unblock and Why prompts with idle/draft guards; never approval. |
 | [Pi skill spotlight](pi/skill-spotlight/) | Pi | Opt-in startup tip featuring one loaded skill, outside model context. |
-| [Codex quota helper](pi/quota/) | Pi / shell | `codex-quota` prints the Codex CLI account's weekly GPT quota, reset time, and credits as JSON for the `/quota` prompt or a direct check without a model turn. |
+| [Quota helpers](pi/quota/) | Pi / shell | `codex-quota` and `claude-quota` print the Codex weekly quota and credits, and Claude Code's session and weekly usage, as JSON for the `/quota` prompt or a direct check without a model turn. |
 | [Claude launcher](claude/launcher/) | Claude Code | Fish `cl` launcher that picks main checkout, worktree, handoff, or new worktree before starting Claude. |
 | [Pi launcher](pi/launcher/) | Pi | Fish `pl` launcher that picks main checkout, worktree, handoff, or new worktree before starting Pi. |
 | [Launcher internals](shared/launcher/) | Shared | Provider-neutral context picker and worktree creator used by `cl` and `pl`. |
@@ -57,7 +57,7 @@ make apply
 make verify-apply
 ```
 
-This links the statusline, Kitty tab title, completion notifier, prompt shortcuts, skill spotlight, and theme into `~/.pi/agent`, and links the `codex-quota` CLI into `~/bin`. Override the CLI destination with `BIN_DIR`; keep it on Pi's inherited `PATH` (see [quota helper installation](pi/quota/README.md#install)). The installer refuses conflicting resources and leaves unrelated settings untouched. The spotlight remains opt-in via `PI_SKILL_SPOTLIGHT=1` (see [startup tip details](pi/skill-spotlight/README.md)); disable other completion notifiers first (see [notification behavior](pi/notify/README.md)).
+This links the statusline, Kitty tab title, completion notifier, prompt shortcuts, skill spotlight, and theme into `~/.pi/agent`, and links the `codex-quota` and `claude-quota` CLIs into `~/bin`. Override the CLI destination with `BIN_DIR`; keep it on Pi's inherited `PATH` (see [quota helper installation](pi/quota/README.md#install)). The installer refuses conflicting resources and leaves unrelated settings untouched. The spotlight remains opt-in via `PI_SKILL_SPOTLIGHT=1` (see [startup tip details](pi/skill-spotlight/README.md)); disable other completion notifiers first (see [notification behavior](pi/notify/README.md)).
 
 This does not install settings, launchers, `APPEND_SYSTEM.md`, session-mode, skill-model-router, or watch-loop. Install session-mode separately for guard indicators and `/leases`; the statusline reads its published statuses without a package dependency (see [statusline installation](pi/statusline/README.md)). Restart Pi after first linking an extension; `/reload` loads later changes.
 

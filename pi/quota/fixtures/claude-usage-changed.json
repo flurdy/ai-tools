@@ -1,0 +1,20 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "duration_ms": 648,
+  "duration_api_ms": 0,
+  "num_turns": 0,
+  "stop_reason": null,
+  "session_id": "00000000-0000-4000-8000-000000000000",
+  "total_cost_usd": 0,
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0
+  },
+  "modelUsage": {},
+  "permission_denials": [],
+  "local_command": "usage",
+  "uuid": "00000000-0000-4000-8000-000000000001",
+  "result": "Usage limits\nSession limit — 12 percent used, resets in 2 hours\nCurrent week (all models): about half used · resets next Thursday (Europe/London)\nCurrent week (Fable): 40% used\nCurrent week (Opus): 50% used · resets Oct 23, 7:59am (Mars/Olympus)\n\nWhat's contributing to your limits usage?\nCurrent week (should be ignored): 99% used · resets Oct 23, 7:59am (Europe/London)"
+}

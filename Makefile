@@ -13,10 +13,10 @@ help:
 	@echo "make check-notify  Test Pi notifications and managed installation (Node >=22.19)"
 	@echo "make check-prompt-shortcuts  Test manual Pi quick prompts (Node >=22.19)"
 	@echo "make check-goal-baseline  Check the goal fixture without launching models (Node >=22.19)"
-	@echo "make check-quota   Test the codex-quota helper against a fake Codex CLI (Node >=22.19)"
+	@echo "make check-quota   Test the codex-quota and claude-quota helpers against fake CLIs (Node >=22.19)"
 	@echo "make check-gondolin-pilot  Syntax and pure confinement policy tests; no VM or download"
 	@echo "make apply-gondolin-pilot PILOT_AGENT_DIR=/absolute/path  Isolated .artifacts agent only"
-	@echo "make apply         Link reviewed Pi resources into $(PI_AGENT_DIR) and codex-quota into $(BIN_DIR)"
+	@echo "make apply         Link reviewed Pi resources into $(PI_AGENT_DIR) and the quota helpers into $(BIN_DIR)"
 	@echo "make verify-apply  Verify the managed resource and helper links"
 	@echo "BIN_DIR=$(BIN_DIR) (override with an absolute directory on your PATH)"
 
@@ -45,7 +45,7 @@ verify-gondolin-pilot:
 	node pi/experiments/gondolin/install.mjs "$(PILOT_AGENT_DIR)" --check
 
 check-quota:
-	node --test pi/quota/codex-quota-report.test.ts
+	node --test pi/quota/codex-quota-report.test.ts pi/quota/claude-quota-report.test.ts
 
 check-prompt-shortcuts:
 	node --test pi/prompt-shortcuts/pi-prompt-shortcuts.test.ts
@@ -76,7 +76,9 @@ apply:
 	check_link "$(CURDIR)/pi/skill-spotlight/pi-skill-spotlight.ts" "$(PI_EXTENSIONS_DIR)/flurdy-skill-spotlight.ts"; \
 	check_link "$(CURDIR)/pi/theme/flurdy-dark.json" "$(PI_THEMES_DIR)/flurdy-dark.json"; \
 	test -x "$(CURDIR)/pi/quota/codex-quota.ts"; \
-	check_link "$(CURDIR)/pi/quota/codex-quota.ts" "$(BIN_DIR)/codex-quota"
+	check_link "$(CURDIR)/pi/quota/codex-quota.ts" "$(BIN_DIR)/codex-quota"; \
+	test -x "$(CURDIR)/pi/quota/claude-quota.ts"; \
+	check_link "$(CURDIR)/pi/quota/claude-quota.ts" "$(BIN_DIR)/claude-quota"
 	mkdir -p "$(PI_EXTENSIONS_DIR)" "$(PI_THEMES_DIR)" "$(BIN_DIR)"
 	ln -sfn "$(CURDIR)/pi/statusline" "$(PI_EXTENSIONS_DIR)/flurdy-statusline"
 	ln -sfn "$(CURDIR)/pi/kitty-tab-title/pi-kitty-tab-title.ts" "$(PI_EXTENSIONS_DIR)/flurdy-kitty-tab-title.ts"
@@ -85,8 +87,9 @@ apply:
 	ln -sfn "$(CURDIR)/pi/skill-spotlight/pi-skill-spotlight.ts" "$(PI_EXTENSIONS_DIR)/flurdy-skill-spotlight.ts"
 	ln -sfn "$(CURDIR)/pi/theme/flurdy-dark.json" "$(PI_THEMES_DIR)/flurdy-dark.json"
 	ln -sfn "$(CURDIR)/pi/quota/codex-quota.ts" "$(BIN_DIR)/codex-quota"
+	ln -sfn "$(CURDIR)/pi/quota/claude-quota.ts" "$(BIN_DIR)/claude-quota"
 	$(MAKE) verify-apply
-	@echo "Restart Pi to discover newly linked extensions; ensure $(BIN_DIR) is on Pi's PATH for codex-quota."
+	@echo "Restart Pi to discover newly linked extensions; ensure $(BIN_DIR) is on Pi's PATH for the quota helpers."
 
 verify-apply:
 	test "$$(readlink "$(PI_EXTENSIONS_DIR)/flurdy-statusline")" = "$(CURDIR)/pi/statusline"
@@ -100,3 +103,5 @@ verify-apply:
 	test "$$(readlink "$(PI_THEMES_DIR)/flurdy-dark.json")" = "$(CURDIR)/pi/theme/flurdy-dark.json"
 	test "$$(readlink "$(BIN_DIR)/codex-quota")" = "$(CURDIR)/pi/quota/codex-quota.ts"
 	test -x "$(BIN_DIR)/codex-quota"
+	test "$$(readlink "$(BIN_DIR)/claude-quota")" = "$(CURDIR)/pi/quota/claude-quota.ts"
+	test -x "$(BIN_DIR)/claude-quota"

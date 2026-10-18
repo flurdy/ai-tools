@@ -1,0 +1,20 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "duration_ms": 648,
+  "duration_api_ms": 0,
+  "num_turns": 0,
+  "stop_reason": null,
+  "session_id": "00000000-0000-4000-8000-000000000000",
+  "total_cost_usd": 0,
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0
+  },
+  "modelUsage": {},
+  "permission_denials": [],
+  "local_command": "usage",
+  "uuid": "00000000-0000-4000-8000-000000000001",
+  "result": "You are currently using your subscription to power your Claude Code usage\n\nCurrent session: 12% used · resets Oct 19, 3:19am (Europe/London)\nCurrent week (all models): 55% used · resets Oct 23, 7:59am (Europe/London)\nCurrent week (Fable): 0% used · resets Oct 23, 7:59am (Europe/London)\n\nWhat's contributing to your limits usage?\nApproximate, based on local sessions on this machine — does not include other devices or claude.ai. Behaviors are independent characteristics, not a breakdown.\n\nLast 24h · 40 requests · 1 session\n  36% of your usage went to always-on context over 40k tokens\n  Top MCP servers: example-server 5%\n\nLast 7d · 900 requests · 9 sessions\n  80% of your usage came from sessions active for 8+ hours\n  Top skills: /example 18%"
+}

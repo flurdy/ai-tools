@@ -14,6 +14,7 @@ const resources = [
 	["extensions/flurdy-skill-spotlight.ts", "pi/skill-spotlight/pi-skill-spotlight.ts"],
 	["themes/flurdy-dark.json", "pi/theme/flurdy-dark.json"],
 	["bin/codex-quota", "pi/quota/codex-quota.ts"],
+	["bin/claude-quota", "pi/quota/claude-quota.ts"],
 ];
 
 function fixture(run) {
@@ -55,15 +56,17 @@ test("apply and verify-apply install all managed links idempotently without touc
 	assert.equal(readFileSync(join(dir, "settings.json"), "utf8"), '{"theme":"personal"}\n');
 	assert.equal(readFileSync(join(dir, "extensions/unrelated.ts"), "utf8"), "// unrelated extension\n");
 	assert.equal(readFileSync(join(dir, "bin/unrelated"), "utf8"), "preserve this command\n");
-	const help = spawnSync("codex-quota", ["--help"], {
-		cwd: dir, env: { ...process.env, HOME: dir, PATH: `${dir}/bin:${process.env.PATH}` },
-		encoding: "utf8", timeout: 5000,
-	});
-	succeeded(help);
-	assert.match(help.stdout, /usage: codex-quota/);
-	rmSync(join(dir, "bin/codex-quota"));
-	assert.notEqual(make(dir, "verify-apply").status, 0, "missing helper must fail verification");
-	symlinkSync(join(root, "pi/quota/codex-quota.ts"), join(dir, "bin/codex-quota"));
+	for (const helper of ["codex-quota", "claude-quota"]) {
+		const help = spawnSync(helper, ["--help"], {
+			cwd: dir, env: { ...process.env, HOME: dir, PATH: `${dir}/bin:${process.env.PATH}` },
+			encoding: "utf8", timeout: 5000,
+		});
+		succeeded(help);
+		assert.match(help.stdout, new RegExp(`usage: ${helper}`));
+		rmSync(join(dir, "bin", helper));
+		assert.notEqual(make(dir, "verify-apply").status, 0, `missing ${helper} must fail verification`);
+		symlinkSync(join(root, "pi/quota", `${helper}.ts`), join(dir, "bin", helper));
+	}
 	rmSync(join(dir, "extensions/flurdy-notify.ts"));
 	assert.notEqual(make(dir, "verify-apply").status, 0, "missing notifier must fail verification");
 	symlinkSync(join(root, "pi/notify/pi-notify.ts"), join(dir, "extensions/flurdy-notify.ts"));
@@ -77,6 +80,7 @@ test("apply honours an absolute BIN_DIR override with spaces", () => fixture((di
 	succeeded(make(dir, "apply", variables));
 	succeeded(make(dir, "apply", variables));
 	assert.equal(readlinkSync(join(bin, "codex-quota")), join(root, "pi/quota/codex-quota.ts"));
+	assert.equal(readlinkSync(join(bin, "claude-quota")), join(root, "pi/quota/claude-quota.ts"));
 	assert.equal(existsSync(join(dir, "bin")), false, "override must not also install into default bin");
 	succeeded(make(dir, "verify-apply", variables));
 	rmSync(join(bin, "codex-quota"));
