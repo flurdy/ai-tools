@@ -10,6 +10,7 @@ const resources = [
 	["extensions/flurdy-statusline", "pi/statusline"],
 	["extensions/flurdy-kitty-tab-title.ts", "pi/kitty-tab-title/pi-kitty-tab-title.ts"],
 	["extensions/flurdy-notify.ts", "pi/notify/pi-notify.ts"],
+	["extensions/flurdy-prompt-shortcuts.ts", "pi/prompt-shortcuts/pi-prompt-shortcuts.ts"],
 	["extensions/flurdy-skill-spotlight.ts", "pi/skill-spotlight/pi-skill-spotlight.ts"],
 	["themes/flurdy-dark.json", "pi/theme/flurdy-dark.json"],
 	["bin/codex-quota", "pi/quota/codex-quota.ts"],
@@ -65,6 +66,9 @@ test("apply and verify-apply install all managed links idempotently without touc
 	symlinkSync(join(root, "pi/quota/codex-quota.ts"), join(dir, "bin/codex-quota"));
 	rmSync(join(dir, "extensions/flurdy-notify.ts"));
 	assert.notEqual(make(dir, "verify-apply").status, 0, "missing notifier must fail verification");
+	symlinkSync(join(root, "pi/notify/pi-notify.ts"), join(dir, "extensions/flurdy-notify.ts"));
+	rmSync(join(dir, "extensions/flurdy-prompt-shortcuts.ts"));
+	assert.notEqual(make(dir, "verify-apply").status, 0, "missing quick prompts must fail verification");
 }));
 
 test("apply honours an absolute BIN_DIR override with spaces", () => fixture((dir) => {

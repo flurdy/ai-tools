@@ -44,6 +44,7 @@ The optional [skill model router](https://github.com/flurdy/pi-skill-model-route
 | Statusline | [`pi/statusline/`](../statusline/) | Custom footer with context, model, quota, Git, and session signals. | Optional local extension; review privacy-related display options. |
 | Kitty tab title | [`pi/kitty-tab-title/`](../kitty-tab-title/) | Displays Pi session/repository state in Kitty tabs. | Kitty-specific and optional. |
 | Completion notifications | [`pi/notify/`](../notify/) | Notifies supported terminals after `agent_settled`, never intermediate run ends. | Installed by `make apply`; silent in Orca and unsupported environments. Disable other notifiers to avoid duplicates. |
+| Prompt shortcuts | [`pi/prompt-shortcuts/`](../prompt-shortcuts/) | Manual Continue, Checkpoint, Unblock and Why prompts; not approval. | Installed by `make apply`; TUI-only, with `/quick-*` fallbacks for unsupported chords. |
 | Skill spotlight | [`pi/skill-spotlight/`](../skill-spotlight/) | Shows one loaded skill at fresh interactive startup, without invoking it. | Installed by `make apply`; opt in with `PI_SKILL_SPOTLIGHT=1`. |
 | `APPEND_SYSTEM.md` example | [`pi/append-system/`](../append-system/) | Adds concise response and Git remote-safety guidance. | Opt-in system instructions, separate from settings and prompt templates. |
 | Pi launcher | [`pi/launcher/`](../launcher/) | Selects checkouts, worktrees, and handoffs before launching Pi. | Contains local workflow assumptions; review before adopting. |
