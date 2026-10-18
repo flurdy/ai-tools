@@ -6,6 +6,7 @@ import { formatSessionGuard, SESSION_GUARD_EMOJI, sessionGuardLabel } from "./se
 const expected = {
 	acquiring: "⏳",
 	implement: "✅",
+	lazy: "💤",
 	plan: "🔍",
 	conflict: "⛔",
 	lost: "💥",

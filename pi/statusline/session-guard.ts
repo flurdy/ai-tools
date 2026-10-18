@@ -1,6 +1,7 @@
 export const SESSION_GUARD_EMOJI = {
 	acquiring: "⏳",
 	implement: "✅",
+	lazy: "💤",
 	plan: "🔍",
 	conflict: "⛔",
 	lost: "💥",

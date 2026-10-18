@@ -92,6 +92,7 @@ Table mode uses two bordered rows: location/session information on top, then mod
 | `implement`, one worktree lease | 🔒 | This session holds one worktree writer lease, not necessarily cwd. |
 | `implement`, multiple worktree leases | 🔒N | This session holds N worktree writer leases (up to 32). |
 | `implement`, zero or unavailable count | ✅ | Implement state without a reported worktree lease; may be a file-only grant. |
+| `lazy` | 💤 | Implementation intent with no worktree lease; the next native write acquires only its own worktree. |
 | `plan` | 🔍 | This session is guarded and read-only. |
 | `conflict` | ⛔ | Another session prevented lease acquisition. |
 | `lost` | 💥 | A previously held lease was lost. |

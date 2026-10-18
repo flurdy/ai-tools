@@ -269,7 +269,7 @@ test("renders the Nerd Font Kubernetes glyph with spacing in both layouts", () =
 
 test("keeps non-implement states distinct without persistent lease or occupancy cells", () => withFooter((footer, statuses) => {
 	statuses.set("session-mode-leases", "leases:32 api, web");
-	for (const [state, emoji] of [["acquiring", "⏳"], ["plan", "🔍"], ["conflict", "⛔"], ["lost", "💥"], ["unguarded", "🚨"]]) {
+	for (const [state, emoji] of [["acquiring", "⏳"], ["lazy", "💤"], ["plan", "🔍"], ["conflict", "⛔"], ["lost", "💥"], ["unguarded", "🚨"]]) {
 		statuses.set("session-mode", `\x1b[31m${state}\x1b[0m`);
 		process.env.PI_STATUSLINE_GUARD_EMOJI = "1";
 		verifyLayouts(footer, emoji!);
