@@ -163,7 +163,9 @@ fi
 # newer handoff for the same branch or slug exists in the same repo, and that
 # newer row is in this list too. Offering the dead one is offering stale context.
 CURRENT_REPO=""
-HANDOFFS_DIR_LS="$HOME/.claude/handoffs"
+HANDOFFS_DIR_LS="$HOME/.agents/handoffs"
+LEGACY_HANDOFFS_DIR="$HOME/.claude/handoffs"
+HANDOFF_STORAGE_BLOCKED=""
 handoff_count=0
 declare -a HO_FILE HO_SLUG HO_PATH HO_BRANCH HO_DATE HO_TIME HO_SORT_KEY HO_ROOT
 
@@ -188,12 +190,29 @@ refresh_handoff_cache() {
 # common path — so the handoffs directory's mtime invalidates the cache whatever
 # the TTL says. Creating a file bumps the directory; the TTL covers only what
 # list.sh derives live: branch liveness, PR state, and bead closure.
+# A cached listing is only trusted when it describes the canonical storage
+# directory: an older cache (or one written while the retired ~/.claude location
+# was still the source) would otherwise keep pointing rows at the wrong files.
+cache_describes_canonical_storage() {
+  local cached_dir
+  cached_dir=$(awk 'found { print; exit } /^---HANDOFFS-DIR---$/ { found = 1 }' "$1" 2>/dev/null)
+  [ "$cached_dir" = "$HANDOFFS_DIR_LS" ]
+}
+
 handoff_list_cached() {
+  # Hard cutover: while the legacy directory exists, list.sh reports
+  # migration-required and lists nothing. Never serve or write a cache in that
+  # state, so a stale pre-migration listing cannot resurface after the move.
+  if [ -e "$LEGACY_HANDOFFS_DIR" ] || [ -L "$LEGACY_HANDOFFS_DIR" ]; then
+    "$HANDOFF_LIST" 2>/dev/null
+    return
+  fi
   local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/ai-launcher"
   mkdir -p "$cache_dir" 2>/dev/null || { "$HANDOFF_LIST" 2>/dev/null; return; }
   local key cache
   key=$(printf '%s' "${MAIN:-$PWD}" | cksum | cut -d' ' -f1)
-  cache="$cache_dir/handoffs-$key.txt"
+  # v2: handoff storage moved to ~/.agents/handoffs; v1 caches are never reused.
+  cache="$cache_dir/handoffs-v2-$key.txt"
 
   local ttl=90 now mtime=0 dir_mtime=0
   now=$(date +%s)
@@ -204,7 +223,7 @@ handoff_list_cached() {
     dir_mtime=$(stat -c %Y "$HANDOFFS_DIR_LS" 2>/dev/null || stat -f %m "$HANDOFFS_DIR_LS" 2>/dev/null || echo 0)
   fi
 
-  if [ -f "$cache" ] && [ "$mtime" -gt "$dir_mtime" ]; then
+  if [ -f "$cache" ] && [ "$mtime" -gt "$dir_mtime" ] && cache_describes_canonical_storage "$cache"; then
     cat "$cache"
     if [ $((now - mtime)) -ge "$ttl" ]; then
       # Stale: serve it now, refresh for next time. Redirect the background
@@ -232,7 +251,10 @@ if [ -x "$HANDOFF_LIST" ]; then
     case "$section" in
       ---CURRENT-REPO---) [ -z "$CURRENT_REPO" ] && CURRENT_REPO="$line" ;;
       ---HANDOFFS-DIR---) [ -n "$line" ] && HANDOFFS_DIR_LS="$line" ;;
+      ---STORAGE---) [ -z "$line" ] || [ "$line" = canonical ] || HANDOFF_STORAGE_BLOCKED=1 ;;
       ---HANDOFFS---|---WORKSPACE-MEMBER-HANDOFFS---)
+        # An unmigrated store lists nothing; never offer rows from one anyway.
+        [ -z "$HANDOFF_STORAGE_BLOCKED" ] || continue
         # Field 15 is the HH:MM handoff time. Keep the trailing fields opaque:
         # list.sh has a wider, evolving record format, while the launcher only
         # needs the identity, pickup location, timestamp, and supersession.

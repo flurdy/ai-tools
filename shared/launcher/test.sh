@@ -269,10 +269,13 @@ fi
 # sorts by the full timestamp, rather than the source script's filename order.
 cat > "$tmp/handoff-list" <<EOF
 #!/usr/bin/env bash
+[ -z "\${HANDOFF_COUNT:-}" ] || echo x >> "\$HANDOFF_COUNT"
 echo '---CURRENT-REPO---'
 echo '$repo/.git'
 echo '---HANDOFFS-DIR---'
-echo '$home/.claude/handoffs'
+echo '$home/.agents/handoffs'
+echo '---STORAGE---'
+echo "\${HANDOFF_STORAGE:-canonical}"
 echo '---HANDOFFS---'
 echo '2026-07-15-early.md|2026-07-15|early|$repo|main|$repo/.git|Y||||||||00:30'
 echo '2026-07-15-latest.md|2026-07-15|latest|$repo|main|$repo/.git|Y||||||||17:12'
@@ -287,6 +290,34 @@ expected_handoffs=$(printf '%s\n' \
   "handoff: middle   (2026-07-15 04:31 · $repo)" \
   "handoff: early   (2026-07-15 00:30 · $repo)")
 [ "$handoff_rows" = "$expected_handoffs" ] || fail "handoffs were not timestamped and newest-first"
+
+# The handoff cache lives in a v2 namespace and is reused only while it
+# describes the canonical ~/.agents/handoffs store. A cache written against the
+# retired ~/.claude location, or any run while that directory still exists, must
+# re-list instead of resurfacing pre-migration rows.
+handoff_cache_rows() {
+  (cd "$repo" && HOME="$home" XDG_CACHE_HOME="$tmp/handoff-cache" \
+    GH_COUNT="$tmp/gh-count" PATH="$TEST_PATH" AI_HANDOFF_LIST="$tmp/handoff-list" \
+    HANDOFF_COUNT="$tmp/handoff-count" "$@" "$PL_GATHER" --list | awk -F '\t' '$2 == "handoff" { print $6 }')
+}
+: > "$tmp/handoff-count"
+handoff_cache_rows env >/dev/null
+handoff_cache_rows env >/dev/null
+[ "$(wc -l < "$tmp/handoff-count")" = 1 ] || fail "fresh handoff cache was not reused"
+handoff_cache=$(ls "$tmp/handoff-cache/ai-launcher"/handoffs-v2-*.txt 2>/dev/null)
+[ -n "$handoff_cache" ] || fail "handoff cache was not written in the v2 namespace"
+sed -i "s#$home/.agents/handoffs#$home/.claude/handoffs#" "$handoff_cache"
+touch "$handoff_cache"
+legacy_cached_rows=$(handoff_cache_rows env)
+[ "$(wc -l < "$tmp/handoff-count")" = 2 ] || fail "cache describing legacy storage was served"
+printf '%s\n' "$legacy_cached_rows" | grep -q "$home/.agents/handoffs/2026-07-15-latest.md" || fail "re-listed rows do not use canonical storage"
+mkdir -p "$home/.claude/handoffs"
+blocked_rows=$(handoff_cache_rows env HANDOFF_STORAGE=migration-required)
+[ "$(wc -l < "$tmp/handoff-count")" = 3 ] || fail "cache was served while legacy storage exists"
+[ -z "$blocked_rows" ] || fail "handoff rows offered from an unmigrated store"
+handoff_cache_rows env >/dev/null
+[ "$(wc -l < "$tmp/handoff-count")" = 4 ] || fail "listing was cached while legacy storage exists"
+rmdir "$home/.claude/handoffs"
 
 # The picker mode is a stateful Alt-P cycle that does not close fzf. Restore
 # preserves a resumed session's saved mode; the other values are explicit.
@@ -347,7 +378,7 @@ for gather in "$CL_GATHER" "$PL_GATHER"; do
       FZF_LOG="$tmp/action.args" FZF_KEY="$key" "$gather")
     [ "$(printf '%s' "$desc" | cut -f1)" = handoff ] || fail "Action fixture did not select a handoff"
     [ "$(printf '%s' "$desc" | cut -f4)" = "$expected" ] || fail "$gather $key did not select $expected"
-    [ "$(printf '%s' "$desc" | cut -f5)" = "$home/.claude/handoffs/2026-07-15-latest.md" ] || fail "Action lost handoff note"
+    [ "$(printf '%s' "$desc" | cut -f5)" = "$home/.agents/handoffs/2026-07-15-latest.md" ] || fail "Action lost handoff note"
   done
 done
 

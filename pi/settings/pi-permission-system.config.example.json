@@ -7,7 +7,7 @@
   "authorizerChain": [],
   "piInfrastructureReadPaths": [
     "~/.claude/skills/*",
-    "~/.claude/handoffs/*"
+    "~/.agents/handoffs/*"
   ],
   "permission": {
     "*": "ask",

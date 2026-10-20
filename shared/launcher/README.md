@@ -60,7 +60,11 @@ Both GNU/Linux and BSD/macOS `stat` forms are supported for cache timestamps.
   unset, the helper uses an existing `*/worktrees/*` layout when one is found,
   otherwise `../worktrees` relative to the main checkout.
 - `AI_HANDOFF_LIST`: optional path to the handoff listing script. The default is
-  `~/.claude/skills/handoffs/scripts/list.sh`.
+  `~/.claude/skills/handoffs/scripts/list.sh`. Handoffs are read from
+  `~/.agents/handoffs`; the listing is cached under `ai-launcher/handoffs-v2-*` and is
+  reused only while it describes that directory. While the retired `~/.claude/handoffs`
+  still exists the launcher re-lists every time, caches nothing and offers no handoff rows,
+  because the listing script reports `migration-required` until the store has been moved.
 - `AI_TOOLS_HOME`: canonical checkout used by dotfiles dispatch shims. It defaults
   to `$XDG_DATA_HOME/ai-tools` (or `~/.local/share/ai-tools`); a legacy
   `~/Code/flurdy/ai-tools` checkout is recognized for migration compatibility.
