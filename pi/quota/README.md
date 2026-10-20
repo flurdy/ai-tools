@@ -213,8 +213,10 @@ A successful report has the same schema/status/source/retrieval envelope as the 
 ```
 
 The [official credits API](https://openrouter.ai/docs/api/api-reference/credits/get-credits)
-requires a management key and reports numeric `total_credits` and `total_usage`. Its schema
-names the unit as credits, not a currency; this report therefore does not label them USD.
+requires a management key and reports numeric `total_credits` and `total_usage`. The
+[official FAQ](https://openrouter.ai/docs/faq) confirms that the credit system's base currency
+is US dollars. The helper keeps its `unit: "credits"` JSON contract; `/quota` displays those
+amounts as USD with two decimal places in an account-balance table.
 Totals are canonical strings of those **parsed numeric values** (JavaScript `String(number)`),
 not preserved JSON spelling or precision beyond what the shared parser retains; very small
 or large reported totals may use scientific notation. For example,
@@ -228,7 +230,8 @@ Failures use `status: "error"`, `source: "openrouter-account-credits"` and a fix
 `error.kind`/`error.message`, with exit `1`. Kinds: `not-configured`, `key-helper-missing`,
 `credential-unavailable`, `authorization` (401/403), `timeout`, `lookup-failed`, or
 `unexpected-response`. Raw keyring stdout/stderr, HTTP bodies and arbitrary thrown messages
-are never included in error reports. Argument/help/exit conventions match the other helpers.
+are never included in error reports. Argument/help/exit conventions match the other helpers. Helpers retain exact values and
+retrieval timestamps; `/quota` rounds amounts for readability and hides routine retrieval metadata.
 
 ## Develop and test
 
