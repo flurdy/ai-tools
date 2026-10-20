@@ -15,6 +15,7 @@ const resources = [
 	["themes/flurdy-dark.json", "pi/theme/flurdy-dark.json"],
 	["bin/codex-quota", "pi/quota/codex-quota.ts"],
 	["bin/claude-quota", "pi/quota/claude-quota.ts"],
+	["bin/openrouter-quota", "pi/quota/openrouter-quota.ts"],
 ];
 
 function fixture(run) {
@@ -56,7 +57,7 @@ test("apply and verify-apply install all managed links idempotently without touc
 	assert.equal(readFileSync(join(dir, "settings.json"), "utf8"), '{"theme":"personal"}\n');
 	assert.equal(readFileSync(join(dir, "extensions/unrelated.ts"), "utf8"), "// unrelated extension\n");
 	assert.equal(readFileSync(join(dir, "bin/unrelated"), "utf8"), "preserve this command\n");
-	for (const helper of ["codex-quota", "claude-quota"]) {
+	for (const helper of ["codex-quota", "claude-quota", "openrouter-quota"]) {
 		const help = spawnSync(helper, ["--help"], {
 			cwd: dir, env: { ...process.env, HOME: dir, PATH: `${dir}/bin:${process.env.PATH}` },
 			encoding: "utf8", timeout: 5000,
@@ -81,6 +82,7 @@ test("apply honours an absolute BIN_DIR override with spaces", () => fixture((di
 	succeeded(make(dir, "apply", variables));
 	assert.equal(readlinkSync(join(bin, "codex-quota")), join(root, "pi/quota/codex-quota.ts"));
 	assert.equal(readlinkSync(join(bin, "claude-quota")), join(root, "pi/quota/claude-quota.ts"));
+	assert.equal(readlinkSync(join(bin, "openrouter-quota")), join(root, "pi/quota/openrouter-quota.ts"));
 	assert.equal(existsSync(join(dir, "bin")), false, "override must not also install into default bin");
 	succeeded(make(dir, "verify-apply", variables));
 	rmSync(join(bin, "codex-quota"));

@@ -10,11 +10,10 @@ export interface OpenRouterCredits {
 export type OpenRouterCreditsErrorKind = "authorization" | "invalid-response" | "transient";
 
 export class OpenRouterCreditsError extends Error {
-	constructor(
-		message: string,
-		readonly kind: OpenRouterCreditsErrorKind,
-	) {
+	readonly kind: OpenRouterCreditsErrorKind;
+	constructor(message: string, kind: OpenRouterCreditsErrorKind) {
 		super(message);
+		this.kind = kind;
 		this.name = "OpenRouterCreditsError";
 	}
 }
@@ -138,11 +137,15 @@ export class OpenRouterCreditsCache {
 	private disposed = false;
 	private controller: AbortController | undefined;
 
-	constructor(
-		private readonly load: (signal: AbortSignal) => Promise<OpenRouterCredits>,
-		private readonly staleAfterMs: number,
-		private readonly onChange?: () => void,
-	) {}
+	private readonly load: (signal: AbortSignal) => Promise<OpenRouterCredits>;
+	private readonly staleAfterMs: number;
+	private readonly onChange?: () => void;
+
+	constructor(load: (signal: AbortSignal) => Promise<OpenRouterCredits>, staleAfterMs: number, onChange?: () => void) {
+		this.load = load;
+		this.staleAfterMs = staleAfterMs;
+		this.onChange = onChange;
+	}
 
 	get credits(): OpenRouterCredits | undefined {
 		return this.current;

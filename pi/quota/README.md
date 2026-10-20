@@ -1,11 +1,12 @@
 # Quota helpers
 
-Two standalone CLIs print subscription quota as JSON. They are the data sources behind the
+Three standalone CLIs print subscription quota or account credits as JSON. They are the data sources behind the
 `/quota` prompt in [flurdy/agent-skills](https://github.com/flurdy/agent-skills)
 (`prompts/quota.md`) and can be run directly for a check that costs no model turn:
 
 - `codex-quota`: the Codex CLI account's weekly GPT quota, reset time, and credit balance.
 - [`claude-quota`](#claude-quota): the Claude Code account's session and weekly usage windows.
+- [`openrouter-quota`](#openrouter-quota): the explicitly configured OpenRouter account's credits.
 
 `codex-quota` reuses the statusline's [`codex-quota.ts`](../statusline/codex-quota.ts): one `codex app-server`
 request for `account/rateLimits/read`, selecting the canonical `codex` bucket and the seven-day
@@ -17,15 +18,18 @@ provider Pi is currently using.
 
 Requires Node.js 22.19 or later, plus a signed-in [Codex CLI](https://github.com/openai/codex)
 for `codex-quota` and a signed-in [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
-CLI for `claude-quota`, on `PATH`. From the ai-tools root:
+CLI for `claude-quota`, on `PATH`. `openrouter-quota` additionally requires the
+`secret-api-key` helper on `PATH`, an explicit
+`SECRET_API_KEY_PROJECT`, and that project's `openrouter_management` keyring entry.
+From the ai-tools root:
 
 ```bash
 make apply
 make verify-apply
 ```
 
-This installs the existing Pi resources and executable `~/bin/codex-quota` and
-`~/bin/claude-quota` symlinks into this checkout. It refuses conflicting files, directories and
+This installs the existing Pi resources and executable `~/bin/codex-quota`,
+`~/bin/claude-quota` and `~/bin/openrouter-quota` symlinks into this checkout. It refuses conflicting files, directories and
 symlinks before installing any links, and verification checks each helper's target and
 executable bit. Keep this checkout available:
 copying the entry file alone would break its relative imports.
@@ -169,6 +173,63 @@ is one of:
 
 Messages are sanitized as for `codex-quota`, and nothing is retried.
 
+## openrouter-quota
+
+```bash
+openrouter-quota
+openrouter-quota --timeout-ms 5000
+openrouter-quota --help
+```
+
+The helper reuses [`fetchOpenRouterCredits`](../statusline/openrouter-credits.ts), not the
+rounded footer or its cache. It makes **one GET** to `https://openrouter.ai/api/v1/credits`
+with redirects refused, no retry, no inference and no account/settings mutation. The overall
+timeout bounds key lookup plus HTTP; key lookup is additionally capped at two seconds.
+A timed-out lookup closes its stdout pipe and kills its private process group; raw child
+stderr is discarded.
+It uses only `secret-api-key lookup openrouter_management "$SECRET_API_KEY_PROJECT"`;
+raw-key environment overrides, statusline project overrides and inference-key fallback are
+not used. Missing/invalid project or unavailable key stops before HTTP. The project selects
+an explicitly configured keyring account, not Pi's current inference account; their alignment
+is not verified. No account discovery, login or credential file reads are performed.
+
+A successful report has the same schema/status/source/retrieval envelope as the other helpers:
+
+```json
+{
+  "schemaVersion": 1,
+  "status": "ok",
+  "source": "openrouter-account-credits",
+  "timeZone": "Europe/London",
+  "fetchedAt": "2026-10-20T12:00:00.000Z",
+  "fetchedAtLocal": "2026-10-20 13:00 BST (Europe/London)",
+  "credits": {
+    "unit": "credits",
+    "reported": { "totalCredits": "0.3", "totalUsage": "0.1" },
+    "derived": { "remainingCredits": "0.2" }
+  },
+  "caveats": ["…"]
+}
+```
+
+The [official credits API](https://openrouter.ai/docs/api/api-reference/credits/get-credits)
+requires a management key and reports numeric `total_credits` and `total_usage`. Its schema
+names the unit as credits, not a currency; this report therefore does not label them USD.
+Totals are canonical strings of those **parsed numeric values** (JavaScript `String(number)`),
+not preserved JSON spelling or precision beyond what the shared parser retains; very small
+or large reported totals may use scientific notation. For example,
+a supplied `0.30000000000000004` remains that value; it is not rounded to `0.3`. Remaining is
+subtracted with decimal arithmetic over those strings so subtraction adds no binary-float
+noise. It is labelled derived rather than provider-reported. Zero and negative remaining
+balances are retained. Missing, malformed, non-finite or negative reported totals fail closed;
+there is no invented reset, percentage, request count or token conversion.
+
+Failures use `status: "error"`, `source: "openrouter-account-credits"` and a fixed, redacted
+`error.kind`/`error.message`, with exit `1`. Kinds: `not-configured`, `key-helper-missing`,
+`credential-unavailable`, `authorization` (401/403), `timeout`, `lookup-failed`, or
+`unexpected-response`. Raw keyring stdout/stderr, HTTP bodies and arbitrary thrown messages
+are never included in error reports. Argument/help/exit conventions match the other helpers.
+
 ## Develop and test
 
 From the ai-tools root, after installing the statusline's development dependencies:
@@ -178,5 +239,6 @@ make check-quota
 cd pi/quota && ../statusline/node_modules/.bin/tsc --noEmit
 ```
 
-The tests drive each executable against a fake `codex` or `claude` on `PATH`; they never contact
-OpenAI or Anthropic.
+The tests drive executables against fake CLIs/keyring helpers and injected HTTP responses;
+they never contact OpenAI, Anthropic or OpenRouter. Installer tests exercise PATH execution,
+help, idempotence, conflicts and missing links in isolated directories.
