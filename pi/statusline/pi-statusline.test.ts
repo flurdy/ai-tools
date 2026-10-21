@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import piStatusline from "./pi-statusline.ts";
+import piStatusline, { CLAUDE_QUOTA_REFRESH_MS, CLAUDE_QUOTA_STALE_MS, CLAUDE_QUOTA_TIMEOUT_MS } from "./pi-statusline.ts";
 
 type Handler = (event: any, context: any) => unknown;
 
@@ -507,6 +507,11 @@ test("shows GPT and Claude account quotas together, independent of the active mo
 			}, { ...codexOptions(binary, "anthropic"), claudeEnabled: true });
 		});
 	});
+});
+
+test("polls Claude account usage every 15 minutes and dims it only after a missed refresh", () => {
+	assert.equal(CLAUDE_QUOTA_REFRESH_MS, 15 * 60_000);
+	assert.ok(CLAUDE_QUOTA_STALE_MS > CLAUDE_QUOTA_REFRESH_MS + CLAUDE_QUOTA_TIMEOUT_MS);
 });
 
 function claudeStatus(fields: Record<string, unknown> = {}): string {

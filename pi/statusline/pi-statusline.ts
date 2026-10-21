@@ -34,6 +34,10 @@ type Usage = {
 };
 
 const MAX_QUOTA_BACKOFF_MS = 30 * 60_000;
+// Each footer runs its own Claude Code `/usage` lookup; concurrent sessions multiply the volume.
+export const CLAUDE_QUOTA_REFRESH_MS = 15 * 60_000;
+export const CLAUDE_QUOTA_STALE_MS = 30 * 60_000;
+export const CLAUDE_QUOTA_TIMEOUT_MS = 10_000;
 
 const gitCache = new Map<string, { at: number; value: GitInfo }>();
 const prCache = new Map<string, { at: number; value: string | null; refreshing: boolean }>();
@@ -321,9 +325,9 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					maxBackoffMs: Math.max(codexRefreshMs, MAX_QUOTA_BACKOFF_MS),
 					onChange: () => tui.requestRender(),
 				});
-			const claudeRefreshMs = envMilliseconds("PI_STATUSLINE_CLAUDE_QUOTA_TTL", 5 * 60_000, 60_000);
-			const claudeStaleMs = envMilliseconds("PI_STATUSLINE_CLAUDE_QUOTA_STALE", 15 * 60_000, 60_000);
-			const claudeTimeoutMs = envMilliseconds("PI_STATUSLINE_CLAUDE_QUOTA_TIMEOUT", 10_000, 1000);
+			const claudeRefreshMs = envMilliseconds("PI_STATUSLINE_CLAUDE_QUOTA_TTL", CLAUDE_QUOTA_REFRESH_MS, 60_000);
+			const claudeStaleMs = envMilliseconds("PI_STATUSLINE_CLAUDE_QUOTA_STALE", CLAUDE_QUOTA_STALE_MS, 60_000);
+			const claudeTimeoutMs = envMilliseconds("PI_STATUSLINE_CLAUDE_QUOTA_TIMEOUT", CLAUDE_QUOTA_TIMEOUT_MS, 1000);
 			const claudeCache = process.env.PI_STATUSLINE_CLAUDE_QUOTA === "0"
 				? undefined
 				: new SnapshotCache({

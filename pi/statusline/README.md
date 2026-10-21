@@ -49,8 +49,8 @@ Avoid loading a second copy of an already installed extension when using `-e`.
 - `PI_STATUSLINE_CODEX_QUOTA_TIMEOUT=10000` — timeout for one Codex quota lookup in milliseconds (minimum one second).
 - `PI_STATUSLINE_CODEX_BIN=codex` — Codex CLI executable to invoke.
 - `PI_STATUSLINE_CLAUDE_QUOTA=0` — disable the Claude Code `/usage` lookup and its `Claude` cell.
-- `PI_STATUSLINE_CLAUDE_QUOTA_TTL=300000` — Claude usage refresh interval in milliseconds (minimum one minute).
-- `PI_STATUSLINE_CLAUDE_QUOTA_STALE=900000` — age after which the last successful Claude snapshot is marked stale (minimum one minute).
+- `PI_STATUSLINE_CLAUDE_QUOTA_TTL=900000` — Claude usage refresh interval in milliseconds (minimum one minute).
+- `PI_STATUSLINE_CLAUDE_QUOTA_STALE=1800000` — age after which the last successful Claude snapshot is marked stale (minimum one minute).
 - `PI_STATUSLINE_CLAUDE_QUOTA_TIMEOUT=10000` — timeout for one Claude usage lookup in milliseconds (minimum one second).
 - `PI_STATUSLINE_OPENROUTER_WARN=0` — disable large-context OpenRouter warnings.
 - `PI_STATUSLINE_OPENROUTER_WARN_TOKENS=100000` — absolute context-token warning interval; `0` disables token-based warnings.
@@ -198,9 +198,9 @@ The turn cell is hidden for an `allowed` window without utilization or extra usa
 
 ## Account quota caching
 
-Each footer instance keeps one cache per account source (Codex and Claude Code), configured when the footer starts. Rendering only reads cached snapshots; the footer's one-second tick starts a lookup when one is due. Each cache allows one lookup in flight, refreshes every `*_QUOTA_TTL` (default five minutes) after a success, and after consecutive failures waits one, two, then four intervals, capped at 30 minutes or the interval if longer. Model and provider switches never start a lookup. A failed refresh keeps the last good snapshot. A snapshot older than `*_QUOTA_STALE` (default 15 minutes) is dimmed and prefixed `~`. When Pi disposes the footer, in-flight lookups are aborted and their processes killed; late results are ignored.
+Each footer instance keeps one cache per account source (Codex and Claude Code), configured when the footer starts. Rendering only reads cached snapshots; the footer's one-second tick starts a lookup when one is due. Each cache allows one lookup in flight, refreshes every `*_QUOTA_TTL` (default five minutes for Codex, 15 for Claude Code) after a success, and after consecutive failures waits one, two, then four intervals, capped at 30 minutes or the interval if longer. Model and provider switches never start a lookup. A failed refresh keeps the last good snapshot. A snapshot older than `*_QUOTA_STALE` (default 15 minutes for Codex, 30 for Claude Code) is dimmed and prefixed `~`. When Pi disposes the footer, in-flight lookups are aborted and their processes killed; late results are ignored.
 
-Caches are per Pi process, not shared on disk. With the defaults each Pi session runs about 12 Codex app-server lookups and 12 Claude Code `/usage` lookups an hour, plus the separate OpenRouter refresh; concurrent sessions multiply this, and `/quota` queries independently. Raise the TTLs or disable a source to reduce the volume.
+Caches are per Pi process, not shared on disk. With the defaults each Pi session runs about 12 Codex app-server lookups and 4 Claude Code `/usage` lookups an hour, plus the separate OpenRouter refresh; concurrent sessions multiply this. `/quota` always makes its own fresh lookup and never reads these caches. Raise the TTLs or disable a source to reduce the volume.
 
 ## OpenRouter credit source
 
