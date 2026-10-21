@@ -291,10 +291,10 @@ expected_handoffs=$(printf '%s\n' \
   "handoff: early   (2026-07-15 00:30 · $repo)")
 [ "$handoff_rows" = "$expected_handoffs" ] || fail "handoffs were not timestamped and newest-first"
 
-# The handoff cache lives in a v2 namespace and is reused only while it
-# describes the canonical ~/.agents/handoffs store. A cache written against the
-# retired ~/.claude location, or any run while that directory still exists, must
-# re-list instead of resurfacing pre-migration rows.
+# The handoff cache lives in a v3 namespace and is reused only while it
+# describes canonical-only ~/.agents/handoffs storage. A cache written against
+# the retired ~/.claude location, or any run while that directory still exists,
+# must re-list instead of resurfacing pre-migration rows.
 handoff_cache_rows() {
   (cd "$repo" && HOME="$home" XDG_CACHE_HOME="$tmp/handoff-cache" \
     GH_COUNT="$tmp/gh-count" PATH="$TEST_PATH" AI_HANDOFF_LIST="$tmp/handoff-list" \
@@ -304,8 +304,8 @@ handoff_cache_rows() {
 handoff_cache_rows env >/dev/null
 handoff_cache_rows env >/dev/null
 [ "$(wc -l < "$tmp/handoff-count")" = 1 ] || fail "fresh handoff cache was not reused"
-handoff_cache=$(ls "$tmp/handoff-cache/ai-launcher"/handoffs-v2-*.txt 2>/dev/null)
-[ -n "$handoff_cache" ] || fail "handoff cache was not written in the v2 namespace"
+handoff_cache=$(ls "$tmp/handoff-cache/ai-launcher"/handoffs-v3-*.txt 2>/dev/null)
+[ -n "$handoff_cache" ] || fail "handoff cache was not written in the v3 namespace"
 sed -i "s#$home/.agents/handoffs#$home/.claude/handoffs#" "$handoff_cache"
 touch "$handoff_cache"
 legacy_cached_rows=$(handoff_cache_rows env)
@@ -314,9 +314,39 @@ printf '%s\n' "$legacy_cached_rows" | grep -q "$home/.agents/handoffs/2026-07-15
 mkdir -p "$home/.claude/handoffs"
 blocked_rows=$(handoff_cache_rows env HANDOFF_STORAGE=migration-required)
 [ "$(wc -l < "$tmp/handoff-count")" = 3 ] || fail "cache was served while legacy storage exists"
-[ -z "$blocked_rows" ] || fail "handoff rows offered from an unmigrated store"
+[ -z "$blocked_rows" ] || fail "handoff rows offered for an unknown storage layout"
 handoff_cache_rows env >/dev/null
 [ "$(wc -l < "$tmp/handoff-count")" = 4 ] || fail "listing was cached while legacy storage exists"
+
+# Read compatibility: rows carry {source}|{path} in fields 23-24. A legacy row
+# resumes its own file and is labelled; a same-named canonical row stays a
+# separate row; a row whose path is outside the location it names is dropped.
+cat > "$tmp/handoff-list-mixed" <<EOF
+#!/usr/bin/env bash
+[ -z "\${HANDOFF_COUNT:-}" ] || echo x >> "\$HANDOFF_COUNT"
+echo '---CURRENT-REPO---'
+echo '$repo/.git'
+echo '---HANDOFFS-DIR---'
+echo '$home/.agents/handoffs'
+echo '---STORAGE---'
+echo mixed
+echo '---HANDOFFS---'
+echo '2026-07-14-shared.md|2026-07-14|shared|$repo|main|$repo/.git|Y||||||||09:00||||||||canonical|$home/.agents/handoffs/2026-07-14-shared.md'
+echo '2026-07-14-shared.md|2026-07-14|shared|$repo|main|$repo/.git|Y||||||||08:00||||||||legacy|$home/.claude/handoffs/2026-07-14-shared.md'
+echo '2026-07-13-forged.md|2026-07-13|forged|$repo|main|$repo/.git|Y||||||||07:00||||||||legacy|$home/.agents/handoffs/2026-07-13-forged.md'
+EOF
+chmod +x "$tmp/handoff-list-mixed"
+mixed_rows() {
+  (cd "$repo" && HOME="$home" XDG_CACHE_HOME="$tmp/handoff-cache" \
+    GH_COUNT="$tmp/gh-count" PATH="$TEST_PATH" AI_HANDOFF_LIST="$tmp/handoff-list-mixed" \
+    HANDOFF_COUNT="$tmp/handoff-count" "$PL_GATHER" --list | awk -F '\t' '$2 == "handoff" { print $1 "\t" $6 }')
+}
+expected_mixed=$(printf '%s\t%s\n' \
+  "handoff: shared   (2026-07-14 09:00 · $repo)" "$home/.agents/handoffs/2026-07-14-shared.md" \
+  "handoff: shared   (2026-07-14 08:00 · $repo) [legacy]" "$home/.claude/handoffs/2026-07-14-shared.md")
+[ "$(mixed_rows)" = "$expected_mixed" ] || fail "mixed storage rows lost their source or exact path"
+mixed_rows >/dev/null
+[ "$(wc -l < "$tmp/handoff-count")" = 6 ] || fail "mixed listing was cached while legacy storage exists"
 rmdir "$home/.claude/handoffs"
 
 # The picker mode is a stateful Alt-P cycle that does not close fzf. Restore

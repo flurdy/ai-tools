@@ -162,12 +162,16 @@ fi
 # Superseded rows are dropped in both sections: list.sh sets field 8 only when a
 # newer handoff for the same branch or slug exists in the same repo, and that
 # newer row is in this list too. Offering the dead one is offering stale context.
+#
+# Until ~/.claude/handoffs is migrated, list.sh lists it read-only alongside
+# ~/.agents/handoffs; each row names its source and exact file (fields 23-24),
+# and the launcher resumes that file rather than rebuilding a path.
 CURRENT_REPO=""
 HANDOFFS_DIR_LS="$HOME/.agents/handoffs"
 LEGACY_HANDOFFS_DIR="$HOME/.claude/handoffs"
 HANDOFF_STORAGE_BLOCKED=""
 handoff_count=0
-declare -a HO_FILE HO_SLUG HO_PATH HO_BRANCH HO_DATE HO_TIME HO_SORT_KEY HO_ROOT
+declare -a HO_FILE HO_SLUG HO_PATH HO_BRANCH HO_DATE HO_TIME HO_SORT_KEY HO_ROOT HO_NOTE HO_SOURCE
 
 # list.sh spawns one `bd` per handoff row that cites bead IDs, serially. Each is
 # sub-second against an idle store but climbs toward bd's own 5s timeout when the
@@ -190,19 +194,20 @@ refresh_handoff_cache() {
 # common path — so the handoffs directory's mtime invalidates the cache whatever
 # the TTL says. Creating a file bumps the directory; the TTL covers only what
 # list.sh derives live: branch liveness, PR state, and bead closure.
-# A cached listing is only trusted when it describes the canonical storage
-# directory: an older cache (or one written while the retired ~/.claude location
-# was still the source) would otherwise keep pointing rows at the wrong files.
+# A cached listing is only trusted when it describes canonical-only storage: a
+# cache written while the retired ~/.claude location still existed would keep
+# pointing rows at files the migration has since moved.
 cache_describes_canonical_storage() {
-  local cached_dir
+  local cached_dir cached_storage
   cached_dir=$(awk 'found { print; exit } /^---HANDOFFS-DIR---$/ { found = 1 }' "$1" 2>/dev/null)
-  [ "$cached_dir" = "$HANDOFFS_DIR_LS" ]
+  cached_storage=$(awk 'found { print; exit } /^---STORAGE---$/ { found = 1 }' "$1" 2>/dev/null)
+  [ "$cached_dir" = "$HANDOFFS_DIR_LS" ] && [ "$cached_storage" = canonical ]
 }
 
 handoff_list_cached() {
-  # Hard cutover: while the legacy directory exists, list.sh reports
-  # migration-required and lists nothing. Never serve or write a cache in that
-  # state, so a stale pre-migration listing cannot resurface after the move.
+  # While the legacy directory exists its rows are listed read-only and will
+  # move when it is migrated, so always list afresh and never serve or write a
+  # cache: a pre-migration path must not resurface after the move.
   if [ -e "$LEGACY_HANDOFFS_DIR" ] || [ -L "$LEGACY_HANDOFFS_DIR" ]; then
     "$HANDOFF_LIST" 2>/dev/null
     return
@@ -211,8 +216,8 @@ handoff_list_cached() {
   mkdir -p "$cache_dir" 2>/dev/null || { "$HANDOFF_LIST" 2>/dev/null; return; }
   local key cache
   key=$(printf '%s' "${MAIN:-$PWD}" | cksum | cut -d' ' -f1)
-  # v2: handoff storage moved to ~/.agents/handoffs; v1 caches are never reused.
-  cache="$cache_dir/handoffs-v2-$key.txt"
+  # v3: rows carry their source and exact path; older caches are never reused.
+  cache="$cache_dir/handoffs-v3-$key.txt"
 
   local ttl=90 now mtime=0 dir_mtime=0
   now=$(date +%s)
@@ -251,9 +256,13 @@ if [ -x "$HANDOFF_LIST" ]; then
     case "$section" in
       ---CURRENT-REPO---) [ -z "$CURRENT_REPO" ] && CURRENT_REPO="$line" ;;
       ---HANDOFFS-DIR---) [ -n "$line" ] && HANDOFFS_DIR_LS="$line" ;;
-      ---STORAGE---) [ -z "$line" ] || [ "$line" = canonical ] || HANDOFF_STORAGE_BLOCKED=1 ;;
+      ---STORAGE---)
+        # Only a known storage layout is trusted; anything else offers no rows.
+        case "$line" in
+          ''|canonical|legacy|mixed|partial) ;;
+          *) HANDOFF_STORAGE_BLOCKED=1 ;;
+        esac ;;
       ---HANDOFFS---|---WORKSPACE-MEMBER-HANDOFFS---)
-        # An unmigrated store lists nothing; never offer rows from one anyway.
         [ -z "$HANDOFF_STORAGE_BLOCKED" ] || continue
         # Field 15 is the HH:MM handoff time. Keep the trailing fields opaque:
         # list.sh has a wider, evolving record format, while the launcher only
@@ -272,10 +281,19 @@ if [ -x "$HANDOFF_LIST" ]; then
         elif [ -n "$CURRENT_REPO" ] && [ "$hrepo" != "$CURRENT_REPO" ]; then
           continue
         fi
+        # Resume only a file inside the location its row names. A list.sh that
+        # predates fields 23-24 lists canonical storage only.
+        IFS='|' read -r -a hfields <<<"$line"
+        hsource="${hfields[22]:-}" hnote="${hfields[23]:-}"
+        case "$hsource" in
+          canonical) [ "$hnote" = "$HANDOFFS_DIR_LS/$hfile" ] || continue ;;
+          legacy) [ "$hnote" = "$LEGACY_HANDOFFS_DIR/$hfile" ] || continue ;;
+          *) hsource=canonical hnote="$HANDOFFS_DIR_LS/$hfile" ;;
+        esac
         [ "$htime" = "?" ] || [[ "$htime" =~ ^[0-2][0-9]:[0-5][0-9]$ ]] || htime="?"
         HO_FILE+=("$hfile"); HO_SLUG+=("$hslug"); HO_PATH+=("$hpath")
         HO_BRANCH+=("$hbranch"); HO_DATE+=("$hdate"); HO_TIME+=("$htime")
-        HO_ROOT+=("$hroot")
+        HO_ROOT+=("$hroot"); HO_NOTE+=("$hnote"); HO_SOURCE+=("$hsource")
         handoff_count=$((handoff_count + 1))
         # Unknown times fall back to midnight, so known same-day entries sort
         # first while the date still orders legacy handoffs correctly.
@@ -342,9 +360,10 @@ for i in "${HO_ORDER[@]}"; do
   hp="${HO_PATH[$i]/#$HOME/\~}"
   timestamp="${HO_DATE[$i]}"
   [ "${HO_TIME[$i]}" = "?" ] || timestamp+=" ${HO_TIME[$i]}"
-  add_row "handoff: ${HO_SLUG[$i]}   ($timestamp · $hp)" \
-          handoff "${HO_PATH[$i]}" "${HO_BRANCH[$i]}" handoff \
-          "$HANDOFFS_DIR_LS/${HO_FILE[$i]}" "${HO_ROOT[$i]}"
+  label="handoff: ${HO_SLUG[$i]}   ($timestamp · $hp)"
+  [ "${HO_SOURCE[$i]}" = legacy ] && label+=" [legacy]"
+  add_row "$label" handoff "${HO_PATH[$i]}" "${HO_BRANCH[$i]}" handoff \
+          "${HO_NOTE[$i]}" "${HO_ROOT[$i]}"
 done
 
 if [ -n "$MAIN" ]; then
