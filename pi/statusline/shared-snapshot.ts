@@ -9,7 +9,7 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import { accessSync, constants, lstatSync, mkdirSync, realpathSync, statSync } from "node:fs";
-import { lstat, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, open, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, isAbsolute, join } from "node:path";
 
@@ -17,6 +17,8 @@ const SCHEMA_VERSION = 1;
 /** A lookup is hard-timeout-bounded, so a lock older than timeout plus this is abandoned. */
 const LOCK_GRACE_MS = 30_000;
 const CLOCK_SKEW_MS = 60_000;
+/** Entries left behind by an old digest (login, CLI upgrade) are removed after this. */
+const PRUNE_AFTER_MS = 24 * 60 * 60_000;
 
 export interface SharedSnapshotOptions<T> {
 	/** Undefined disables sharing: the wrapped load runs as before. */
@@ -96,7 +98,7 @@ export function quotaCacheDirectory(env: NodeJS.ProcessEnv = process.env): strin
 export interface IdentityParts {
 	source: string;
 	configDirectory: string;
-	/** Stat metadata only; the file is never read. */
+	/** Only its resolved path and presence count; it is never read. CLIs rewrite it on token refresh, so its metadata is too volatile to key on. */
 	credentialFile: string;
 	/** Command name resolved on PATH, or a path. */
 	executable: string;
@@ -109,6 +111,14 @@ function fingerprint(path: string): unknown {
 	try {
 		const stat = statSync(path);
 		return [realpathSync(path), stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs];
+	} catch {
+		return "absent";
+	}
+}
+
+function presence(path: string): string {
+	try {
+		return realpathSync(path);
 	} catch {
 		return "absent";
 	}
@@ -147,7 +157,7 @@ export function identityDigest(parts: IdentityParts): string | undefined {
 		configDirectory = parts.configDirectory;
 	}
 	return createHash("sha256")
-		.update(JSON.stringify([uid, parts.source, configDirectory, executable ? fingerprint(executable) : "absent", fingerprint(parts.credentialFile)]))
+		.update(JSON.stringify([uid, parts.source, configDirectory, executable ? fingerprint(executable) : "absent", presence(parts.credentialFile)]))
 		.digest("hex");
 }
 
@@ -172,6 +182,7 @@ class SharedEntry<T> {
 	private readonly options: SharedSnapshotOptions<T>;
 	private readonly key: string;
 	private readonly uid: number;
+	private readonly directory: string;
 	private readonly file: string;
 	private readonly lock: string;
 
@@ -179,6 +190,7 @@ class SharedEntry<T> {
 		this.options = options;
 		this.key = key;
 		this.uid = uid;
+		this.directory = directory;
 		this.file = join(directory, `${options.source}-${key.slice(0, 32)}.json`);
 		this.lock = `${this.file}.lock`;
 	}
@@ -257,6 +269,31 @@ class SharedEntry<T> {
 			await rename(temp, this.file);
 		} catch {
 			await rm(temp, { force: true });
+			return;
+		}
+		await this.prune();
+	}
+
+	/** Removes this source's entries under other digests once they are a day old. */
+	private async prune(): Promise<void> {
+		const prefix = `${this.options.source}-`;
+		let names: string[];
+		try {
+			names = await readdir(this.directory);
+		} catch {
+			return;
+		}
+		const cutoff = Date.now() - PRUNE_AFTER_MS;
+		for (const name of names) {
+			if (!name.startsWith(prefix) || !name.endsWith(".json")) continue;
+			const path = join(this.directory, name);
+			if (path === this.file) continue;
+			try {
+				const stat = await lstat(path);
+				if (stat.isFile() && stat.mtimeMs < cutoff) await rm(path, { force: true });
+			} catch {
+				// Already gone or unreadable; another session may have pruned it.
+			}
 		}
 	}
 

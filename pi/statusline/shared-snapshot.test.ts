@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -257,7 +257,22 @@ process.stdout.write(JSON.stringify(value));
 	assert.deepEqual(await cacheFiles(cache), [`multi-${"c".repeat(32)}.json`]);
 }));
 
-test("identity digests change with credentials, config and CLI, and vanish under auth overrides", () => withDirectory(async (directory) => {
+test("publishing prunes this source's day-old entries under other digests only", () => withDirectory(async (directory) => {
+	const dayAgo = (Date.now() - 25 * 60 * 60_000) / 1000;
+	const old = join(directory, `test-${"b".repeat(32)}.json`);
+	const fresh = join(directory, `test-${"c".repeat(32)}.json`);
+	const foreign = join(directory, `other-${"b".repeat(32)}.json`);
+	for (const file of [old, fresh, foreign]) await writeFile(file, "{}", { mode: 0o600 });
+	await utimes(old, dayAgo, dayAgo);
+	await utimes(foreign, dayAgo, dayAgo);
+	const h = harness(directory);
+	const load = h.load();
+	await h.settle({ n: 1 });
+	assert.deepEqual(await load, { n: 1 });
+	assert.deepEqual(await cacheFiles(directory), [`other-${"b".repeat(32)}.json`, `test-${"a".repeat(32)}.json`, `test-${"c".repeat(32)}.json`]);
+}));
+
+test("identity digests survive a credential rewrite but change with credential presence, config and CLI, and vanish under auth overrides", () => withDirectory(async (directory) => {
 	const bin = join(directory, "bin");
 	await mkdir(bin);
 	await writeFile(join(bin, "tool"), "#!/bin/sh\n", { mode: 0o700 });
@@ -272,6 +287,12 @@ test("identity digests change with credentials, config and CLI, and vanish under
 	await writeFile(credential, "secret", { mode: 0o600 });
 	const withCredential = identityDigest(parts);
 	assert.notEqual(withCredential, digest);
+	await new Promise((resolve) => setTimeout(resolve, 15));
+	await writeFile(credential, "refreshed token, longer", { mode: 0o600 });
+	assert.equal(identityDigest(parts), withCredential, "in-place rewrite");
+	await rm(credential);
+	await writeFile(credential, "replaced", { mode: 0o600 });
+	assert.equal(identityDigest(parts), withCredential, "replacement");
 	assert.equal(identityDigest({ ...parts, configDirectory: directory }) === withCredential, false);
 	await writeFile(join(bin, "tool"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
 	assert.notEqual(identityDigest(parts), withCredential);
