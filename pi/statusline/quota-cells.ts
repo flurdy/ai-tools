@@ -42,7 +42,7 @@ function windowGauge(window: UsageWindow | undefined, nowMs: number, stale: bool
 	const tone = codexQuotaTone(used);
 	const shade = (fill: Tone) => (text: string) => paint(stale ? "dim" : fill, text);
 	const colors = { ok: shade("success"), warn: shade("warning"), crit: shade("error"), empty: shade("dim") };
-	const gauge = bar(used, 3, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, colors);
+	const gauge = bar(used, 5, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, colors);
 	const over = used > 100 ? paint(stale ? "dim" : tone, " >100%") : "";
 	return { text: `${gauge}${over}`, tone };
 }

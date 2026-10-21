@@ -394,7 +394,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const tone = claudeQuotaTone(view);
 				const fill = (s: string) => theme.fg(tone, s);
 				const barColors = { ok: fill, warn: fill, crit: fill, empty: colors.empty };
-				const gauge = view.usedPercent === null ? "" : ` ${bar(view.usedPercent, 3, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, barColors)}`;
+				const gauge = view.usedPercent === null ? "" : ` ${bar(view.usedPercent, 5, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, barColors)}`;
 				const label = theme.fg(tone, `Claude turn ${view.window}`);
 				const flagText = `${view.over ? " >100%" : ""}${view.state === "rejected" ? " limit" : ""}`;
 				const flags = flagText ? theme.fg(tone, flagText) : "";

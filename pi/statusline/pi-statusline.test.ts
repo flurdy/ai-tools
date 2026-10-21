@@ -473,7 +473,7 @@ test("shows GPT and Claude account quotas together, independent of the active mo
 			await withFooter(async (footer, statuses, controls) => {
 				process.env.PI_STATUSLINE = "compact";
 				const compact = plainLines(footer.render(300));
-				const quotas = /GPT ▮▯▯ · 13 cr │ Claude 5h ▯▯▯ · wk ▮▯▯/;
+				const quotas = /GPT ▮▮▯▯▯ · 13 cr │ Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯/;
 				assert.match(compact, quotas, compact);
 				assert.doesNotMatch(compact, /\d\d:\d\d/);
 				process.env.PI_STATUSLINE = "table";
@@ -524,16 +524,16 @@ const CLAUDE_QUOTA_CELL = /Claude turn|(?:^|\s)(?:5h|Wk|Extra)(?:\s|$)|▮|>100%
 test("renders the reported Claude window with its bar in both layouts", () => withFooter((footer, statuses) => {
 	statuses.set("claude-rate-limit", claudeStatus());
 	const compact = claudeCells(footer, "compact");
-	assert.ok(compact.includes("Claude turn 5h ▮▯▯"), compact.join(" | "));
+	assert.ok(compact.includes("Claude turn 5h ▮▮▮▯▯"), compact.join(" | "));
 	const table = claudeCells(footer, "table");
-	assert.ok(table.includes("Claude turn 5h ▮▯▯"), table.join(" | "));
+	assert.ok(table.includes("Claude turn 5h ▮▮▮▯▯"), table.join(" | "));
 	assert.doesNotMatch(table.join(" | "), /\d+%|\d\d:\d\d/);
 	assert.doesNotMatch(table.join(" "), /\bWk\b|GPT/);
 }, { provider: "pi-claude-cli", modelId: "claude-opus-5-5" }));
 
 test("marks overage, extra usage and rejection, and shows a label without unknown utilization", () => withFooter((footer, statuses) => {
 	statuses.set("claude-rate-limit", claudeStatus({ rateLimitType: "overage", utilization: 1.01, isUsingOverage: true }));
-	assert.ok(claudeCells(footer, "compact").includes("Claude turn Extra ▮▮▮ >100% · extra"));
+	assert.ok(claudeCells(footer, "compact").includes("Claude turn Extra ▮▮▮▮▮ >100% · extra"));
 
 	statuses.set("claude-rate-limit", claudeStatus({ status: "rejected", rateLimitType: "seven_day", utilization: null }));
 	const rejected = claudeCells(footer, "compact");
@@ -541,7 +541,7 @@ test("marks overage, extra usage and rejection, and shows a label without unknow
 	assert.doesNotMatch(rejected.filter((cell) => !cell.endsWith("ctx")).join(" "), /▮|▯/);
 
 	statuses.set("claude-rate-limit", claudeStatus({ status: "allowed", utilization: 0 }));
-	assert.ok(claudeCells(footer, "compact").includes("Claude turn 5h ▯▯▯"));
+	assert.ok(claudeCells(footer, "compact").includes("Claude turn 5h ▯▯▯▯▯"));
 }, { provider: "pi-claude-cli", modelId: "claude-opus-5-5" }));
 
 test("suppresses routine turn telemetry behind a fresh account snapshot but keeps limits visible", async () => {
@@ -577,7 +577,7 @@ test("hides the Claude cell when quiet, malformed, expired, cleared or for anoth
 	hidden();
 
 	statuses.set("claude-rate-limit", claudeStatus());
-	assert.ok(claudeCells(footer, "compact").includes("Claude turn 5h ▮▯▯"));
+	assert.ok(claudeCells(footer, "compact").includes("Claude turn 5h ▮▮▮▯▯"));
 	for (const provider of ["anthropic", "github-copilot", "openrouter", "openai-codex"]) {
 		controls.setProvider(provider);
 		hidden();
