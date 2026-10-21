@@ -6,20 +6,16 @@ import { hostname } from "node:os";
 import { dirname } from "node:path";
 import { BeadsCountsCache, fetchBeadsCounts, findBeadsRoot, formatBeadsCounts } from "./beads-status.ts";
 import { CLAUDE_QUOTA_STATUS_KEY, claudeQuotaTone, claudeQuotaView, type ClaudeQuotaView } from "./claude-quota.ts";
-import {
-	codexQuotaDisplayState,
-	fetchCodexQuotaSnapshot,
-	formatCodexCredits,
-	isCodexSnapshotStale,
-	showsCodexQuota,
-	type CodexQuotaSnapshot,
-} from "./codex-quota.ts";
+import { claudeAccountUsage, ClaudeQuotaLookupError, fetchClaudeUsageSnapshot } from "./claude-usage.ts";
+import { fetchCodexQuotaSnapshot } from "./codex-quota.ts";
 import { fetchGitDivergence, findGitWorkspaceRoot, formatGitDivergence, GitDivergenceCache } from "./git-divergence.ts";
 import { activeModelLabel, modelLabel } from "./model-label.ts";
 import { OpenRouterCostAdvisory, openRouterAdvisoryConfig, sharedOpenRouterAdvisoryState } from "./openrouter-advisory.ts";
 import { createOpenRouterCreditsCache, openRouterCreditsApiKey } from "./openrouter-credits.ts";
-import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT, codexQuotaTone } from "./quota-display.ts";
+import { accountQuotaCells, adapterAlertVisible } from "./quota-cells.ts";
+import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT } from "./quota-display.ts";
 import { formatSessionGuard } from "./session-guard.ts";
+import { SnapshotCache } from "./snapshot-cache.ts";
 
 type GitInfo = {
 	branch: string | null;
@@ -36,6 +32,8 @@ type Usage = {
 	ctxMax: number;
 	ctxPct: number;
 };
+
+const MAX_QUOTA_BACKOFF_MS = 30 * 60_000;
 
 const gitCache = new Map<string, { at: number; value: GitInfo }>();
 const prCache = new Map<string, { at: number; value: string | null; refreshing: boolean }>();
@@ -223,7 +221,6 @@ export default function piStatusline(pi: ExtensionAPI): void {
 	const openRouterAdvisory = new OpenRouterCostAdvisory(openRouterAdvisoryConfig(), sharedOpenRouterAdvisoryState());
 	let thinking = process.env.PI_STATUSLINE_THINKING ?? "";
 	let startedAt = Date.now();
-	let refreshCodexQuotaForModel: ((provider: string | undefined) => void) | undefined;
 	let lastPrompt: { text: string; submittedAt: Date } | undefined;
 	let activeRun = false;
 	let activeModel: { provider?: string; id?: string } | undefined;
@@ -263,7 +260,6 @@ export default function piStatusline(pi: ExtensionAPI): void {
 	});
 
 	pi.on("model_select", (event, ctx) => {
-		refreshCodexQuotaForModel?.(event.model.provider);
 		const warning = openRouterAdvisory.warningForModelSelect(
 			ctx.sessionManager.getSessionId(),
 			event.model,
@@ -320,16 +316,42 @@ export default function piStatusline(pi: ExtensionAPI): void {
 			}
 		}
 		ctx.ui.setFooter((tui, theme, footerData) => {
-			const interval = setInterval(() => tui.requestRender(), 1000);
 			const unsubBranch = footerData.onBranchChange(() => tui.requestRender());
-			const quotaEnabled = process.env.PI_STATUSLINE_CODEX_QUOTA !== "0";
-			const quotaRefreshMs = envMilliseconds("PI_STATUSLINE_CODEX_QUOTA_TTL", 5 * 60_000, 60_000);
-			const quotaStaleMs = envMilliseconds("PI_STATUSLINE_CODEX_QUOTA_STALE", 15 * 60_000, 60_000);
-			const quotaTimeoutMs = envMilliseconds("PI_STATUSLINE_CODEX_QUOTA_TIMEOUT", 10_000, 1000);
-			const quotaAbort = new AbortController();
-			let codexSnapshot: CodexQuotaSnapshot | undefined;
-			let codexQuotaLookupFailed = false;
-			let quotaRefreshing = false;
+			const codexRefreshMs = envMilliseconds("PI_STATUSLINE_CODEX_QUOTA_TTL", 5 * 60_000, 60_000);
+			const codexStaleMs = envMilliseconds("PI_STATUSLINE_CODEX_QUOTA_STALE", 15 * 60_000, 60_000);
+			const codexTimeoutMs = envMilliseconds("PI_STATUSLINE_CODEX_QUOTA_TIMEOUT", 10_000, 1000);
+			const codexCommand = process.env.PI_STATUSLINE_CODEX_BIN?.trim() || "codex";
+			const codexCache = process.env.PI_STATUSLINE_CODEX_QUOTA === "0"
+				? undefined
+				: new SnapshotCache({
+					load: (signal) => fetchCodexQuotaSnapshot({ command: codexCommand, timeoutMs: codexTimeoutMs, signal }),
+					refreshMs: codexRefreshMs,
+					maxBackoffMs: Math.max(codexRefreshMs, MAX_QUOTA_BACKOFF_MS),
+					onChange: () => tui.requestRender(),
+				});
+			const claudeRefreshMs = envMilliseconds("PI_STATUSLINE_CLAUDE_QUOTA_TTL", 5 * 60_000, 60_000);
+			const claudeStaleMs = envMilliseconds("PI_STATUSLINE_CLAUDE_QUOTA_STALE", 15 * 60_000, 60_000);
+			const claudeTimeoutMs = envMilliseconds("PI_STATUSLINE_CLAUDE_QUOTA_TIMEOUT", 10_000, 1000);
+			const claudeCache = process.env.PI_STATUSLINE_CLAUDE_QUOTA === "0"
+				? undefined
+				: new SnapshotCache({
+					load: async (signal) => claudeAccountUsage(await fetchClaudeUsageSnapshot({ timeoutMs: claudeTimeoutMs, signal })),
+					refreshMs: claudeRefreshMs,
+					maxBackoffMs: Math.max(claudeRefreshMs, MAX_QUOTA_BACKOFF_MS),
+					// A missing CLI cannot recover, and a reported model turn or cost must never be repeated.
+					isPermanentFailure: (error) => error instanceof ClaudeQuotaLookupError
+						&& (error.kind === "claude-cli-missing" || error.kind === "unexpected-response"),
+					onChange: () => tui.requestRender(),
+				});
+			const refreshAccountQuotas = () => {
+				void codexCache?.refreshIfDue();
+				void claudeCache?.refreshIfDue();
+			};
+			refreshAccountQuotas();
+			const interval = setInterval(() => {
+				refreshAccountQuotas();
+				tui.requestRender();
+			}, 1000);
 			const openRouterRefreshMs = envMilliseconds("PI_STATUSLINE_OPENROUTER_CREDITS_TTL", 5 * 60_000, 60_000);
 			const openRouterStaleMs = envMilliseconds("PI_STATUSLINE_OPENROUTER_CREDITS_STALE", 15 * 60_000, 60_000);
 			const openRouterTimeoutMs = envMilliseconds("PI_STATUSLINE_OPENROUTER_CREDITS_TIMEOUT", 5000, 250);
@@ -361,32 +383,8 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					onChange: () => tui.requestRender(),
 				});
 
-			async function refreshCodexQuota(provider = ctx.model?.provider): Promise<void> {
-				if (!showsCodexQuota(provider, quotaEnabled) || quotaRefreshing || quotaAbort.signal.aborted) return;
-				quotaRefreshing = true;
-				try {
-					codexSnapshot = await fetchCodexQuotaSnapshot({
-						command: process.env.PI_STATUSLINE_CODEX_BIN?.trim() || "codex",
-						timeoutMs: quotaTimeoutMs,
-						signal: quotaAbort.signal,
-					});
-					codexQuotaLookupFailed = false;
-				} catch {
-					if (!codexSnapshot) codexQuotaLookupFailed = true;
-				} finally {
-					quotaRefreshing = false;
-					if (!quotaAbort.signal.aborted) tui.requestRender();
-				}
-			}
-
-			refreshCodexQuotaForModel = (provider) => {
-				void refreshCodexQuota(provider);
-				tui.requestRender();
-			};
-			void refreshCodexQuota();
 			void openRouterCreditsCache?.refresh();
 			void beadsCache?.refresh();
-			const quotaInterval = quotaEnabled ? setInterval(() => void refreshCodexQuota(), quotaRefreshMs) : undefined;
 			const openRouterInterval = openRouterCreditsCache
 				? setInterval(() => void openRouterCreditsCache.refresh(), openRouterRefreshMs)
 				: undefined;
@@ -399,15 +397,18 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				empty: (s: string) => theme.fg("dim", s),
 			};
 
-			function claudeQuotaCells(view: ClaudeQuotaView, nowMs: number): { compact: string; table: string } {
+			/** The binding window from the latest pi-claude-cli turn, labelled apart from the account snapshot. */
+			function claudeTurnCells(view: ClaudeQuotaView, nowMs: number): { compact: string; table: string } {
 				const tone = claudeQuotaTone(view);
 				const fill = (s: string) => theme.fg(tone, s);
 				const barColors = { ok: fill, warn: fill, crit: fill, empty: colors.empty };
-				const gauge = (width: number) => view.usedPercent === null ? "" : `${bar(view.usedPercent, width, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, barColors)} `;
-				const label = theme.fg(tone, `${view.window}${view.over ? " >100%" : ""}${view.state === "rejected" ? " limit" : ""}`);
+				const gauge = (width: number) => view.usedPercent === null ? "" : ` ${bar(view.usedPercent, width, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, barColors)}`;
+				const label = theme.fg(tone, `Claude turn ${view.window}`);
+				const flagText = `${view.over ? " >100%" : ""}${view.state === "rejected" ? " limit" : ""}`;
+				const flags = flagText ? theme.fg(tone, flagText) : "";
 				const extra = view.extraUsage ? theme.fg("warning", " · extra") : "";
 				const reset = theme.fg("dim", ` · ${fmtNearReset(view.resetsAtMs, nowMs)}`);
-				return { compact: `${gauge(3)}${label}${extra}`, table: `${gauge(6)}${label}${extra}${reset}` };
+				return { compact: `${label}${gauge(3)}${flags}${extra}`, table: `${label}${gauge(6)}${flags}${extra}${reset}` };
 			}
 
 			function segments() {
@@ -425,46 +426,22 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const beadsCounts = beadsCache?.counts;
 				const effort = thinking ? `⚡${thinking === "high" ? "Hi" : thinking === "medium" ? "Md" : thinking.slice(0, 2)}` : "";
 				const status = `${git.dirty ? "●" : ""}${git.untracked ? "…" : ""}${git.staged ? "✚" : ""}`;
-				let quota = "";
-				let quotaTable = "";
-				const codexQuota = codexSnapshot?.weekly;
-				const stale = codexSnapshot ? isCodexSnapshotStale(codexSnapshot, Date.now(), quotaStaleMs) : false;
-				const quotaState = codexQuotaDisplayState(ctx.model?.provider, quotaEnabled, codexQuota, codexQuotaLookupFailed);
-				if (quotaState === "available" && codexQuota) {
-					const used = Math.round(codexQuota.usedPercent);
-					const tone = codexQuotaTone(used);
-					const quotaColors = stale
-						? { ok: colors.empty, warn: colors.empty, crit: colors.empty, empty: colors.empty }
-						: colors;
-					const label = theme.fg(stale ? "dim" : tone, "GPT");
-					quota = `${bar(used, 3, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, quotaColors)} ${label}`;
-					const reset = codexQuota.resetsAtMs === null ? "" : fmtQuotaReset(codexQuota.resetsAtMs);
-					quotaTable = `${bar(used, 6, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, quotaColors)} ${label}${reset ? theme.fg("dim", ` · ${reset}`) : ""}`;
-				} else if (quotaState === "unavailable") {
-					quota = theme.fg("dim", "GPT ?");
-					quotaTable = quota;
-				}
-				const credits = showsCodexQuota(ctx.model?.provider, quotaEnabled) ? codexSnapshot?.credits : undefined;
-				if (credits) {
-					const creditText = formatCodexCredits(credits);
-					if (codexQuota) {
-						const suffix = theme.fg(stale ? "dim" : "success", ` · ${creditText}`);
-						quota += suffix;
-						quotaTable += suffix;
-					} else {
-						quota = theme.fg(stale ? "dim" : "success", `GPT · ${creditText}`);
-						quotaTable = quota;
-					}
-				}
 				const nowMs = Date.now();
-				const claudeQuota = claudeQuotaView(ctx.model?.provider, statuses.get(CLAUDE_QUOTA_STATUS_KEY), nowMs);
-				if (claudeQuota) ({ compact: quota, table: quotaTable } = claudeQuotaCells(claudeQuota, nowMs));
+				const account = accountQuotaCells({
+					nowMs,
+					formatReset: (resetsAtMs) => fmtNearReset(resetsAtMs, nowMs),
+					codex: codexCache && { value: codexCache.value, failed: codexCache.failed, staleAfterMs: codexStaleMs },
+					claude: claudeCache && { value: claudeCache.value, failed: claudeCache.failed, staleAfterMs: claudeStaleMs },
+				}, (tone, text) => theme.fg(tone, text));
+				const claudeSnapshot = claudeCache?.value;
+				const claudeSnapshotFresh = Boolean(claudeSnapshot && nowMs - claudeSnapshot.fetchedAtMs <= claudeStaleMs);
+				const claudeTurn = claudeQuotaView(ctx.model?.provider, statuses.get(CLAUDE_QUOTA_STATUS_KEY), nowMs);
+				const turn = claudeTurn && adapterAlertVisible(claudeTurn, claudeSnapshotFresh) ? claudeTurnCells(claudeTurn, nowMs) : undefined;
 				const openRouterCredits = openRouterCreditsCache?.credits;
 				const openRouterBalance = openRouterCredits
 					? theme.fg(openRouterCreditsCache.isStale() ? "dim" : "success", `OR $${Math.round(openRouterCredits.remainingCredits)}`)
 					: "";
 				return {
-					clock: theme.fg("dim", fmtTime(new Date())),
 					host: theme.fg("accent", ` ${hostname().split(".")[0]}`),
 					k8s: k8sContext ? theme.fg("accent", `󱃾 ${k8sContext}`) : "",
 					agent: theme.fg("success", theme.bold("π")),
@@ -474,8 +451,12 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					session: sessionName ? theme.fg("accent", `◈ ${truncateToWidth(sessionName, 24, "…")}`) : "",
 					bars: `${bar(usage.ctxPct, 3, 34, 67, colors)} ${theme.fg("dim", "ctx")}`,
 					ctx: `${bar(usage.ctxPct, 6, 34, 67, colors)} ${theme.fg("dim", "ctx")}`,
-					quota,
-					quotaTable,
+					gpt: account.gpt?.compact ?? "",
+					gptTable: account.gpt?.table ?? "",
+					claude: account.claude?.compact ?? "",
+					claudeTable: account.claude?.table ?? "",
+					claudeTurn: turn?.compact ?? "",
+					claudeTurnTable: turn?.table ?? "",
 					openRouterBalance,
 					cost: theme.fg("success", `est $${Math.round(usage.cost)}`),
 					duration: theme.fg("dim", fmtDuration(Date.now() - startedAt)),
@@ -496,10 +477,14 @@ export default function piStatusline(pi: ExtensionAPI): void {
 
 			function compact(width: number): string[] {
 				const s = segments();
-				let cells = [s.clock, joinCells([s.agent, s.guard, s.model, s.effort]), s.bars, s.quota, s.openRouterBalance, s.k8s, s.duration, s.path, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
+				const quotas = [s.gpt, s.claude, s.claudeTurn, s.openRouterBalance];
+				let cells = [joinCells([s.agent, s.guard, s.model, s.effort]), s.bars, ...quotas, s.k8s, s.duration, s.path, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
 				let line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
-				cells = [joinCells([s.agent, s.guard, s.model, s.effort]), s.bars, s.quota, s.openRouterBalance, s.k8s, s.duration, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
+				cells = [joinCells([s.agent, s.guard, s.model, s.effort]), s.bars, ...quotas, s.k8s, s.duration, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
+				line = joinCells(cells);
+				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
+				cells = [joinCells([s.agent, s.guard, s.model, s.effort]), s.bars, ...quotas, s.k8s, s.branch].filter(Boolean);
 				line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
 				cells = [s.agent, s.guard, s.model, s.bars, s.k8s, s.branch, s.divergence, s.session].filter(Boolean);
@@ -511,7 +496,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const s = segments();
 				const border = (text: string) => theme.fg("border", text);
 				let row1 = [s.host, s.k8s, s.path, s.repo, s.branch, s.divergence, s.pr, s.beads, s.session].filter(Boolean);
-				const row2 = [s.agent, s.guard, s.model, s.effort, s.ctx, s.quotaTable, s.openRouterBalance, s.cost, s.duration, s.clock].filter(Boolean);
+				const row2 = [s.agent, s.guard, s.model, s.effort, s.ctx, s.gptTable, s.claudeTable, s.claudeTurnTable, s.openRouterBalance, s.cost, s.duration].filter(Boolean);
 
 				function widthsFor(cells: string[]): number[] {
 					return cells.map((cell) => visibleWidth(cell) + 2);
@@ -554,12 +539,11 @@ export default function piStatusline(pi: ExtensionAPI): void {
 
 			return {
 				dispose() {
-					refreshCodexQuotaForModel = undefined;
 					clearInterval(interval);
-					if (quotaInterval) clearInterval(quotaInterval);
 					if (openRouterInterval) clearInterval(openRouterInterval);
 					if (beadsInterval) clearInterval(beadsInterval);
-					quotaAbort.abort();
+					codexCache?.dispose();
+					claudeCache?.dispose();
 					openRouterCreditsCache?.dispose();
 					beadsCache?.dispose();
 					gitDivergenceCache?.dispose();

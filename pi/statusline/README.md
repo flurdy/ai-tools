@@ -43,11 +43,15 @@ Avoid loading a second copy of an already installed extension when using `-e`.
 - `PI_STATUSLINE_BEADS=0` — hide Beads work counts in the table footer.
 - `PI_STATUSLINE_BEADS_TTL=30000` — Beads count refresh interval in milliseconds (minimum five seconds).
 - `PI_STATUSLINE_BEADS_TIMEOUT=2000` — timeout for one Beads count lookup in milliseconds (minimum 250 ms).
-- `PI_STATUSLINE_CODEX_QUOTA=0` — disable the shared Codex weekly-quota and credit-balance lookup when using an OpenAI-Codex model.
+- `PI_STATUSLINE_CODEX_QUOTA=0` — disable the Codex weekly-quota and credit-balance lookup and its `GPT` cell.
 - `PI_STATUSLINE_CODEX_QUOTA_TTL=300000` — Codex quota refresh interval in milliseconds (minimum one minute).
 - `PI_STATUSLINE_CODEX_QUOTA_STALE=900000` — age after which the last successful quota snapshot is marked stale (minimum one minute).
-- `PI_STATUSLINE_CODEX_QUOTA_TIMEOUT=10000` — timeout for one Codex quota lookup in milliseconds.
+- `PI_STATUSLINE_CODEX_QUOTA_TIMEOUT=10000` — timeout for one Codex quota lookup in milliseconds (minimum one second).
 - `PI_STATUSLINE_CODEX_BIN=codex` — Codex CLI executable to invoke.
+- `PI_STATUSLINE_CLAUDE_QUOTA=0` — disable the Claude Code `/usage` lookup and its `Claude` cell.
+- `PI_STATUSLINE_CLAUDE_QUOTA_TTL=300000` — Claude usage refresh interval in milliseconds (minimum one minute).
+- `PI_STATUSLINE_CLAUDE_QUOTA_STALE=900000` — age after which the last successful Claude snapshot is marked stale (minimum one minute).
+- `PI_STATUSLINE_CLAUDE_QUOTA_TIMEOUT=10000` — timeout for one Claude usage lookup in milliseconds (minimum one second).
 - `PI_STATUSLINE_OPENROUTER_WARN=0` — disable large-context OpenRouter warnings.
 - `PI_STATUSLINE_OPENROUTER_WARN_TOKENS=100000` — absolute context-token warning interval; `0` disables token-based warnings.
 - `PI_STATUSLINE_OPENROUTER_WARN_COST=1` — estimated uncached input-cost warning interval in dollars; `0` disables cost-based warnings.
@@ -67,8 +71,10 @@ The examples below are schematic: they use placeholder values and omit terminal 
 Compact mode is a single line. As space narrows, less-important cells are dropped before the line is truncated.
 
 ```text
-12:34 │ π │ 🔒 │ Terra 5 │ ⚡Hi │ ██░ ctx │ █░░ GPT · 126 cr │ OR $75 │ 12m │ ~/project │ main │ ⇡10 ⇣2 │ ◈ session
+π │ 🔒 │ Terra 5 │ ⚡Hi │ ▮▯▯ ctx │ GPT wk ▮▯▯ · 126 cr │ Claude 5h ▯▯▯ · wk ▮▯▯ │ OR $75 │ 12m │ ~/project │ main │ ⇡10 ⇣2 │ ◈ session
 ```
+
+When the full line does not fit, the path, duration, PR and session cells go first; the guard, `ctx` and quota cells stay until the narrowest fallback, which keeps only the agent, guard, model, `ctx`, Kubernetes context, branch, divergence and session.
 
 ### Table footer
 
@@ -78,7 +84,7 @@ Table mode uses two bordered rows: location/session information on top, then mod
 ┌──────────────┬───────────┬──────┬──────────────────────┬────────────────┐
 │ example-host │ ~/project │ main │ ⇡10 ⇣2 │ ◉ P4:4 ◐1         │ ◈ session      │
 ├───┬──────────┴──┬─────┬──┴──────┴──┬──────────┬────────┴──┬─────┬───────┤
-│ π │ 🔒2 │ Terra 5 │ ⚡Hi │ ███░░░ ctx │ OR $75 │ est $0 │ 12m │ 12:34 │
+│ π │ 🔒2 │ Terra 5 │ ⚡Hi │ ▮▮▯▯▯▯ ctx │ GPT wk ▮▮▯▯▯▯ 40% · Oct 25 · 126 cr │ Claude 5h ▯▯▯▯▯▯ 12% · 15:19 · wk ▮▮▮▯▯▯ 55% · Oct 23 │ OR $75 │ est $0 │ 12m │
 └───┴─────────────┴─────┴────────────┴──────────┴───────────┴─────┴───────┘
 ```
 
@@ -125,16 +131,16 @@ The latest prompt is taken from your submitted input, so it can expose task deta
 
 - latest submitted prompt and its local submission time above the editor (single-line and width-truncated)
 - active parent-run model and thinking level above that prompt; it updates when the model-tier router changes model or thinking mid-run
-- clock
 - hostname with a Nerd Font monitor icon
 - current `kubectl` context when available
 - current session name (truncated when necessary)
 - one session guard cell, pinned in narrow and wide layouts, with a worktree count only for multiple implement leases and a documented text fallback
 - `π` agent marker in its own cell; a compact model name such as `Sol 6.1`, `Terra 5.6`, or `Sonnet 5.5`, with `+` for a trailing GPT Pro variant and `OR` only for OpenRouter; and thinking level
-- cautious context-capacity bar labelled `ctx` (green through 33%, yellow through 66%, then red)
-- cached Codex weekly used-capacity bar labelled `GPT` for OpenAI-Codex models, plus its reset date in table mode
-- ChatGPT/Codex credit balance folded into the quota cell as `GPT · 126 cr` (or `GPT · ∞ cr`), sharing the quota lookup and visible in either layout when space permits
-- for `pi-claude-cli` models only, the Claude subscription window the adapter last reported (`5h`, `Wk`, `Wk Opus`, `Wk Sonnet` or `Extra`), with a used-capacity bar when utilization is reported and its reset in table mode
+- cautious context-capacity bar labelled `ctx` (green through 33%, yellow through 66%, then red); conversation context only, never subscription usage
+- whatever model is active, the cached Codex account's weekly used capacity as `GPT wk`, with the ChatGPT/Codex credit balance as `GPT wk … · 126 cr` (or `∞ cr`)
+- whatever model is active, the cached Claude Code account's 5-hour session and all-model weekly usage as `Claude 5h … · wk …`
+- for `pi-claude-cli` models, a separate `Claude turn …` cell when the adapter's latest binding window adds a warning, limit, overage or per-model window the account cell lacks
+- compact quota cells are gauges whose fill is the used share, like `ctx`; table cells add the used percentage and reset time
 - optional cached OpenRouter account credit balance labelled `OR`, immediately before the estimated session cost
 - session duration
 - abbreviated cwd
@@ -167,21 +173,35 @@ The table footer discovers the nearest parent `.beads` workspace. At a validated
 
 ## Codex quota and credit source
 
-For OpenAI-Codex models, the quota segment queries the authenticated Codex CLI's machine-readable `codex app-server` API (`account/rateLimits/read`). It stays hidden and skips lookups for other providers. It does not scrape the interactive `/status` screen, read Codex credential files, or run a model turn. Lookup runs asynchronously outside footer rendering, refreshes at a bounded interval, and retains the last successful snapshot when a later refresh fails. Data older than the configured stale interval—or whose reset time has passed—is rendered dim.
+The `GPT` cell queries the authenticated Codex CLI's machine-readable `codex app-server` API (`account/rateLimits/read`) whatever provider Pi is using, because skill routing and second opinions use several accounts in one session. It does not scrape the interactive `/status` screen, read Codex credential files, or run a model turn. See [account quota caching](#account-quota-caching) for refresh, failure and staleness behaviour; a weekly window whose reset has passed shows `wk ?` until the next lookup rather than its old value.
 
-Quota and credits come from the same canonical `rateLimitsByLimitId.codex` snapshot, falling back to `rateLimits` when that bucket is absent. The weekly window is identified by its approximately seven-day duration rather than by assuming it is always primary or secondary. A successful response without a weekly window hides the bar but can still show credits. When an enabled OpenAI-Codex model is active, an initial lookup failure renders a dim `GPT ?` and no credit balance; a later failure retains the last successful snapshot. Both segments stay hidden for other providers and when the lookup is explicitly disabled.
+Quota and credits come from the same canonical `rateLimitsByLimitId.codex` snapshot, falling back to `rateLimits` when that bucket is absent. The weekly window is identified by its approximately seven-day duration rather than by assuming it is always primary or secondary. A successful response without a weekly window hides the gauge but can still show credits. An initial lookup failure renders a dim `GPT ?` and no credit balance, including when the Codex CLI is not installed (set `PI_STATUSLINE_CODEX_QUOTA=0` to hide it); a later failure retains the last successful snapshot. The cell is hidden only when disabled or before the first lookup completes.
 
-The [`CreditsSnapshot`](https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/schema/typescript/v2/CreditsSnapshot.ts) fields are validated separately, so malformed credits do not hide valid weekly quota. Both flags must be booleans. `unlimited: true` displays `∞ cr`; otherwise a balance appears only with `hasCredits: true` and a finite, non-negative plain decimal string. The footer rounds numeric balances to whole credits for a compact display, including an explicitly reported zero. Absent, null, malformed, or unavailable credit data is hidden, not converted to zero. A successful refresh replaces the entire snapshot, clearing credits that are no longer reported. Credits share quota refresh, timeout, failure retention, and stale dimming (including a passed weekly reset); there is no second request or timer.
+The [`CreditsSnapshot`](https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/schema/typescript/v2/CreditsSnapshot.ts) fields are validated separately, so malformed credits do not hide valid weekly quota. Both flags must be booleans. `unlimited: true` displays `∞ cr`; otherwise a balance appears only with `hasCredits: true` and a finite, non-negative plain decimal string. The footer rounds numeric balances to whole credits for a compact display, including an explicitly reported zero. Absent, null, malformed, or unavailable credit data is hidden, not converted to zero. A successful refresh replaces the entire snapshot, clearing credits that are no longer reported. Credits share the quota lookup, timeout, failure retention and age-based staleness; a passed weekly reset affects only the weekly gauge. There is no second request.
 
 This is **ChatGPT/Codex credit capacity, not OpenAI API-platform billing credit or a dollar balance**. The displayed quota and credits belong to the account authenticated in the Codex CLI. They represent Pi's active OpenAI-Codex account only when Pi and Codex are signed into the same ChatGPT account; the statusline does not verify account alignment.
 
-## Claude subscription window source
+## Claude account usage source
 
-For `pi-claude-cli` models, the quota cell reads the `claude-rate-limit` extension status published by that adapter. It performs no lookup or polling, reads no credentials, and never appears for native `anthropic`, GitHub or OpenRouter Claude models. The adapter reports only the **binding** window per turn, so the cell shows that one window, never a simultaneous 5-hour and weekly dashboard.
+The `Claude` cell runs Claude Code's built-in local `/usage` command through the same [collector](claude-usage.ts) as the `claude-quota` helper: `claude -p /usage --no-session-persistence --output-format json`, from the temporary directory so project settings do not apply, with no prompt, model turn or saved session. It parses the `Current session` (`5h`) and `Current week (all models)` (`wk`) lines; per-model weekly lines are not shown. It runs whatever provider Pi is using.
 
-A bar appears only when `utilization` is a finite, non-negative number; a reported `0` shows an empty bar, while missing utilization shows the label alone rather than `0%`. Above 100% the bar stays full and the label adds `>100%`. Tone is the more severe of the reported status and the shared quota thresholds: `allowed_warning` is at least yellow, `rejected` (labelled `limit`) and over-100% are red. `isUsingOverage` adds `· extra`. Subscription usage is separate from the `ctx` bar and from credit balances.
+The panel is undocumented text. A missing or unrecognised window shows `5h ?` or `wk ?`, never zero; a panel with neither shows `Claude ?`, as does an initial lookup failure. A window whose reset has passed shows `?` until the next lookup. Above 100% the gauge stays full and adds `>100%`. A response that is not the local `usage` command, or reports any model turn or cost, is refused and **stops further Claude lookups until `/reload`**, so a changed CLI cannot spend usage every refresh; a missing `claude` CLI also stops them.
 
-The cell is hidden for an `allowed` window without utilization or extra usage, for unknown status values or window types, for malformed JSON, after the adapter clears the status (model change, session tree, compaction or shutdown), and once `resetsAt` has passed. A reading without a valid `resetsAt` is hidden because nothing else bounds its age: `observedAt` only changes when the payload changes, so it is not used as freshness evidence.
+The values describe the account Claude Code is signed in to. Their alignment with Pi's Claude provider account is not verified, and API-key, Bedrock/Vertex or OpenRouter Claude usage is never represented. Each lookup starts Claude Code with its user-level settings, so user hooks or update checks that run on every invocation run on every refresh too.
+
+### pi-claude-cli turn telemetry
+
+For `pi-claude-cli` models, the adapter publishes a `claude-rate-limit` status with only the **binding** window of its latest turn. Reading it needs no lookup, polling or credentials. The footer shows it as a separate `Claude turn <window>` cell, never as account-wide usage, and only when it adds a signal: a warning or `limit`, over 100%, extra usage, a window other than `5h`/`Wk` (`Wk Opus`, `Wk Sonnet`, `Extra`), or no fresh account snapshot. A routine `allowed` 5-hour or weekly reading is left to the account cell.
+
+A gauge appears only when `utilization` is a finite, non-negative number; a reported `0` shows an empty gauge, while missing utilization shows the label alone rather than `0%`. Above 100% the gauge stays full and the label adds `>100%`. Tone is the more severe of the reported status and the shared quota thresholds: `allowed_warning` is at least yellow, `rejected` (labelled `limit`) and over-100% are red. `isUsingOverage` adds `· extra`.
+
+The turn cell is hidden for an `allowed` window without utilization or extra usage, for unknown status values or window types, for malformed JSON, after the adapter clears the status (model change, session tree, compaction or shutdown), and once `resetsAt` has passed. A reading without a valid `resetsAt` is hidden because nothing else bounds its age: `observedAt` only changes when the payload changes, so it is not used as freshness evidence.
+
+## Account quota caching
+
+Each footer instance keeps one cache per account source (Codex and Claude Code), configured when the footer starts. Rendering only reads cached snapshots; the footer's one-second tick starts a lookup when one is due. Each cache allows one lookup in flight, refreshes every `*_QUOTA_TTL` (default five minutes) after a success, and after consecutive failures waits one, two, then four intervals, capped at 30 minutes or the interval if longer. Model and provider switches never start a lookup. A failed refresh keeps the last good snapshot. A snapshot older than `*_QUOTA_STALE` (default 15 minutes) is dimmed and prefixed `~`. When Pi disposes the footer, in-flight lookups are aborted and their processes killed; late results are ignored.
+
+Caches are per Pi process, not shared on disk. With the defaults each Pi session runs about 12 Codex app-server lookups and 12 Claude Code `/usage` lookups an hour, plus the separate OpenRouter refresh; concurrent sessions multiply this, and `/quota` queries independently. Raise the TTLs or disable a source to reduce the volume.
 
 ## OpenRouter credit source
 

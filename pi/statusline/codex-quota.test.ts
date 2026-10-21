@@ -4,14 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
-	codexQuotaDisplayState,
 	fetchCodexQuotaSnapshot,
 	formatCodexCredits,
-	isCodexQuotaStale,
-	isCodexSnapshotStale,
 	selectCodexWeeklyQuota,
 	selectCodexQuotaSnapshot,
-	showsCodexQuota,
 } from "./codex-quota.ts";
 import { modelLabel, shortModel } from "./model-label.ts";
 import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT, codexQuotaTone } from "./quota-display.ts";
@@ -23,24 +19,6 @@ const colors = {
 	crit: (text: string) => `[crit:${text}]`,
 	empty: (text: string) => `[empty:${text}]`,
 };
-
-test("shows quota in compact and table footer data only for enabled Codex models", () => {
-	assert.equal(showsCodexQuota("openai-codex"), true);
-	assert.equal(showsCodexQuota("openai-codex", false), false);
-	assert.equal(showsCodexQuota("anthropic"), false);
-	assert.equal(showsCodexQuota("openrouter"), false);
-	assert.equal(showsCodexQuota(undefined), false);
-});
-
-test("distinguishes unavailable Codex quota from hidden and cached states", () => {
-	const quota = { usedPercent: 20, remainingPercent: 80, fetchedAtMs: 1000, resetsAtMs: 10_000 };
-
-	assert.equal(codexQuotaDisplayState("anthropic", true, undefined, true), "hidden");
-	assert.equal(codexQuotaDisplayState("openai-codex", false, undefined, true), "hidden");
-	assert.equal(codexQuotaDisplayState("openai-codex", true, undefined, false), "hidden");
-	assert.equal(codexQuotaDisplayState("openai-codex", true, undefined, true), "unavailable");
-	assert.equal(codexQuotaDisplayState("openai-codex", true, quota, true), "available");
-});
 
 test("renders quota bars without rounding usage upward", () => {
 	assert.equal(bar(67, 6, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, colors), "[warn:▮▮▮▮][empty:▯▯]");
@@ -209,23 +187,6 @@ test("clamps unexpected percentages", () => {
 		selectCodexWeeklyQuota({ rateLimits: { primary: { usedPercent: -5, windowDurationMins: WEEK } } })?.remainingPercent,
 		100,
 	);
-});
-
-test("marks old or reset snapshots stale", () => {
-	const fresh = { usedPercent: 20, remainingPercent: 80, fetchedAtMs: 1000, resetsAtMs: 10_000 };
-	assert.equal(isCodexQuotaStale(fresh, 2000, 5000), false);
-	assert.equal(isCodexQuotaStale(fresh, 7000, 5000), true);
-	assert.equal(isCodexQuotaStale(fresh, 10_000, 20_000), true);
-});
-
-test("shares snapshot age and reset staleness with credits", () => {
-	const credits = { kind: "balance" as const, balance: "12.50" };
-	const snapshot = { credits, fetchedAtMs: 1000 };
-	assert.equal(isCodexSnapshotStale(snapshot, 2000, 5000), false);
-	assert.equal(isCodexSnapshotStale(snapshot, 7000, 5000), true);
-	const weekly = { usedPercent: 20, remainingPercent: 80, fetchedAtMs: 1000, resetsAtMs: 10_000 };
-	assert.equal(isCodexSnapshotStale({ ...snapshot, weekly }, 2000, 20_000), false);
-	assert.equal(isCodexSnapshotStale({ ...snapshot, weekly }, 10_000, 20_000), true);
 });
 
 async function waitForFile(path: string): Promise<void> {

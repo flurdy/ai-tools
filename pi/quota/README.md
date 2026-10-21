@@ -121,7 +121,8 @@ claude -p "/usage" --no-session-persistence --output-format json
 ```
 
 That is Claude Code's built-in `/usage` command, answered without a model turn or cost, and no
-session is saved. It runs from the temporary directory, so the caller's project settings do not
+session is saved. The lookup and panel parser live in the statusline's
+[`claude-usage.ts`](../statusline/claude-usage.ts), which the footer reuses. It runs from the temporary directory, so the caller's project settings do not
 apply. The helper reads no credential files, sends no prompt, and never signs in or changes
 settings. Options and exit codes match `codex-quota` (`--timeout-ms`, default 10000 ms).
 
