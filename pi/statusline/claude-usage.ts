@@ -4,7 +4,9 @@
  */
 
 import { spawn } from "node:child_process";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
+import { identityDigest } from "./shared-snapshot.ts";
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const RESET_GRACE_MS = 60 * 60_000;
@@ -183,6 +185,50 @@ export function parseClaudeUsagePanel(snapshot: ClaudeUsageSnapshot, cleanLine: 
 		windows.push(parseWindow(limit[1], limit[2], snapshot.fetchedAtMs));
 	}
 	return { windows, unrecognisedLines };
+}
+
+/** Environment variables that route Claude Code elsewhere than its claude.ai login. */
+export const CLAUDE_AUTH_OVERRIDES: readonly string[] = [
+	"ANTHROPIC_API_KEY",
+	"ANTHROPIC_AUTH_TOKEN",
+	"ANTHROPIC_BASE_URL",
+	"CLAUDE_CODE_USE_BEDROCK",
+	"CLAUDE_CODE_USE_VERTEX",
+	"CLAUDE_CODE_USE_FOUNDRY",
+];
+
+/** Non-identifying digest of the Claude Code login a `/usage` lookup would describe. */
+export function claudeUsageIdentity(env: NodeJS.ProcessEnv = process.env): string | undefined {
+	const configDirectory = env.CLAUDE_CONFIG_DIR?.trim() || join(homedir(), ".claude");
+	return identityDigest({
+		source: "claude",
+		configDirectory,
+		credentialFile: join(configDirectory, ".credentials.json"),
+		executable: "claude",
+		overrides: CLAUDE_AUTH_OVERRIDES,
+		env,
+	});
+}
+
+function parseWindowValue(value: unknown): ClaudeAccountWindow | undefined | null {
+	if (value === undefined) return undefined;
+	const window = value as Partial<ClaudeAccountWindow> | null;
+	if (window === null || typeof window !== "object") return null;
+	const percent = window.usedPercent;
+	const resets = window.resetsAtMs;
+	const valid = (percent === null || (typeof percent === "number" && Number.isFinite(percent)))
+		&& (resets === null || (typeof resets === "number" && Number.isFinite(resets)));
+	return valid ? { usedPercent: percent as number | null, resetsAtMs: resets as number | null } : null;
+}
+
+/** Validates a persisted account usage snapshot; undefined when its shape is not ours. */
+export function parseClaudeAccountUsage(value: unknown): ClaudeAccountUsage | undefined {
+	const usage = value as Partial<ClaudeAccountUsage> | null;
+	if (usage === null || typeof usage !== "object" || typeof usage.fetchedAtMs !== "number" || !Number.isFinite(usage.fetchedAtMs)) return undefined;
+	const session = parseWindowValue(usage.session);
+	const week = parseWindowValue(usage.week);
+	if (session === null || week === null) return undefined;
+	return { session, week, fetchedAtMs: usage.fetchedAtMs };
 }
 
 export function claudeAccountUsage(snapshot: ClaudeUsageSnapshot): ClaudeAccountUsage {

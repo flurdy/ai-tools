@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { identityDigest } from "./shared-snapshot.ts";
 
 const WEEKLY_WINDOW_MINUTES = 7 * 24 * 60;
 const WINDOW_TOLERANCE = 0.05;
@@ -68,6 +71,40 @@ function parseCredits(value: unknown): CodexCredits | undefined {
 	if (!hasCredits || typeof balance !== "string" || balance !== balance.trim()
 		|| !/^[0-9]+(?:\.[0-9]+)?$/.test(balance) || !Number.isFinite(Number(balance))) return undefined;
 	return { kind: "balance", balance };
+}
+
+/** Environment variables that route the Codex CLI elsewhere than its ChatGPT login. */
+export const CODEX_AUTH_OVERRIDES: readonly string[] = ["OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"];
+
+/** Non-identifying digest of the Codex login a rate-limit lookup would describe. */
+export function codexQuotaIdentity(command = "codex", env: NodeJS.ProcessEnv = process.env): string | undefined {
+	const home = env.CODEX_HOME?.trim() || join(homedir(), ".codex");
+	return identityDigest({ source: "codex", configDirectory: home, credentialFile: join(home, "auth.json"), executable: command, overrides: CODEX_AUTH_OVERRIDES, env });
+}
+
+/** Validates a persisted snapshot; undefined when its shape is not ours. */
+export function parseCodexQuotaSnapshot(value: unknown): CodexQuotaSnapshot | undefined {
+	const snapshot = asObject(value);
+	const fetchedAtMs = finiteNumber(snapshot?.fetchedAtMs);
+	if (!snapshot || fetchedAtMs === undefined) return undefined;
+	const result: CodexQuotaSnapshot = { fetchedAtMs };
+	if (snapshot.weekly !== undefined) {
+		const weekly = asObject(snapshot.weekly);
+		const usedPercent = finiteNumber(weekly?.usedPercent);
+		const remainingPercent = finiteNumber(weekly?.remainingPercent);
+		const weeklyFetchedAtMs = finiteNumber(weekly?.fetchedAtMs);
+		const resetsAtMs = weekly?.resetsAtMs;
+		if (!weekly || usedPercent === undefined || remainingPercent === undefined || weeklyFetchedAtMs === undefined
+			|| (resetsAtMs !== null && finiteNumber(resetsAtMs) === undefined)) return undefined;
+		result.weekly = { usedPercent, remainingPercent, resetsAtMs: resetsAtMs as number | null, fetchedAtMs: weeklyFetchedAtMs };
+	}
+	if (snapshot.credits !== undefined) {
+		const credits = asObject(snapshot.credits);
+		if (credits?.kind === "unlimited") result.credits = { kind: "unlimited" };
+		else if (credits?.kind === "balance" && typeof credits.balance === "string" && /^[0-9]+(?:\.[0-9]+)?$/.test(credits.balance)) result.credits = { kind: "balance", balance: credits.balance };
+		else return undefined;
+	}
+	return result;
 }
 
 export function selectCodexQuotaSnapshot(result: unknown, fetchedAtMs = Date.now()): CodexQuotaSnapshot | undefined {

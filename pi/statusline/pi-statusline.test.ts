@@ -85,6 +85,8 @@ type FooterControls = { selectModel(provider: string): void; setProvider(provide
 type FooterOptions = {
 	provider?: string; modelId?: string; codexBin?: string; quotaEnabled?: boolean; claudeEnabled?: boolean;
 	cwd?: string; divergenceEnabled?: boolean; branch?: string | null;
+	/** Shared account-quota cache directory; each footer gets a private temporary one by default. */
+	quotaCacheDir?: string;
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -119,9 +121,12 @@ async function withFooter(
 		"PI_STATUSLINE_CODEX_QUOTA_TTL",
 		"PI_STATUSLINE_CODEX_QUOTA_STALE",
 		"PI_STATUSLINE_CODEX_QUOTA_TIMEOUT",
+		"PI_STATUSLINE_QUOTA_CACHE_DIR",
 	] as const;
 	const previous = new Map(environment.map((name) => [name, process.env[name]]));
 	for (const name of environment.slice(0, 7)) process.env[name] = "0";
+	const quotaCacheDir = options.quotaCacheDir ?? await mkdtemp(join(tmpdir(), "pi-footer-quota-cache-"));
+	process.env.PI_STATUSLINE_QUOTA_CACHE_DIR = quotaCacheDir;
 	process.env.PI_STATUSLINE_GUARD_EMOJI = "1";
 	process.env.PI_STATUSLINE_CODEX_QUOTA_TTL = "300000";
 	process.env.PI_STATUSLINE_CODEX_QUOTA_STALE = "900000";
@@ -174,6 +179,7 @@ async function withFooter(
 			if (value === undefined) delete process.env[name];
 			else process.env[name] = value;
 		}
+		if (!options.quotaCacheDir) await rm(quotaCacheDir, { recursive: true, force: true });
 	}
 }
 
@@ -512,6 +518,23 @@ test("shows GPT and Claude account quotas together, independent of the active mo
 test("polls Claude account usage every 15 minutes and dims it only after a missed refresh", () => {
 	assert.equal(CLAUDE_QUOTA_REFRESH_MS, 15 * 60_000);
 	assert.ok(CLAUDE_QUOTA_STALE_MS > CLAUDE_QUOTA_REFRESH_MS + CLAUDE_QUOTA_TIMEOUT_MS);
+});
+
+test("concurrent footers share one Claude lookup through the host cache", async () => {
+	const quotaCacheDir = await mkdtemp(join(tmpdir(), "pi-footer-shared-quota-"));
+	try {
+		await withFakeClaude(async (invocations) => {
+			await withFooter(async (first) => {
+				assert.match(plainLines(first.render(300)), /Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯/);
+				await withFooter((second) => {
+					assert.match(plainLines(second.render(300)), /Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯/);
+				}, { claudeEnabled: true, quotaCacheDir });
+				assert.equal(await invocations(), 1);
+			}, { claudeEnabled: true, quotaCacheDir });
+		});
+	} finally {
+		await rm(quotaCacheDir, { recursive: true, force: true });
+	}
 });
 
 function claudeStatus(fields: Record<string, unknown> = {}): string {

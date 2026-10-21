@@ -6,8 +6,8 @@ import { hostname } from "node:os";
 import { dirname } from "node:path";
 import { BeadsCountsCache, fetchBeadsCounts, findBeadsRoot, formatBeadsCounts } from "./beads-status.ts";
 import { CLAUDE_QUOTA_STATUS_KEY, claudeQuotaTone, claudeQuotaView, type ClaudeQuotaView } from "./claude-quota.ts";
-import { claudeAccountUsage, ClaudeQuotaLookupError, fetchClaudeUsageSnapshot } from "./claude-usage.ts";
-import { fetchCodexQuotaSnapshot } from "./codex-quota.ts";
+import { claudeAccountUsage, ClaudeQuotaLookupError, claudeUsageIdentity, fetchClaudeUsageSnapshot, parseClaudeAccountUsage } from "./claude-usage.ts";
+import { codexQuotaIdentity, fetchCodexQuotaSnapshot, parseCodexQuotaSnapshot } from "./codex-quota.ts";
 import { fetchGitDivergence, findGitWorkspaceRoot, formatGitDivergence, GitDivergenceCache } from "./git-divergence.ts";
 import { activeModelLabel, modelLabel } from "./model-label.ts";
 import { OpenRouterCostAdvisory, openRouterAdvisoryConfig, sharedOpenRouterAdvisoryState } from "./openrouter-advisory.ts";
@@ -15,6 +15,7 @@ import { createOpenRouterCreditsCache, openRouterCreditsApiKey } from "./openrou
 import { accountQuotaCells, adapterAlertVisible } from "./quota-cells.ts";
 import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT } from "./quota-display.ts";
 import { formatSessionGuard } from "./session-guard.ts";
+import { quotaCacheDirectory, sharedLoad } from "./shared-snapshot.ts";
 import { SnapshotCache } from "./snapshot-cache.ts";
 
 type GitInfo = {
@@ -317,10 +318,20 @@ export default function piStatusline(pi: ExtensionAPI): void {
 			const codexStaleMs = envMilliseconds("PI_STATUSLINE_CODEX_QUOTA_STALE", 15 * 60_000, 60_000);
 			const codexTimeoutMs = envMilliseconds("PI_STATUSLINE_CODEX_QUOTA_TIMEOUT", 10_000, 1000);
 			const codexCommand = process.env.PI_STATUSLINE_CODEX_BIN?.trim() || "codex";
+			const quotaCacheDir = quotaCacheDirectory();
 			const codexCache = process.env.PI_STATUSLINE_CODEX_QUOTA === "0"
 				? undefined
 				: new SnapshotCache({
-					load: (signal) => fetchCodexQuotaSnapshot({ command: codexCommand, timeoutMs: codexTimeoutMs, signal }),
+					load: sharedLoad({
+						directory: quotaCacheDir,
+						source: "codex",
+						identity: () => codexQuotaIdentity(codexCommand),
+						refreshMs: codexRefreshMs,
+						timeoutMs: codexTimeoutMs,
+						load: (signal) => fetchCodexQuotaSnapshot({ command: codexCommand, timeoutMs: codexTimeoutMs, signal }),
+						parse: parseCodexQuotaSnapshot,
+						error: (message) => new Error(message),
+					}),
 					refreshMs: codexRefreshMs,
 					maxBackoffMs: Math.max(codexRefreshMs, MAX_QUOTA_BACKOFF_MS),
 					onChange: () => tui.requestRender(),
@@ -331,7 +342,18 @@ export default function piStatusline(pi: ExtensionAPI): void {
 			const claudeCache = process.env.PI_STATUSLINE_CLAUDE_QUOTA === "0"
 				? undefined
 				: new SnapshotCache({
-					load: async (signal) => claudeAccountUsage(await fetchClaudeUsageSnapshot({ timeoutMs: claudeTimeoutMs, signal })),
+					load: sharedLoad({
+						directory: quotaCacheDir,
+						source: "claude",
+						identity: () => claudeUsageIdentity(),
+						refreshMs: claudeRefreshMs,
+						timeoutMs: claudeTimeoutMs,
+						load: async (signal) => claudeAccountUsage(await fetchClaudeUsageSnapshot({ timeoutMs: claudeTimeoutMs, signal })),
+						parse: parseClaudeAccountUsage,
+						error: (message) => new ClaudeQuotaLookupError("lookup-failed", message),
+						// Another session's missing CLI says nothing about this one's PATH.
+						shareFailure: (error) => !(error instanceof ClaudeQuotaLookupError && error.kind === "claude-cli-missing"),
+					}),
 					refreshMs: claudeRefreshMs,
 					maxBackoffMs: Math.max(claudeRefreshMs, MAX_QUOTA_BACKOFF_MS),
 					// A missing CLI cannot recover, and a reported model turn or cost must never be repeated.
