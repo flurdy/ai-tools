@@ -411,14 +411,14 @@ test("shows an expired weekly window as unknown and hides malformed credits", as
 	await withCodexServer(rateLimits({ hasCredits: true, unlimited: false, balance: "8" }, true, 1), async (binary) => {
 		await withFooter((footer) => {
 			verifyCreditLayouts(footer, "8 cr");
-			assert.match(plainLines(footer.render(240)), /GPT wk \? · 8 cr/);
+			assert.match(plainLines(footer.render(240)), /GPT \? · 8 cr/);
 		}, codexOptions(binary));
 	});
 	await withCodexServer(rateLimits({ hasCredits: true, unlimited: false, balance: "NaN" }), async (binary) => {
 		await withFooter((footer) => {
 			const plain = plainLines(footer.render(240));
 			assert.doesNotMatch(plain, /\bcr\b|∞|NaN/);
-			assert.match(plain, /GPT wk [▮▯]+/);
+			assert.match(plain, /GPT [▮▯]+/);
 		}, codexOptions(binary));
 	});
 });
@@ -473,18 +473,20 @@ test("shows GPT and Claude account quotas together, independent of the active mo
 			await withFooter(async (footer, statuses, controls) => {
 				process.env.PI_STATUSLINE = "compact";
 				const compact = plainLines(footer.render(300));
-				assert.match(compact, /▯▯▯ ctx │ GPT wk ▮▯▯ · 13 cr │ Claude 5h ▯▯▯ · wk ▮▯▯ │/, compact);
+				const quotas = /GPT ▮▯▯ · 13 cr │ Claude 5h ▯▯▯ · wk ▮▯▯/;
+				assert.match(compact, quotas, compact);
 				assert.doesNotMatch(compact, /\d\d:\d\d/);
 				process.env.PI_STATUSLINE = "table";
 				const table = plainLines(footer.render(300));
-				assert.match(table, /GPT wk ▮▮▯▯▯▯ 40% · [^│]+ · 13 cr/, table);
-				assert.match(table, /Claude 5h ▯▯▯▯▯▯ 12% · [^│]+ · wk ▮▮▮▯▯▯ 55% · /, table);
+				assert.match(table, quotas, table);
+				assert.doesNotMatch(table, /\d+%|\d\d:\d\d/);
+				assert.ok(visibleWidth(table.split("\n")[3] ?? "") < 160, table);
 				assert.doesNotMatch(table.split("\n")[3] ?? "", /│ \d\d:\d\d │/);
 				statuses.set("session-mode", "plan");
 				verifyLayouts(footer, "🔍");
 				process.env.PI_STATUSLINE = "compact";
 				const narrow = plainLines(footer.render(130));
-				assert.match(narrow, /🔍.*ctx.*GPT wk.*Claude 5h.*feature\/statusline-layout-test/, narrow);
+				assert.match(narrow, /🔍.*ctx.*GPT.*Claude 5h.*feature\/statusline-layout-test/, narrow);
 				assert.doesNotMatch(narrow, /layout-test-session/);
 				for (const provider of ["openai-codex", "pi-claude-cli", "openrouter"]) controls.selectModel(provider);
 				await sleep(200);
@@ -524,7 +526,8 @@ test("renders the reported Claude window with its bar in both layouts", () => wi
 	const compact = claudeCells(footer, "compact");
 	assert.ok(compact.includes("Claude turn 5h ▮▯▯"), compact.join(" | "));
 	const table = claudeCells(footer, "table");
-	assert.ok(table.some((cell) => /^Claude turn 5h ▮▮▮▯▯▯ · \d/.test(cell)), table.join(" | "));
+	assert.ok(table.includes("Claude turn 5h ▮▯▯"), table.join(" | "));
+	assert.doesNotMatch(table.join(" | "), /\d+%|\d\d:\d\d/);
 	assert.doesNotMatch(table.join(" "), /\bWk\b|GPT/);
 }, { provider: "pi-claude-cli", modelId: "claude-opus-5-5" }));
 

@@ -70,14 +70,6 @@ function fmtTime(date: Date): string {
 	return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function fmtQuotaReset(timestampMs: number): string {
-	return new Date(timestampMs).toLocaleDateString([], { month: "short", day: "numeric" });
-}
-
-function fmtNearReset(timestampMs: number, nowMs: number): string {
-	return timestampMs - nowMs < 24 * 60 * 60_000 ? fmtTime(new Date(timestampMs)) : fmtQuotaReset(timestampMs);
-}
-
 function envMilliseconds(name: string, fallback: number, minimum: number): number {
 	const value = Number(process.env[name]);
 	return Number.isFinite(value) && value >= minimum ? value : fallback;
@@ -398,17 +390,16 @@ export default function piStatusline(pi: ExtensionAPI): void {
 			};
 
 			/** The binding window from the latest pi-claude-cli turn, labelled apart from the account snapshot. */
-			function claudeTurnCells(view: ClaudeQuotaView, nowMs: number): { compact: string; table: string } {
+			function claudeTurnCell(view: ClaudeQuotaView): string {
 				const tone = claudeQuotaTone(view);
 				const fill = (s: string) => theme.fg(tone, s);
 				const barColors = { ok: fill, warn: fill, crit: fill, empty: colors.empty };
-				const gauge = (width: number) => view.usedPercent === null ? "" : ` ${bar(view.usedPercent, width, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, barColors)}`;
+				const gauge = view.usedPercent === null ? "" : ` ${bar(view.usedPercent, 3, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, barColors)}`;
 				const label = theme.fg(tone, `Claude turn ${view.window}`);
 				const flagText = `${view.over ? " >100%" : ""}${view.state === "rejected" ? " limit" : ""}`;
 				const flags = flagText ? theme.fg(tone, flagText) : "";
 				const extra = view.extraUsage ? theme.fg("warning", " · extra") : "";
-				const reset = theme.fg("dim", ` · ${fmtNearReset(view.resetsAtMs, nowMs)}`);
-				return { compact: `${label}${gauge(3)}${flags}${extra}`, table: `${label}${gauge(6)}${flags}${extra}${reset}` };
+				return `${label}${gauge}${flags}${extra}`;
 			}
 
 			function segments() {
@@ -429,14 +420,13 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const nowMs = Date.now();
 				const account = accountQuotaCells({
 					nowMs,
-					formatReset: (resetsAtMs) => fmtNearReset(resetsAtMs, nowMs),
 					codex: codexCache && { value: codexCache.value, failed: codexCache.failed, staleAfterMs: codexStaleMs },
 					claude: claudeCache && { value: claudeCache.value, failed: claudeCache.failed, staleAfterMs: claudeStaleMs },
 				}, (tone, text) => theme.fg(tone, text));
 				const claudeSnapshot = claudeCache?.value;
 				const claudeSnapshotFresh = Boolean(claudeSnapshot && nowMs - claudeSnapshot.fetchedAtMs <= claudeStaleMs);
 				const claudeTurn = claudeQuotaView(ctx.model?.provider, statuses.get(CLAUDE_QUOTA_STATUS_KEY), nowMs);
-				const turn = claudeTurn && adapterAlertVisible(claudeTurn, claudeSnapshotFresh) ? claudeTurnCells(claudeTurn, nowMs) : undefined;
+				const turn = claudeTurn && adapterAlertVisible(claudeTurn, claudeSnapshotFresh) ? claudeTurnCell(claudeTurn) : "";
 				const openRouterCredits = openRouterCreditsCache?.credits;
 				const openRouterBalance = openRouterCredits
 					? theme.fg(openRouterCreditsCache.isStale() ? "dim" : "success", `OR $${Math.round(openRouterCredits.remainingCredits)}`)
@@ -451,12 +441,9 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					session: sessionName ? theme.fg("accent", `◈ ${truncateToWidth(sessionName, 24, "…")}`) : "",
 					bars: `${bar(usage.ctxPct, 3, 34, 67, colors)} ${theme.fg("dim", "ctx")}`,
 					ctx: `${bar(usage.ctxPct, 6, 34, 67, colors)} ${theme.fg("dim", "ctx")}`,
-					gpt: account.gpt?.compact ?? "",
-					gptTable: account.gpt?.table ?? "",
-					claude: account.claude?.compact ?? "",
-					claudeTable: account.claude?.table ?? "",
-					claudeTurn: turn?.compact ?? "",
-					claudeTurnTable: turn?.table ?? "",
+					gpt: account.gpt ?? "",
+					claude: account.claude ?? "",
+					claudeTurn: turn,
 					openRouterBalance,
 					cost: theme.fg("success", `est $${Math.round(usage.cost)}`),
 					duration: theme.fg("dim", fmtDuration(Date.now() - startedAt)),
@@ -496,7 +483,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const s = segments();
 				const border = (text: string) => theme.fg("border", text);
 				let row1 = [s.host, s.k8s, s.path, s.repo, s.branch, s.divergence, s.pr, s.beads, s.session].filter(Boolean);
-				const row2 = [s.agent, s.guard, s.model, s.effort, s.ctx, s.gptTable, s.claudeTable, s.claudeTurnTable, s.openRouterBalance, s.cost, s.duration].filter(Boolean);
+				const row2 = [s.agent, s.guard, s.model, s.effort, s.ctx, s.gpt, s.claude, s.claudeTurn, s.openRouterBalance, s.cost, s.duration].filter(Boolean);
 
 				function widthsFor(cells: string[]): number[] {
 					return cells.map((cell) => visibleWidth(cell) + 2);

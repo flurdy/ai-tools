@@ -71,22 +71,21 @@ The examples below are schematic: they use placeholder values and omit terminal 
 Compact mode is a single line. As space narrows, less-important cells are dropped before the line is truncated.
 
 ```text
-π │ 🔒 │ Terra 5 │ ⚡Hi │ ▮▯▯ ctx │ GPT wk ▮▯▯ · 126 cr │ Claude 5h ▯▯▯ · wk ▮▯▯ │ OR $75 │ 12m │ ~/project │ main │ ⇡10 ⇣2 │ ◈ session
+π │ 🔒 │ Terra 5 │ ⚡Hi │ ▮▯▯ ctx │ GPT ▮▯▯ · 126 cr │ Claude 5h ▯▯▯ · wk ▮▯▯ │ OR $75 │ 12m │ ~/project │ main │ ⇡10 ⇣2 │ ◈ session
 ```
 
 When the full line does not fit, the path, duration, PR and session cells go first; the guard, `ctx` and quota cells stay until the narrowest fallback, which keeps only the agent, guard, model, `ctx`, Kubernetes context, branch, divergence and session.
 
 ### Table footer
 
-Table mode uses two bordered rows: location/session information on top, then model, capacity, usage, and time signals below.
+Table mode uses two bordered rows: location/session information on top, then model, capacity, usage, and session duration below. It uses the same three-block quota cells as compact mode:
 
 ```text
-┌──────────────┬───────────┬──────┬──────────────────────┬────────────────┐
-│ example-host │ ~/project │ main │ ⇡10 ⇣2 │ ◉ P4:4 ◐1         │ ◈ session      │
-├───┬──────────┴──┬─────┬──┴──────┴──┬──────────┬────────┴──┬─────┬───────┤
-│ π │ 🔒2 │ Terra 5 │ ⚡Hi │ ▮▮▯▯▯▯ ctx │ GPT wk ▮▮▯▯▯▯ 40% · Oct 25 · 126 cr │ Claude 5h ▯▯▯▯▯▯ 12% · 15:19 · wk ▮▮▮▯▯▯ 55% · Oct 23 │ OR $75 │ est $0 │ 12m │
-└───┴─────────────┴─────┴────────────┴──────────┴───────────┴─────┴───────┘
+row 1: example-host │ ~/project │ main │ ⇡10 ⇣2 │ ◉ P4:4 ◐1 │ ◈ session
+row 2: π │ 🔒2 │ Terra 5 │ ⚡Hi │ ▮▮▯▯▯▯ ctx │ GPT ▮▯▯ · 126 cr │ Claude 5h ▯▯▯ · wk ▮▯▯ │ OR $75 │ est $0 │ 12m
 ```
+
+Percentages and reset dates stay in `/quota`, not the footer. Reset times still invalidate expired quota windows, which show `?` until refreshed.
 
 `PI_STATUSLINE=auto` (the default) selects table mode only when the terminal has at least 45 rows and is at least 100 columns wide. Otherwise it selects compact mode. `PI_STATUSLINE=compact` and `PI_STATUSLINE=table` request a layout explicitly; table mode still falls back to compact if its cells cannot fit.
 
@@ -137,10 +136,10 @@ The latest prompt is taken from your submitted input, so it can expose task deta
 - one session guard cell, pinned in narrow and wide layouts, with a worktree count only for multiple implement leases and a documented text fallback
 - `π` agent marker in its own cell; a compact model name such as `Sol 6.1`, `Terra 5.6`, or `Sonnet 5.5`, with `+` for a trailing GPT Pro variant and `OR` only for OpenRouter; and thinking level
 - cautious context-capacity bar labelled `ctx` (green through 33%, yellow through 66%, then red); conversation context only, never subscription usage
-- whatever model is active, the cached Codex account's weekly used capacity as `GPT wk`, with the ChatGPT/Codex credit balance as `GPT wk … · 126 cr` (or `∞ cr`)
+- whatever model is active, the cached Codex account's weekly used capacity as `GPT`, with the ChatGPT/Codex credit balance as `GPT … · 126 cr` (or `∞ cr`)
 - whatever model is active, the cached Claude Code account's 5-hour session and all-model weekly usage as `Claude 5h … · wk …`
 - for `pi-claude-cli` models, a separate `Claude turn …` cell when the adapter's latest binding window adds a warning, limit, overage or per-model window the account cell lacks
-- compact quota cells are gauges whose fill is the used share, like `ctx`; table cells add the used percentage and reset time
+- both layouts use three-block quota gauges whose fill is the used share, like `ctx`; `/quota` provides percentages and reset details
 - optional cached OpenRouter account credit balance labelled `OR`, immediately before the estimated session cost
 - session duration
 - abbreviated cwd
@@ -173,7 +172,7 @@ The table footer discovers the nearest parent `.beads` workspace. At a validated
 
 ## Codex quota and credit source
 
-The `GPT` cell queries the authenticated Codex CLI's machine-readable `codex app-server` API (`account/rateLimits/read`) whatever provider Pi is using, because skill routing and second opinions use several accounts in one session. It does not scrape the interactive `/status` screen, read Codex credential files, or run a model turn. See [account quota caching](#account-quota-caching) for refresh, failure and staleness behaviour; a weekly window whose reset has passed shows `wk ?` until the next lookup rather than its old value.
+The `GPT` cell queries the authenticated Codex CLI's machine-readable `codex app-server` API (`account/rateLimits/read`) whatever provider Pi is using, because skill routing and second opinions use several accounts in one session. It does not scrape the interactive `/status` screen, read Codex credential files, or run a model turn. See [account quota caching](#account-quota-caching) for refresh, failure and staleness behaviour; a weekly window whose reset has passed shows `GPT ?` until the next lookup rather than its old value.
 
 Quota and credits come from the same canonical `rateLimitsByLimitId.codex` snapshot, falling back to `rateLimits` when that bucket is absent. The weekly window is identified by its approximately seven-day duration rather than by assuming it is always primary or secondary. A successful response without a weekly window hides the gauge but can still show credits. An initial lookup failure renders a dim `GPT ?` and no credit balance, including when the Codex CLI is not installed (set `PI_STATUSLINE_CODEX_QUOTA=0` to hide it); a later failure retains the last successful snapshot. The cell is hidden only when disabled or before the first lookup completes.
 

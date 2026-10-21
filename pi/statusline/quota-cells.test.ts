@@ -10,7 +10,6 @@ const NOW = Date.UTC(2026, 9, 18, 21, 0, 0);
 const HOUR = 60 * 60_000;
 const STALE = 15 * 60_000;
 const plain = (_tone: Tone, text: string) => text;
-const formatReset = (ms: number) => new Date(ms).toISOString().slice(5, 16).replace("T", " ");
 
 async function claudeFixture(): Promise<ClaudeAccountUsage> {
 	const envelope = JSON.parse(await readFile(new URL("../quota/fixtures/claude-usage-2.1.302.json", import.meta.url), "utf8"));
@@ -33,17 +32,16 @@ function codexFixture(overrides: { usedPercent?: number; resetsAt?: number; cred
 }
 
 function input(fields: Partial<AccountQuotaInput> = {}): AccountQuotaInput {
-	return { nowMs: NOW, formatReset, codex: undefined, claude: undefined, ...fields };
+	return { nowMs: NOW, codex: undefined, claude: undefined, ...fields };
 }
 
 const source = <T>(value: T | undefined, failed = false) => ({ value, failed, staleAfterMs: STALE });
 
-test("renders both account sources from fixtures as compact gauges and detailed table cells", async () => {
+test("renders compact three-block account cells shared by both footer layouts", async () => {
 	const cells = accountQuotaCells(input({ codex: source(codexFixture()), claude: source(await claudeFixture()) }), plain);
-	assert.equal(cells.gpt?.compact, "GPT wk ▮▯▯ · 126 cr");
-	assert.equal(cells.claude?.compact, "Claude 5h ▯▯▯ · wk ▮▯▯");
-	assert.equal(cells.gpt?.table, "GPT wk ▮▮▯▯▯▯ 40% · 10-22 21:00 · 126 cr");
-	assert.equal(cells.claude?.table, "Claude 5h ▯▯▯▯▯▯ 12% · 10-19 02:19 · wk ▮▮▮▯▯▯ 55% · 10-23 06:59");
+	assert.equal(cells.gpt, "GPT ▮▯▯ · 126 cr");
+	assert.equal(cells.claude, "Claude 5h ▯▯▯ · wk ▮▯▯");
+	assert.doesNotMatch([cells.gpt, cells.claude].join(" │ "), /\d+%|\d\d:\d\d|10-\d\d/);
 });
 
 test("shows unknown, expired and missing windows as ? rather than zero or old values", async () => {
@@ -53,15 +51,13 @@ test("shows unknown, expired and missing windows as ? rather than zero or old va
 		codex: { ...source(codexFixture({ resetsAt: Math.floor((NOW + HOUR) / 1000) })), staleAfterMs: 24 * HOUR },
 		claude: { ...source({ ...fixture, week: { usedPercent: null, resetsAtMs: null } }), staleAfterMs: 24 * HOUR },
 	}), plain);
-	assert.equal(cells.gpt?.compact, "GPT wk ? · 126 cr");
-	assert.equal(cells.gpt?.table, "GPT wk ? · 126 cr");
-	assert.equal(cells.claude?.compact, "Claude 5h ? · wk ?");
-	assert.equal(cells.claude?.table, "Claude 5h ? · wk ?");
+	assert.equal(cells.gpt, "GPT ? · 126 cr");
+	assert.equal(cells.claude, "Claude 5h ? · wk ?");
 
 	const missing = accountQuotaCells(input({ claude: source({ ...fixture, session: undefined }) }), plain);
-	assert.equal(missing.claude?.compact, "Claude 5h ? · wk ▮▯▯");
+	assert.equal(missing.claude, "Claude 5h ? · wk ▮▯▯");
 	const empty = accountQuotaCells(input({ claude: source({ session: undefined, week: undefined, fetchedAtMs: NOW }) }), plain);
-	assert.equal(empty.claude?.compact, "Claude ?");
+	assert.equal(empty.claude, "Claude ?");
 });
 
 test("distinguishes disabled, loading, failed and last-good sources", async () => {
@@ -69,10 +65,10 @@ test("distinguishes disabled, loading, failed and last-good sources", async () =
 	assert.deepEqual(accountQuotaCells(input(), plain), { gpt: undefined, claude: undefined });
 	assert.deepEqual(accountQuotaCells(input({ codex: source(undefined), claude: source(undefined) }), plain), { gpt: undefined, claude: undefined });
 	const failed = accountQuotaCells(input({ codex: source(undefined, true), claude: source(undefined, true) }), plain);
-	assert.deepEqual(failed, { gpt: { compact: "GPT ?", table: "GPT ?" }, claude: { compact: "Claude ?", table: "Claude ?" } });
+	assert.deepEqual(failed, { gpt: "GPT ?", claude: "Claude ?" });
 	const retained = accountQuotaCells(input({ codex: source(codexFixture(), true), claude: source(fixture, true) }), plain);
-	assert.equal(retained.gpt?.compact, "GPT wk ▮▯▯ · 126 cr");
-	assert.equal(retained.claude?.compact, "Claude 5h ▯▯▯ · wk ▮▯▯");
+	assert.equal(retained.gpt, "GPT ▮▯▯ · 126 cr");
+	assert.equal(retained.claude, "Claude 5h ▯▯▯ · wk ▮▯▯");
 });
 
 test("marks snapshots older than the stale interval in text and dims every segment", async () => {
@@ -86,9 +82,8 @@ test("marks snapshots older than the stale interval in text and dims every segme
 		codex: source(codexFixture()),
 		claude: source(await claudeFixture()),
 	}), record);
-	assert.equal(cells.gpt?.compact, "~GPT wk ▮▯▯ · 126 cr");
-	assert.equal(cells.claude?.compact, "~Claude 5h ▯▯▯ · wk ▮▯▯");
-	assert.equal(cells.gpt?.table, "~GPT wk ▮▮▯▯▯▯ 40% · 10-22 21:00 · 126 cr");
+	assert.equal(cells.gpt, "~GPT ▮▯▯ · 126 cr");
+	assert.equal(cells.claude, "~Claude 5h ▯▯▯ · wk ▮▯▯");
 	assert.ok(tones.length > 0);
 	assert.deepEqual(new Set(tones), new Set(["dim"]));
 });
@@ -104,17 +99,15 @@ test("keeps zero, over-limit, credits-only and unlimited values distinct", async
 		codex: source(codexFixture({ usedPercent: 0 })),
 		claude: source({ ...fixture, session: { usedPercent: 104, resetsAtMs: NOW + HOUR } }),
 	}), record);
-	assert.equal(cells.gpt?.compact, "GPT wk ▯▯▯ · 126 cr");
-	assert.match(cells.gpt?.table ?? "", /^GPT wk ▯▯▯▯▯▯ 0% · /);
-	assert.equal(cells.claude?.compact, "Claude 5h ▮▮▮ >100% · wk ▮▯▯");
-	assert.match(cells.claude?.table ?? "", /^Claude 5h ▮▮▮▮▮▮ 104% · /);
-	assert.ok(tones.some(([tone, text]) => tone === "error" && text === "104%"));
+	assert.equal(cells.gpt, "GPT ▯▯▯ · 126 cr");
+	assert.equal(cells.claude, "Claude 5h ▮▮▮ >100% · wk ▮▯▯");
+	assert.ok(tones.some(([tone, text]) => tone === "error" && text === " >100%"));
 	assert.ok(tones.some(([tone, text]) => tone === "error" && text === "Claude"));
 
 	const creditsOnly = accountQuotaCells(input({ codex: source(codexFixture({ weekly: false })) }), plain);
-	assert.equal(creditsOnly.gpt?.compact, "GPT · 126 cr");
+	assert.equal(creditsOnly.gpt, "GPT · 126 cr");
 	const unlimited = accountQuotaCells(input({ codex: source(codexFixture({ credits: { hasCredits: false, unlimited: true } })) }), plain);
-	assert.equal(unlimited.gpt?.compact, "GPT wk ▮▯▯ · ∞ cr");
+	assert.equal(unlimited.gpt, "GPT ▮▯▯ · ∞ cr");
 	const nothing = accountQuotaCells(input({ codex: source(codexFixture({ weekly: false, credits: null })) }), plain);
 	assert.equal(nothing.gpt, undefined);
 });
