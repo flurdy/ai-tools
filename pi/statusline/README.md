@@ -74,11 +74,11 @@ Compact mode is a single line. As space narrows, less-important cells are droppe
 π │ 🔒 │ Terra 5 │ ⚡Hi │ ▮▯▯ ctx │ GPT ▮▮▯▯▯ · 126 cr │ Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯ │ OR $75 │ 12m │ ~/project │ main │ ⇡10 ⇣2 │ ◈ session
 ```
 
-When the full line does not fit, the path, duration, PR and session cells go first; the guard, `ctx` and quota cells stay until the narrowest fallback, which keeps only the agent, guard, model, `ctx`, Kubernetes context, branch, divergence and session.
+The full line uses five-block quota gauges. When it does not fit, those gauges shrink to three blocks before the path, duration, PR and session cells are dropped. The guard, `ctx` and quota cells stay until the narrowest fallback, which keeps only the agent, guard, model, `ctx`, Kubernetes context, branch, divergence and session.
 
 ### Table footer
 
-Table mode uses two bordered rows: location/session information on top, then model, capacity, usage, and session duration below. It uses the same five-block quota cells as compact mode:
+Table mode uses two bordered rows: location/session information on top, then model, capacity, usage, and session duration below. Like compact mode, it starts with five-block quota gauges and tries three blocks if needed before dropping the path or falling back to one line:
 
 ```text
 row 1: example-host │ ~/project │ main │ ⇡10 ⇣2 │ ◉ P4:4 ◐1 │ ◈ session
@@ -139,7 +139,7 @@ The latest prompt is taken from your submitted input, so it can expose task deta
 - whatever model is active, the cached Codex account's weekly used capacity as `GPT`, with the ChatGPT/Codex credit balance as `GPT … · 126 cr` (or `∞ cr`)
 - whatever model is active, the cached Claude Code account's 5-hour session and all-model weekly usage as `Claude 5h … · wk …`
 - for `pi-claude-cli` models, a separate `Claude turn …` cell when the adapter's latest binding window adds a warning, limit, overage or per-model window the account cell lacks
-- both layouts use five-block quota gauges whose fill is the used share, like `ctx`; `/quota` provides percentages and reset details
+- both layouts use five-block quota gauges, shrinking to three blocks when space is tight; fill is the used share, like `ctx`, and `/quota` provides percentages and reset details
 - optional cached OpenRouter account credit balance labelled `OR`, immediately before the estimated session cost
 - session duration
 - abbreviated cwd

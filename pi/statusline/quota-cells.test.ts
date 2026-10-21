@@ -44,6 +44,12 @@ test("renders compact five-block account cells shared by both footer layouts", a
 	assert.doesNotMatch([cells.gpt, cells.claude].join(" │ "), /\d+%|\d\d:\d\d|10-\d\d/);
 });
 
+test("can shorten account gauges to three blocks without changing labels or credits", async () => {
+	const cells = accountQuotaCells(input({ gaugeWidth: 3, codex: source(codexFixture()), claude: source(await claudeFixture()) }), plain);
+	assert.equal(cells.gpt, "GPT ▮▯▯ · 126 cr");
+	assert.equal(cells.claude, "Claude 5h ▯▯▯ · wk ▮▯▯");
+});
+
 test("shows unknown, expired and missing windows as ? rather than zero or old values", async () => {
 	const fixture = await claudeFixture();
 	const cells = accountQuotaCells(input({

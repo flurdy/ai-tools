@@ -390,11 +390,11 @@ export default function piStatusline(pi: ExtensionAPI): void {
 			};
 
 			/** The binding window from the latest pi-claude-cli turn, labelled apart from the account snapshot. */
-			function claudeTurnCell(view: ClaudeQuotaView): string {
+			function claudeTurnCell(view: ClaudeQuotaView, gaugeWidth: 3 | 5): string {
 				const tone = claudeQuotaTone(view);
 				const fill = (s: string) => theme.fg(tone, s);
 				const barColors = { ok: fill, warn: fill, crit: fill, empty: colors.empty };
-				const gauge = view.usedPercent === null ? "" : ` ${bar(view.usedPercent, 5, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, barColors)}`;
+				const gauge = view.usedPercent === null ? "" : ` ${bar(view.usedPercent, gaugeWidth, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, barColors)}`;
 				const label = theme.fg(tone, `Claude turn ${view.window}`);
 				const flagText = `${view.over ? " >100%" : ""}${view.state === "rejected" ? " limit" : ""}`;
 				const flags = flagText ? theme.fg(tone, flagText) : "";
@@ -402,7 +402,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				return `${label}${gauge}${flags}${extra}`;
 			}
 
-			function segments() {
+			function segments(gaugeWidth: 3 | 5 = 5) {
 				const git = getGitInfo(ctx.cwd, footerData.getGitBranch());
 				void gitDivergenceCache?.refresh(git.branch);
 				const divergence = formatGitDivergence(gitDivergenceCache?.divergenceFor(git.branch));
@@ -420,13 +420,14 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const nowMs = Date.now();
 				const account = accountQuotaCells({
 					nowMs,
+					gaugeWidth,
 					codex: codexCache && { value: codexCache.value, failed: codexCache.failed, staleAfterMs: codexStaleMs },
 					claude: claudeCache && { value: claudeCache.value, failed: claudeCache.failed, staleAfterMs: claudeStaleMs },
 				}, (tone, text) => theme.fg(tone, text));
 				const claudeSnapshot = claudeCache?.value;
 				const claudeSnapshotFresh = Boolean(claudeSnapshot && nowMs - claudeSnapshot.fetchedAtMs <= claudeStaleMs);
 				const claudeTurn = claudeQuotaView(ctx.model?.provider, statuses.get(CLAUDE_QUOTA_STATUS_KEY), nowMs);
-				const turn = claudeTurn && adapterAlertVisible(claudeTurn, claudeSnapshotFresh) ? claudeTurnCell(claudeTurn) : "";
+				const turn = claudeTurn && adapterAlertVisible(claudeTurn, claudeSnapshotFresh) ? claudeTurnCell(claudeTurn, gaugeWidth) : "";
 				const openRouterCredits = openRouterCreditsCache?.credits;
 				const openRouterBalance = openRouterCredits
 					? theme.fg(openRouterCreditsCache.isStale() ? "dim" : "success", `OR $${Math.round(openRouterCredits.remainingCredits)}`)
@@ -463,12 +464,15 @@ export default function piStatusline(pi: ExtensionAPI): void {
 			}
 
 			function compact(width: number): string[] {
-				const s = segments();
+				let s = segments();
+				const fullLine = () => joinCells([s.agent, s.guard, s.model, s.effort, s.bars, s.gpt, s.claude, s.claudeTurn, s.openRouterBalance, s.k8s, s.duration, s.path, s.repo, s.branch, s.divergence, s.pr, s.session]);
+				let line = fullLine();
+				if (visibleWidth(line) <= width) return [line];
+				s = segments(3);
+				line = fullLine();
+				if (visibleWidth(line) <= width) return [line];
 				const quotas = [s.gpt, s.claude, s.claudeTurn, s.openRouterBalance];
-				let cells = [joinCells([s.agent, s.guard, s.model, s.effort]), s.bars, ...quotas, s.k8s, s.duration, s.path, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
-				let line = joinCells(cells);
-				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
-				cells = [joinCells([s.agent, s.guard, s.model, s.effort]), s.bars, ...quotas, s.k8s, s.duration, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
+				let cells = [joinCells([s.agent, s.guard, s.model, s.effort]), s.bars, ...quotas, s.k8s, s.duration, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
 				line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
 				cells = [joinCells([s.agent, s.guard, s.model, s.effort]), s.bars, ...quotas, s.k8s, s.branch].filter(Boolean);
@@ -480,10 +484,11 @@ export default function piStatusline(pi: ExtensionAPI): void {
 			}
 
 			function table(width: number): string[] {
-				const s = segments();
+				let s = segments();
 				const border = (text: string) => theme.fg("border", text);
 				let row1 = [s.host, s.k8s, s.path, s.repo, s.branch, s.divergence, s.pr, s.beads, s.session].filter(Boolean);
-				const row2 = [s.agent, s.guard, s.model, s.effort, s.ctx, s.gpt, s.claude, s.claudeTurn, s.openRouterBalance, s.cost, s.duration].filter(Boolean);
+				const usageCells = () => [s.agent, s.guard, s.model, s.effort, s.ctx, s.gpt, s.claude, s.claudeTurn, s.openRouterBalance, s.cost, s.duration].filter(Boolean);
+				let row2 = usageCells();
 
 				function widthsFor(cells: string[]): number[] {
 					return cells.map((cell) => visibleWidth(cell) + 2);
@@ -501,7 +506,14 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				let row2Widths = widthsFor(row2);
 				let target = Math.max(totalWidth(row1Widths), totalWidth(row2Widths));
 
-				// If the on-disk path makes the table too wide, drop only that cell first;
+				if (target > width) {
+					s = segments(3);
+					row2 = usageCells();
+					row2Widths = widthsFor(row2);
+					target = Math.max(totalWidth(row1Widths), totalWidth(row2Widths));
+				}
+
+				// If the on-disk path still makes the table too wide, drop that cell;
 				// the worktree repo + branch usually carry the more useful context.
 				if (target > width && s.path) {
 					row1 = [s.host, s.k8s, s.repo, s.branch, s.divergence, s.pr, s.beads, s.session].filter(Boolean);

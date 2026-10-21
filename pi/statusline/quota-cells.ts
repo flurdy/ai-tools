@@ -20,6 +20,8 @@ export interface SourceState<T> {
 
 export interface AccountQuotaInput {
 	nowMs: number;
+	/** Five at full width; three when the footer needs a smaller fit. */
+	gaugeWidth?: 3 | 5;
 	/** Undefined when the source is disabled. */
 	codex: SourceState<CodexQuotaSnapshot> | undefined;
 	claude: SourceState<ClaudeAccountUsage> | undefined;
@@ -36,13 +38,13 @@ function worst(tones: Array<UsageTone | undefined>): Tone {
 }
 
 /** Fill is the used share, like ctx. Resets still invalidate old values, but are not rendered. */
-function windowGauge(window: UsageWindow | undefined, nowMs: number, stale: boolean, paint: Paint): { text: string; tone?: UsageTone } {
+function windowGauge(window: UsageWindow | undefined, nowMs: number, stale: boolean, paint: Paint, gaugeWidth: 3 | 5 = 5): { text: string; tone?: UsageTone } {
 	const used = window?.usedPercent ?? null;
 	if (!window || used === null || (window.resetsAtMs !== null && nowMs >= window.resetsAtMs)) return { text: paint("dim", "?") };
 	const tone = codexQuotaTone(used);
 	const shade = (fill: Tone) => (text: string) => paint(stale ? "dim" : fill, text);
 	const colors = { ok: shade("success"), warn: shade("warning"), crit: shade("error"), empty: shade("dim") };
-	const gauge = bar(used, 5, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, colors);
+	const gauge = bar(used, gaugeWidth, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, colors);
 	const over = used > 100 ? paint(stale ? "dim" : tone, " >100%") : "";
 	return { text: `${gauge}${over}`, tone };
 }
@@ -58,7 +60,7 @@ function gptCell(input: AccountQuotaInput, paint: Paint): string | undefined {
 	const stale = input.nowMs - snapshot.fetchedAtMs > source.staleAfterMs;
 	const credits = snapshot.credits && paint(stale ? "dim" : "success", formatCodexCredits(snapshot.credits));
 	if (!snapshot.weekly && !credits) return undefined;
-	const weekly = snapshot.weekly && windowGauge(snapshot.weekly, input.nowMs, stale, paint);
+	const weekly = snapshot.weekly && windowGauge(snapshot.weekly, input.nowMs, stale, paint, input.gaugeWidth);
 	const label = provider("GPT", weekly ? worst([weekly.tone]) : "success", stale, paint);
 	return [weekly ? `${label} ${weekly.text}` : label, credits].filter(Boolean).join(" · ");
 }
@@ -69,8 +71,8 @@ function claudeCell(input: AccountQuotaInput, paint: Paint): string | undefined 
 	if (!source || !usage) return source?.failed ? paint("dim", "Claude ?") : undefined;
 	if (!usage.session && !usage.week) return paint("dim", "Claude ?");
 	const stale = input.nowMs - usage.fetchedAtMs > source.staleAfterMs;
-	const session = windowGauge(usage.session, input.nowMs, stale, paint);
-	const week = windowGauge(usage.week, input.nowMs, stale, paint);
+	const session = windowGauge(usage.session, input.nowMs, stale, paint, input.gaugeWidth);
+	const week = windowGauge(usage.week, input.nowMs, stale, paint, input.gaugeWidth);
 	const label = provider("Claude", worst([session.tone, week.tone]), stale, paint);
 	const name = (text: string) => stale ? paint("dim", text) : text;
 	return `${label} ${name("5h")} ${session.text} · ${name("wk")} ${week.text}`;

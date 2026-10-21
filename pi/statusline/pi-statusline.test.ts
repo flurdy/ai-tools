@@ -482,12 +482,24 @@ test("shows GPT and Claude account quotas together, independent of the active mo
 				assert.doesNotMatch(table, /\d+%|\d\d:\d\d/);
 				assert.ok(visibleWidth(table.split("\n")[3] ?? "") < 160, table);
 				assert.doesNotMatch(table.split("\n")[3] ?? "", /│ \d\d:\d\d │/);
+				const smallerQuotas = /GPT ▮▯▯ · 13 cr │ Claude 5h ▯▯▯ · wk ▮▯▯/;
+				const tightTableWidth = visibleWidth(footer.render(300)[0] ?? "") - 1;
+				const tightTable = footer.render(tightTableWidth);
+				assert.equal(tightTable.length, 5);
+				assert.ok(tightTable.every(line => visibleWidth(line) <= tightTableWidth));
+				assert.match(plainLines(tightTable), smallerQuotas);
+				process.env.PI_STATUSLINE = "compact";
+				const fullLine = footer.render(300)[0] ?? "";
+				const tightLine = plainLines(footer.render(visibleWidth(fullLine) - 1));
+				assert.match(tightLine, smallerQuotas);
+				assert.match(tightLine, /layout-test-session/);
+				assert.match(tightLine, /feature\/statusline-layout-test/);
 				statuses.set("session-mode", "plan");
 				verifyLayouts(footer, "🔍");
 				process.env.PI_STATUSLINE = "compact";
 				const narrow = plainLines(footer.render(130));
 				assert.match(narrow, /🔍.*ctx.*GPT.*Claude 5h.*feature\/statusline-layout-test/, narrow);
-				assert.doesNotMatch(narrow, /layout-test-session/);
+				assert.match(narrow, smallerQuotas);
 				for (const provider of ["openai-codex", "pi-claude-cli", "openrouter"]) controls.selectModel(provider);
 				await sleep(200);
 				assert.equal((await methods()).filter((method) => method === "account/rateLimits/read").length, 1);
@@ -529,6 +541,10 @@ test("renders the reported Claude window with its bar in both layouts", () => wi
 	assert.ok(table.includes("Claude turn 5h ▮▮▮▯▯"), table.join(" | "));
 	assert.doesNotMatch(table.join(" | "), /\d+%|\d\d:\d\d/);
 	assert.doesNotMatch(table.join(" "), /\bWk\b|GPT/);
+	const fullWidth = visibleWidth(footer.render(240)[0] ?? "");
+	const narrow = footer.render(fullWidth - 1);
+	assert.match(plainLines(narrow), /Claude turn 5h ▮▯▯(?: │|$)/);
+	assert.ok(narrow.every(line => visibleWidth(line) < fullWidth));
 }, { provider: "pi-claude-cli", modelId: "claude-opus-5-5" }));
 
 test("marks overage, extra usage and rejection, and shows a label without unknown utilization", () => withFooter((footer, statuses) => {
