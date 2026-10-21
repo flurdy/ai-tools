@@ -12,7 +12,9 @@ Three standalone CLIs print subscription quota or account credits as JSON. They 
 request for `account/rateLimits/read`, selecting the canonical `codex` bucket and the seven-day
 window by duration. It reads no credential files, scrapes no interactive screen, runs no model turn,
 and never changes the signed-in account, model, limits, or balance. The lookup works whichever
-provider Pi is currently using.
+provider Pi is currently using. `codex-quota` always prints the credit balance; the footer shows it
+only while the weekly gauge is red (see the statusline's
+[critical-only credits](../statusline/README.md#critical-only-credits)).
 
 ## Install
 

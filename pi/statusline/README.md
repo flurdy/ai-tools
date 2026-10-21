@@ -73,10 +73,10 @@ The examples below are schematic: they use placeholder values and omit terminal 
 Compact mode is a single line. As space narrows, less-important cells are dropped before the line is truncated.
 
 ```text
-π │ 🔒 │ Terra 5 │ ⚡Hi │ ▮▯▯ ctx │ GPT ▮▮▯▯▯ · 126 cr │ Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯ │ OR $75 │ 12m │ ~/project │ main │ ⇡10 ⇣2 │ ◈ session
+π │ 🔒 │ Terra 5 │ ⚡Hi │ ▮▯▯ ctx │ GPT ▮▮▯▯▯ │ Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯ │ OR $75 │ 12m │ ~/project │ main │ ⇡10 ⇣2 │ ◈ session
 ```
 
-The full line uses five-block quota gauges. When it does not fit, those gauges shrink to three blocks before the path, duration, PR and session cells are dropped. The guard, `ctx` and quota cells stay until the narrowest fallback, which keeps only the agent, guard, model, `ctx`, Kubernetes context, branch, divergence and session.
+The full line uses five-block quota gauges. A red `GPT` gauge adds the account's credit balance (`GPT ▮▮▮▮▯ · 126 cr`), see [critical-only credits](#critical-only-credits). When it does not fit, those gauges shrink to three blocks before the path, duration, PR and session cells are dropped. The guard, `ctx` and quota cells stay until the narrowest fallback, which keeps only the agent, guard, model, `ctx`, Kubernetes context, branch, divergence and session.
 
 ### Table footer
 
@@ -84,7 +84,7 @@ Table mode uses two bordered rows: location/session information on top, then mod
 
 ```text
 row 1: example-host │ ~/project │ main │ ⇡10 ⇣2 │ ◉ P4:4 ◐1 │ ◈ session
-row 2: π │ 🔒2 │ Terra 5 │ ⚡Hi │ ▮▮▯▯▯▯ ctx │ GPT ▮▮▯▯▯ · 126 cr │ Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯ │ OR $75 │ est $0 │ 12m
+row 2: π │ 🔒2 │ Terra 5 │ ⚡Hi │ ▮▮▯▯▯▯ ctx │ GPT ▮▮▯▯▯ │ Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯ │ OR $75 │ est $0 │ 12m
 ```
 
 Percentages and reset dates stay in `/quota`, not the footer. Reset times still invalidate expired quota windows, which show `?` until refreshed.
@@ -138,7 +138,7 @@ The latest prompt is taken from your submitted input, so it can expose task deta
 - one session guard cell, pinned in narrow and wide layouts, with a worktree count only for multiple implement leases and a documented text fallback
 - `π` agent marker in its own cell; a compact model name such as `Sol 6.1`, `Terra 5.6`, or `Sonnet 5.5`, with `+` for a trailing GPT Pro variant and `OR` only for OpenRouter; and thinking level
 - cautious context-capacity bar labelled `ctx` (green through 33%, yellow through 66%, then red); conversation context only, never subscription usage
-- whatever model is active, the cached Codex account's weekly used capacity as `GPT`, with the ChatGPT/Codex credit balance as `GPT … · 126 cr` (or `∞ cr`)
+- whatever model is active, the cached Codex account's weekly used capacity as `GPT`; its ChatGPT/Codex credit balance (`· 126 cr`, `· 0 cr` or `· ∞ cr`) appears only while that weekly gauge is red
 - whatever model is active, the cached Claude Code account's 5-hour session and all-model weekly usage as `Claude 5h … · wk …`
 - for `pi-claude-cli` models, a separate `Claude turn …` cell when the adapter's latest binding window adds a warning, limit, overage or per-model window the account cell lacks
 - both layouts use five-block quota gauges, shrinking to three blocks when space is tight; fill is the used share, like `ctx`, and `/quota` provides percentages and reset details
@@ -176,9 +176,15 @@ The table footer discovers the nearest parent `.beads` workspace. At a validated
 
 The `GPT` cell queries the authenticated Codex CLI's machine-readable `codex app-server` API (`account/rateLimits/read`) whatever provider Pi is using, because skill routing and second opinions use several accounts in one session. It does not scrape the interactive `/status` screen, read Codex credential files, or run a model turn. See [account quota caching](#account-quota-caching) for refresh, failure and staleness behaviour; a weekly window whose reset has passed shows `GPT ?` until the next lookup rather than its old value.
 
-Quota and credits come from the same canonical `rateLimitsByLimitId.codex` snapshot, falling back to `rateLimits` when that bucket is absent. The weekly window is identified by its approximately seven-day duration rather than by assuming it is always primary or secondary. A successful response without a weekly window hides the gauge but can still show credits. An initial lookup failure renders a dim `GPT ?` and no credit balance, including when the Codex CLI is not installed (set `PI_STATUSLINE_CODEX_QUOTA=0` to hide it); a later failure retains the last successful snapshot. The cell is hidden only when disabled or before the first lookup completes.
+Quota and credits come from the same canonical `rateLimitsByLimitId.codex` snapshot, falling back to `rateLimits` when that bucket is absent. The weekly window is identified by its approximately seven-day duration rather than by assuming it is always primary or secondary. A successful response without a weekly window renders `GPT ?`. An initial lookup failure renders a dim `GPT ?` and no credit balance, including when the Codex CLI is not installed (set `PI_STATUSLINE_CODEX_QUOTA=0` to hide it); a later failure retains the last successful snapshot. The cell is hidden only when disabled or before the first lookup completes.
 
-The [`CreditsSnapshot`](https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/schema/typescript/v2/CreditsSnapshot.ts) fields are validated separately, so malformed credits do not hide valid weekly quota. Both flags must be booleans. `unlimited: true` displays `∞ cr`; otherwise a balance appears only with `hasCredits: true` and a finite, non-negative plain decimal string. The footer rounds numeric balances to whole credits for a compact display, including an explicitly reported zero. Absent, null, malformed, or unavailable credit data is hidden, not converted to zero. A successful refresh replaces the entire snapshot, clearing credits that are no longer reported. Credits share the quota lookup, timeout, failure retention and age-based staleness; a passed weekly reset affects only the weekly gauge. There is no second request.
+### Critical-only credits
+
+The credit balance is always available from `/quota`, so the footer shows it only while the same account's weekly gauge is red: the shared severity reaches `CODEX_QUOTA_CRIT_PERCENT` (75%), including 100%. Green and yellow usage show the gauge alone, and a later lower reading hides the balance again. One rounded percentage decides the gauge's fill colour, the `GPT` label colour and the balance, so a fractional reading never shows a yellow gauge with a balance or a red gauge without one, and shrinking the gauge from five to three blocks changes nothing. A missing, expired, unknown or failed weekly window is unknown (`GPT ?`), never exhaustion, so no balance is shown however large it is; a red `ctx` gauge or a red Claude window reveals nothing about GPT. A retained snapshot keeps its own verdict: age dims the whole cell with the `~` prefix, balance included, rather than inventing a new one. Visibility is decided at render time from the cached snapshot; nothing is requested, discarded or re-fetched to show or hide the balance.
+
+The Claude cell has no balance suffix because no safe actual Claude subscription balance source exists yet (that assessment is tracked separately). When one does, it must follow the equivalent rule: hidden during normal use and shown only while the same Claude account's `5h` or `wk` window is red, never because of GPT usage, conversation context or the active model. This README records that integration as pending; it does not imply Claude credit support.
+
+The [`CreditsSnapshot`](https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/schema/typescript/v2/CreditsSnapshot.ts) fields are validated separately, so malformed credits do not hide valid weekly quota. Both flags must be booleans. `unlimited: true` displays `∞ cr`; otherwise a balance appears only with `hasCredits: true` and a finite, non-negative plain decimal string. The footer rounds numeric balances to whole credits for a compact display, including an explicitly reported zero. Absent, null, malformed, or unavailable credit data is hidden, not converted to zero. A successful refresh replaces the entire snapshot, clearing credits that are no longer reported. Credits share the quota lookup, timeout, failure retention and age-based staleness; a passed weekly reset makes the window unknown, which also hides the balance until the next lookup. There is no second request.
 
 This is **ChatGPT/Codex credit capacity, not OpenAI API-platform billing credit or a dollar balance**. The displayed quota and credits belong to the account authenticated in the Codex CLI. They represent Pi's active OpenAI-Codex account only when Pi and Codex are signed into the same ChatGPT account; the statusline does not verify account alignment.
 

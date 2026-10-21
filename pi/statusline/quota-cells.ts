@@ -37,13 +37,16 @@ function worst(tones: Array<UsageTone | undefined>): Tone {
 	return known.length === 0 ? "dim" : TONE_ORDER[Math.max(...known.map((tone) => TONE_ORDER.indexOf(tone)))];
 }
 
-/** Fill is the used share, like ctx. Resets still invalidate old values, but are not rendered. */
+/**
+ * Fill is the used share, like ctx. Resets still invalidate old values, but are
+ * not rendered. One severity paints the fill, the label and credit visibility.
+ */
 function windowGauge(window: UsageWindow | undefined, nowMs: number, stale: boolean, paint: Paint, gaugeWidth: 3 | 5 = 5): { text: string; tone?: UsageTone } {
 	const used = window?.usedPercent ?? null;
 	if (!window || used === null || (window.resetsAtMs !== null && nowMs >= window.resetsAtMs)) return { text: paint("dim", "?") };
 	const tone = codexQuotaTone(used);
 	const shade = (fill: Tone) => (text: string) => paint(stale ? "dim" : fill, text);
-	const colors = { ok: shade("success"), warn: shade("warning"), crit: shade("error"), empty: shade("dim") };
+	const colors = { ok: shade(tone), warn: shade(tone), crit: shade(tone), empty: shade("dim") };
 	const gauge = bar(used, gaugeWidth, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, colors);
 	const over = used > 100 ? paint(stale ? "dim" : tone, " >100%") : "";
 	return { text: `${gauge}${over}`, tone };
@@ -53,16 +56,20 @@ function provider(label: string, tone: Tone, stale: boolean, paint: Paint): stri
 	return stale ? paint("dim", `~${label}`) : paint(tone, label);
 }
 
+/**
+ * Credits stay in /quota during ordinary use and appear here only while this
+ * account's weekly gauge is critical. A missing or expired window is unknown,
+ * not exhausted; a stale or failed-refresh snapshot keeps its own verdict, dimmed.
+ */
 function gptCell(input: AccountQuotaInput, paint: Paint): string | undefined {
 	const source = input.codex;
 	const snapshot = source?.value;
 	if (!source || !snapshot) return source?.failed ? paint("dim", "GPT ?") : undefined;
 	const stale = input.nowMs - snapshot.fetchedAtMs > source.staleAfterMs;
-	const credits = snapshot.credits && paint(stale ? "dim" : "success", formatCodexCredits(snapshot.credits));
-	if (!snapshot.weekly && !credits) return undefined;
-	const weekly = snapshot.weekly && windowGauge(snapshot.weekly, input.nowMs, stale, paint, input.gaugeWidth);
-	const label = provider("GPT", weekly ? worst([weekly.tone]) : "success", stale, paint);
-	return [weekly ? `${label} ${weekly.text}` : label, credits].filter(Boolean).join(" · ");
+	const weekly = windowGauge(snapshot.weekly, input.nowMs, stale, paint, input.gaugeWidth);
+	const label = provider("GPT", worst([weekly.tone]), stale, paint);
+	const credits = weekly.tone === "error" && snapshot.credits && paint(stale ? "dim" : "success", formatCodexCredits(snapshot.credits));
+	return [`${label} ${weekly.text}`, credits].filter(Boolean).join(" · ");
 }
 
 function claudeCell(input: AccountQuotaInput, paint: Paint): string | undefined {

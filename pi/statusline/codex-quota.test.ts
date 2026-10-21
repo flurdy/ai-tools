@@ -34,6 +34,15 @@ test("uses warning and error quota thresholds at 60% and 75%", () => {
 	assert.equal(codexQuotaTone(75), "error");
 });
 
+test("rounds severity exactly as the bar rounds its fill colour", () => {
+	assert.equal(codexQuotaTone(59.4), "success");
+	assert.equal(codexQuotaTone(59.5), "warning");
+	assert.equal(codexQuotaTone(74.4), "warning");
+	assert.equal(codexQuotaTone(74.5), "error");
+	assert.equal(bar(74.5, 5, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, colors), "[crit:▮▮▮][empty:▯▯]");
+	assert.equal(bar(74.4, 5, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, colors), "[warn:▮▮▮][empty:▯▯]");
+});
+
 test("selects a weekly primary window", () => {
 	const quota = selectCodexWeeklyQuota(
 		{

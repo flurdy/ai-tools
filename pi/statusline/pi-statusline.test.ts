@@ -325,9 +325,10 @@ for (const [provider, modelId, label] of [
 	}, { provider, modelId }));
 }
 
-function rateLimits(credits: unknown, weekly = true, resetsAt = Math.floor(Date.now() / 1000) + 3600) {
+/** Critical weekly usage by default, so credit tests exercise the visible-suffix path. */
+function rateLimits(credits: unknown, weekly = true, resetsAt = Math.floor(Date.now() / 1000) + 3600, usedPercent = 80) {
 	return { result: { rateLimits: {
-		primary: weekly ? { usedPercent: 40, windowDurationMins: 10080, resetsAt } : null,
+		primary: weekly ? { usedPercent, windowDurationMins: 10080, resetsAt } : null,
 		secondary: null,
 		credits,
 	} } };
@@ -397,27 +398,47 @@ test("renders Codex credits from one cached lookup and never refreshes on model 
 	});
 });
 
-test("renders unlimited and zero credits without requiring a weekly window", async () => {
-	for (const [credits, text] of [
-		[{ hasCredits: false, unlimited: true, balance: null }, "∞ cr"],
-		[{ hasCredits: true, unlimited: false, balance: "0.00" }, "0 cr"],
-	] as const) {
-		await withCodexServer(rateLimits(credits, false), async (binary) => {
-			await withFooter((footer) => verifyCreditLayouts(footer, text), codexOptions(binary));
-		});
-	}
-	await withCodexServer(rateLimits(null, false), async (binary) => {
+test("hides credits while weekly usage is ordinary, in both layouts and at every width", async () => {
+	await withCodexServer(rateLimits({ hasCredits: true, unlimited: false, balance: "12.500" }, true, undefined, 40), async (binary) => {
 		await withFooter((footer) => {
-			assert.doesNotMatch(footer.render(240).join("\n"), /\bcr\b|∞|GPT/);
+			for (const layout of ["compact", "table"]) {
+				process.env.PI_STATUSLINE = layout;
+				for (const width of [80, 120, 180, 240]) {
+					const plain = plainLines(footer.render(width));
+					assert.doesNotMatch(plain, /\bcr\b|∞/, `${layout} at ${width}`);
+				}
+				assert.match(plainLines(footer.render(240)), /GPT ▮▮▯▯▯/, layout);
+			}
 		}, codexOptions(binary));
 	});
 });
 
-test("shows an expired weekly window as unknown and hides malformed credits", async () => {
+test("renders unlimited and zero credits beside a critical weekly gauge, never without one", async () => {
+	for (const [credits, text] of [
+		[{ hasCredits: false, unlimited: true, balance: null }, "∞ cr"],
+		[{ hasCredits: true, unlimited: false, balance: "0.00" }, "0 cr"],
+	] as const) {
+		await withCodexServer(rateLimits(credits), async (binary) => {
+			await withFooter((footer) => verifyCreditLayouts(footer, text), codexOptions(binary));
+		});
+	}
+	for (const credits of [{ hasCredits: true, unlimited: false, balance: "8" }, null]) {
+		await withCodexServer(rateLimits(credits, false), async (binary) => {
+			await withFooter((footer) => {
+				const plain = plainLines(footer.render(240));
+				assert.match(plain, /GPT \?/, plain);
+				assert.doesNotMatch(plain, /\bcr\b|∞/);
+			}, codexOptions(binary));
+		});
+	}
+});
+
+test("shows an expired weekly window as unknown without credits and hides malformed credits", async () => {
 	await withCodexServer(rateLimits({ hasCredits: true, unlimited: false, balance: "8" }, true, 1), async (binary) => {
 		await withFooter((footer) => {
-			verifyCreditLayouts(footer, "8 cr");
-			assert.match(plainLines(footer.render(240)), /GPT \? · 8 cr/);
+			const plain = plainLines(footer.render(240));
+			assert.match(plain, /GPT \?/, plain);
+			assert.doesNotMatch(plain, /\bcr\b|∞/);
 		}, codexOptions(binary));
 	});
 	await withCodexServer(rateLimits({ hasCredits: true, unlimited: false, balance: "NaN" }), async (binary) => {
@@ -479,7 +500,7 @@ test("shows GPT and Claude account quotas together, independent of the active mo
 			await withFooter(async (footer, statuses, controls) => {
 				process.env.PI_STATUSLINE = "compact";
 				const compact = plainLines(footer.render(300));
-				const quotas = /GPT ▮▮▯▯▯ · 13 cr │ Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯/;
+				const quotas = /GPT ▮▮▮▮▯ · 13 cr │ Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯/;
 				assert.match(compact, quotas, compact);
 				assert.doesNotMatch(compact, /\d\d:\d\d/);
 				process.env.PI_STATUSLINE = "table";
@@ -488,7 +509,7 @@ test("shows GPT and Claude account quotas together, independent of the active mo
 				assert.doesNotMatch(table, /\d+%|\d\d:\d\d/);
 				assert.ok(visibleWidth(table.split("\n")[3] ?? "") < 160, table);
 				assert.doesNotMatch(table.split("\n")[3] ?? "", /│ \d\d:\d\d │/);
-				const smallerQuotas = /GPT ▮▯▯ · 13 cr │ Claude 5h ▯▯▯ · wk ▮▯▯/;
+				const smallerQuotas = /GPT ▮▮▯ · 13 cr │ Claude 5h ▯▯▯ · wk ▮▯▯/;
 				const tightTableWidth = visibleWidth(footer.render(300)[0] ?? "") - 1;
 				const tightTable = footer.render(tightTableWidth);
 				assert.equal(tightTable.length, 5);

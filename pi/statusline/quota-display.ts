@@ -17,6 +17,8 @@ export function bar(pct: number, width: number, warn = 60, crit = 80, colors: Ba
 	return color(fill) + colors.empty(empty);
 }
 
+/** Rounds like bar() so labels, fill colour and credit visibility share one severity. */
 export function codexQuotaTone(usedPercent: number): "success" | "warning" | "error" {
-	return usedPercent >= CODEX_QUOTA_CRIT_PERCENT ? "error" : usedPercent >= CODEX_QUOTA_WARN_PERCENT ? "warning" : "success";
+	const p = Math.round(usedPercent);
+	return p >= CODEX_QUOTA_CRIT_PERCENT ? "error" : p >= CODEX_QUOTA_WARN_PERCENT ? "warning" : "success";
 }
