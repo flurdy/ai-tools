@@ -20,9 +20,30 @@ const colors = {
 	empty: (text: string) => `[empty:${text}]`,
 };
 
-test("renders quota bars without rounding usage upward", () => {
-	assert.equal(bar(67, 6, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, colors), "[warn:▮▮▮▮][empty:▯▯]");
+test("rounds filled blocks up without changing quota severity", () => {
+	assert.equal(bar(67, 6, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, colors), "[warn:▮▮▮▮▮][empty:▯]");
 	assert.equal(bar(100, 6, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, colors), "[crit:▮▮▮▮▮▮][empty:]");
+});
+
+test("ceil-fill examples retain context and account colours at every width", () => {
+	const examples = [
+		[14, 1, 1, 1], [26, 1, 2, 2], [32, 1, 2, 2], [34, 2, 2, 3],
+		[49, 2, 3, 3], [52, 2, 3, 4], [74, 3, 4, 5],
+		[89, 3, 5, 6], [91, 3, 5, 6], [100, 3, 5, 6],
+	] as const;
+	for (const [pct, three, five, six] of examples) {
+		for (const [width, filled] of [[3, three], [5, five], [6, six]]) {
+			for (const [warn, crit] of [[34, 67], [60, 75]]) {
+				const tone = pct >= crit ? "crit" : pct >= warn ? "warn" : "ok";
+				assert.equal(bar(pct, width, warn, crit, colors),
+					`[${tone}:${"▮".repeat(filled)}][empty:${"▯".repeat(width - filled)}]`);
+			}
+		}
+	}
+	for (const width of [3, 5, 6]) {
+		for (const pct of [-10, 0]) assert.equal(bar(pct, width, 60, 75, colors), `[ok:][empty:${"▯".repeat(width)}]`);
+		assert.equal(bar(110, width, 60, 75, colors), `[crit:${"▮".repeat(width)}][empty:]`);
+	}
 });
 
 test("uses warning and error quota thresholds at 60% and 75%", () => {
@@ -39,8 +60,8 @@ test("rounds severity exactly as the bar rounds its fill colour", () => {
 	assert.equal(codexQuotaTone(59.5), "warning");
 	assert.equal(codexQuotaTone(74.4), "warning");
 	assert.equal(codexQuotaTone(74.5), "error");
-	assert.equal(bar(74.5, 5, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, colors), "[crit:▮▮▮][empty:▯▯]");
-	assert.equal(bar(74.4, 5, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, colors), "[warn:▮▮▮][empty:▯▯]");
+	assert.equal(bar(74.5, 5, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, colors), "[crit:▮▮▮▮][empty:▯]");
+	assert.equal(bar(74.4, 5, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, colors), "[warn:▮▮▮▮][empty:▯]");
 });
 
 test("selects a weekly primary window", () => {

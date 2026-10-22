@@ -10,7 +10,7 @@ type BarColors = {
 
 export function bar(pct: number, width: number, warn = 60, crit = 80, colors: BarColors): string {
 	const p = Math.max(0, Math.min(100, Math.round(pct)));
-	const filled = Math.max(0, Math.min(width, Math.floor((p / 100) * width)));
+	const filled = Math.max(0, Math.min(width, Math.ceil((p / 100) * width)));
 	const fill = "▮".repeat(filled);
 	const empty = "▯".repeat(width - filled);
 	const color = p >= crit ? colors.crit : p >= warn ? colors.warn : colors.ok;

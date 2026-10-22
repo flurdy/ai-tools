@@ -500,18 +500,20 @@ test("shows GPT and Claude account quotas together, independent of the active mo
 			await withFooter(async (footer, statuses, controls) => {
 				process.env.PI_STATUSLINE = "compact";
 				const compact = plainLines(footer.render(300));
-				const quotas = /GPT ▮▮▮▮▯ 1d · 13 cr │ Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯(?! \d)/;
+				const quotas = /GPT ▮▮▮▮▯ 1d · 13 cr │ Claude 5h ▮▯▯▯▯ · wk ▮▮▮▯▯(?! \d)/;
 				assert.match(compact, quotas, compact);
+				assert.match(compact, /▯{5} ctx/);
 				assert.doesNotMatch(compact, /\d\d:\d\d/);
 				process.env.PI_STATUSLINE = "table";
 				const table = plainLines(footer.render(300));
 				assert.match(table, quotas, table);
+				assert.match(table, /▯{5} ctx/);
 				assert.doesNotMatch(table, /\d+%|\d\d:\d\d/);
 				assert.ok(visibleWidth(table.split("\n")[3] ?? "") < 160, table);
 				assert.doesNotMatch(table.split("\n")[3] ?? "", /│ \d\d:\d\d │/);
 				// Countdowns go first, then the gauges shrink from five blocks to three.
-				const plainQuotas = /GPT ▮▮▮▮▯ · 13 cr │ Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯(?! \d)/;
-				const smallerQuotas = /GPT ▮▮▯ · 13 cr │ Claude 5h ▯▯▯ · wk ▮▯▯(?! \d)/;
+				const plainQuotas = /GPT ▮▮▮▮▯ · 13 cr │ Claude 5h ▮▯▯▯▯ · wk ▮▮▮▯▯(?! \d)/;
+				const smallerQuotas = /GPT ▮▮▮ · 13 cr │ Claude 5h ▮▯▯ · wk ▮▮▯(?! \d)/;
 				const tighter = (lines: string[]) => footer.render(visibleWidth(lines[0] ?? "") - 1);
 				const plainTable = tighter(footer.render(300));
 				const tightTable = tighter(plainTable);
@@ -520,11 +522,15 @@ test("shows GPT and Claude account quotas together, independent of the active mo
 					assert.match(plainLines(lines), expected);
 				}
 				assert.ok(tightTable.every(line => visibleWidth(line) < visibleWidth(plainTable[0] ?? "")));
+				assert.match(plainLines(plainTable), /▯{5} ctx/);
+				assert.match(plainLines(tightTable), /▯{3} ctx/);
 				process.env.PI_STATUSLINE = "compact";
 				const plainLine = tighter(footer.render(300));
 				assert.match(plainLines(plainLine), plainQuotas);
+				assert.match(plainLines(plainLine), /▯{5} ctx/);
 				const tightLine = plainLines(tighter(plainLine));
 				assert.match(tightLine, smallerQuotas);
+				assert.match(tightLine, /▯{3} ctx/);
 				assert.match(tightLine, /layout-test-session/);
 				assert.match(tightLine, /feature\/statusline-layout-test/);
 				statuses.set("session-mode", "plan");
@@ -552,9 +558,9 @@ test("concurrent footers share one Claude lookup through the host cache", async 
 	try {
 		await withFakeClaude(async (invocations) => {
 			await withFooter(async (first) => {
-				assert.match(plainLines(first.render(300)), /Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯/);
+				assert.match(plainLines(first.render(300)), /Claude 5h ▮▯▯▯▯ · wk ▮▮▮▯▯/);
 				await withFooter((second) => {
-					assert.match(plainLines(second.render(300)), /Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯/);
+					assert.match(plainLines(second.render(300)), /Claude 5h ▮▯▯▯▯ · wk ▮▮▮▯▯/);
 				}, { claudeEnabled: true, quotaCacheDir });
 				assert.equal(await invocations(), 1);
 			}, { claudeEnabled: true, quotaCacheDir });
@@ -591,14 +597,14 @@ const CLAUDE_QUOTA_CELL = /Claude turn|(?:^|\s)(?:5h|Wk|Extra)(?:\s|$)|▮|>100%
 test("renders the reported Claude window with its bar in both layouts", () => withFooter((footer, statuses) => {
 	statuses.set("claude-rate-limit", claudeStatus());
 	const compact = claudeCells(footer, "compact");
-	assert.ok(compact.includes("Claude turn 5h ▮▮▮▯▯"), compact.join(" | "));
+	assert.ok(compact.includes("Claude turn 5h ▮▮▮▮▯"), compact.join(" | "));
 	const table = claudeCells(footer, "table");
-	assert.ok(table.includes("Claude turn 5h ▮▮▮▯▯"), table.join(" | "));
+	assert.ok(table.includes("Claude turn 5h ▮▮▮▮▯"), table.join(" | "));
 	assert.doesNotMatch(table.join(" | "), /\d+%|\d\d:\d\d/);
 	assert.doesNotMatch(table.join(" "), /\bWk\b|GPT/);
 	const fullWidth = visibleWidth(footer.render(240)[0] ?? "");
 	const narrow = footer.render(fullWidth - 1);
-	assert.match(plainLines(narrow), /Claude turn 5h ▮▯▯(?: │|$)/);
+	assert.match(plainLines(narrow), /Claude turn 5h ▮▮▯(?: │|$)/);
 	assert.ok(narrow.every(line => visibleWidth(line) < fullWidth));
 }, { provider: "pi-claude-cli", modelId: "claude-opus-5-5" }));
 
@@ -648,7 +654,7 @@ test("hides the Claude cell when quiet, malformed, expired, cleared or for anoth
 	hidden();
 
 	statuses.set("claude-rate-limit", claudeStatus());
-	assert.ok(claudeCells(footer, "compact").includes("Claude turn 5h ▮▮▮▯▯"));
+	assert.ok(claudeCells(footer, "compact").includes("Claude turn 5h ▮▮▮▮▯"));
 	for (const provider of ["anthropic", "github-copilot", "openrouter", "openai-codex"]) {
 		controls.setProvider(provider);
 		hidden();

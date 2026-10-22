@@ -40,7 +40,7 @@ const source = <T>(value: T | undefined, failed = false) => ({ value, failed, st
 test("renders compact five-block account cells shared by both footer layouts", async () => {
 	const cells = accountQuotaCells(input({ codex: source(codexFixture()), claude: source(await claudeFixture()) }), plain);
 	assert.equal(cells.gpt, "GPT ▮▮▯▯▯");
-	assert.equal(cells.claude, "Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯");
+	assert.equal(cells.claude, "Claude 5h ▮▯▯▯▯ · wk ▮▮▮▯▯");
 	assert.doesNotMatch([cells.gpt, cells.claude].join(" │ "), /\d+%|\d\d:\d\d|10-\d\d/);
 });
 
@@ -48,10 +48,10 @@ test("adds reset countdowns at warning usage, rounded up to whole days or hours"
 	const fixture = await claudeFixture();
 	const gpt = (usedPercent: number, resetsInMs = 96 * HOUR) =>
 		accountQuotaCells(input({ codex: source(codexFixture({ usedPercent, resetsAt: Math.floor((NOW + resetsInMs) / 1000) })) }), plain).gpt;
-	assert.equal(gpt(50), "GPT ▮▮▯▯▯");
-	assert.equal(gpt(50.4), "GPT ▮▮▯▯▯");
-	assert.equal(gpt(50.5), "GPT ▮▮▯▯▯");
-	assert.equal(gpt(59.4), "GPT ▮▮▯▯▯");
+	assert.equal(gpt(50), "GPT ▮▮▮▯▯");
+	assert.equal(gpt(50.4), "GPT ▮▮▮▯▯");
+	assert.equal(gpt(50.5), "GPT ▮▮▮▯▯");
+	assert.equal(gpt(59.4), "GPT ▮▮▮▯▯");
 	assert.equal(gpt(59.5), "GPT ▮▮▮▯▯ 4d");
 	assert.equal(gpt(60), "GPT ▮▮▮▯▯ 4d");
 	assert.equal(gpt(60, 96 * HOUR + 1000), "GPT ▮▮▮▯▯ 5d");
@@ -63,8 +63,8 @@ test("adds reset countdowns at warning usage, rounded up to whole days or hours"
 		session: { usedPercent: session, resetsAtMs: NOW + sessionResetsInMs },
 		week: { usedPercent: week, resetsAtMs: NOW + 30 * HOUR },
 	}) }), plain).claude;
-	assert.equal(claude(60, 90 * 60_000, 50), "Claude 5h ▮▮▮▯▯ 2h · wk ▮▮▯▯▯");
-	assert.equal(claude(51, 2 * HOUR, 70), "Claude 5h ▮▮▯▯▯ · wk ▮▮▮▯▯ 2d");
+	assert.equal(claude(60, 90 * 60_000, 50), "Claude 5h ▮▮▮▯▯ 2h · wk ▮▮▮▯▯");
+	assert.equal(claude(51, 2 * HOUR, 70), "Claude 5h ▮▮▮▯▯ · wk ▮▮▮▮▯ 2d");
 	assert.equal(claude(104, 60_000, 20), "Claude 5h ▮▮▮▮▮ >100% 1h · wk ▮▯▯▯▯");
 });
 
@@ -95,14 +95,14 @@ test("hides countdowns for stale, unreported resets or a smaller fit, keeping th
 	const noReset = { ...critical, weekly: { ...critical.weekly, resetsAtMs: null } };
 	assert.equal(accountQuotaCells(input({ codex: source(noReset) }), plain).gpt, "GPT ▮▮▮▮▯ · 126 cr");
 	const unknownReset = accountQuotaCells(input({ claude: source({ ...fixture, week: { usedPercent: 70, resetsAtMs: null } }) }), plain);
-	assert.equal(unknownReset.claude, "Claude 5h ▯▯▯▯▯ · wk ▮▮▮▯▯");
+	assert.equal(unknownReset.claude, "Claude 5h ▮▯▯▯▯ · wk ▮▮▮▮▯");
 
 	const stale = accountQuotaCells(input({ nowMs: NOW + STALE + 1, codex: source(critical), claude: source(fixture) }), plain);
-	assert.deepEqual(stale, { gpt: "~GPT ▮▮▮▮▯ · 126 cr", claude: "~Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯" });
+	assert.deepEqual(stale, { gpt: "~GPT ▮▮▮▮▯ · 126 cr", claude: "~Claude 5h ▮▯▯▯▯ · wk ▮▮▮▯▯" });
 	const failedRefresh = accountQuotaCells(input({ codex: source(critical, true), claude: source(fixture, true) }), plain);
-	assert.deepEqual(failedRefresh, { gpt: "GPT ▮▮▮▮▯ 4d · 126 cr", claude: "Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯" });
+	assert.deepEqual(failedRefresh, { gpt: "GPT ▮▮▮▮▯ 4d · 126 cr", claude: "Claude 5h ▮▯▯▯▯ · wk ▮▮▮▯▯" });
 	const smaller = accountQuotaCells(input({ countdowns: false, codex: source(critical), claude: source(fixture) }), plain);
-	assert.deepEqual(smaller, { gpt: "GPT ▮▮▮▮▯ · 126 cr", claude: "Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯" });
+	assert.deepEqual(smaller, { gpt: "GPT ▮▮▮▮▯ · 126 cr", claude: "Claude 5h ▮▯▯▯▯ · wk ▮▮▮▯▯" });
 });
 
 test("shows GPT credits only while the weekly gauge is critical, at either gauge width", () => {
@@ -112,9 +112,9 @@ test("shows GPT credits only while the weekly gauge is critical, at either gauge
 		assert.doesNotMatch(gpt(used) ?? "", /cr/, String(used));
 		assert.doesNotMatch(gpt(used, 3) ?? "", /cr/, String(used));
 	}
-	assert.equal(gpt(74.5), "GPT ▮▮▮▯▯ 4d · 126 cr");
-	assert.equal(gpt(75), "GPT ▮▮▮▯▯ 4d · 126 cr");
-	assert.equal(gpt(75, 3), "GPT ▮▮▯ 4d · 126 cr");
+	assert.equal(gpt(74.5), "GPT ▮▮▮▮▯ 4d · 126 cr");
+	assert.equal(gpt(75), "GPT ▮▮▮▮▯ 4d · 126 cr");
+	assert.equal(gpt(75, 3), "GPT ▮▮▮ 4d · 126 cr");
 	assert.equal(gpt(100), "GPT ▮▮▮▮▮ 4d · 126 cr");
 	assert.equal(gpt(100, 3), "GPT ▮▮▮ 4d · 126 cr");
 	assert.equal(gpt(40), "GPT ▮▮▯▯▯");
@@ -131,11 +131,11 @@ test("decides credit visibility with the same rounded severity the gauge paints"
 	};
 	const critical = tonesAt(74.5);
 	assert.match(critical.cell ?? "", / · 126 cr$/);
-	assert.ok(critical.tones.some(([tone, text]) => tone === "error" && text === "▮▮▮"));
+	assert.ok(critical.tones.some(([tone, text]) => tone === "error" && text === "▮▮▮▮"));
 	assert.ok(critical.tones.some(([tone, text]) => tone === "error" && text === "GPT"));
 	const warning = tonesAt(74.4);
 	assert.doesNotMatch(warning.cell ?? "", /cr/);
-	assert.ok(warning.tones.some(([tone, text]) => tone === "warning" && text === "▮▮▮"));
+	assert.ok(warning.tones.some(([tone, text]) => tone === "warning" && text === "▮▮▮▮"));
 	assert.ok(warning.tones.every(([tone]) => tone !== "error"));
 });
 
@@ -154,9 +154,9 @@ test("never infers GPT exhaustion from missing, expired, stale or other-provider
 		tones.push(tone);
 		return text;
 	});
-	assert.equal(stale.gpt, "~GPT ▮▮▮▮▯ · 126 cr");
+	assert.equal(stale.gpt, "~GPT ▮▮▮▮▮ · 126 cr");
 	assert.deepEqual(new Set(tones), new Set(["dim"]));
-	assert.equal(accountQuotaCells(input({ codex: source(critical(), true) }), plain).gpt, "GPT ▮▮▮▮▯ 4d · 126 cr");
+	assert.equal(accountQuotaCells(input({ codex: source(critical(), true) }), plain).gpt, "GPT ▮▮▮▮▮ 4d · 126 cr");
 
 	const otherProvider = accountQuotaCells(input({
 		codex: source(codexFixture({ usedPercent: 40 })),
@@ -166,13 +166,13 @@ test("never infers GPT exhaustion from missing, expired, stale or other-provider
 	assert.match(otherProvider.claude ?? "", />100%/);
 
 	const zero = accountQuotaCells(input({ codex: source(critical({ credits: { hasCredits: true, unlimited: false, balance: "0" } })) }), plain);
-	assert.equal(zero.gpt, "GPT ▮▮▮▮▯ 4d · 0 cr");
+	assert.equal(zero.gpt, "GPT ▮▮▮▮▮ 4d · 0 cr");
 });
 
 test("can shorten account gauges to three blocks without changing labels or credits", async () => {
 	const cells = accountQuotaCells(input({ gaugeWidth: 3, codex: source(codexFixture()), claude: source(await claudeFixture()) }), plain);
-	assert.equal(cells.gpt, "GPT ▮▯▯");
-	assert.equal(cells.claude, "Claude 5h ▯▯▯ · wk ▮▯▯");
+	assert.equal(cells.gpt, "GPT ▮▮▯");
+	assert.equal(cells.claude, "Claude 5h ▮▯▯ · wk ▮▮▯");
 });
 
 test("shows unknown, expired and missing windows as ? rather than zero or old values", async () => {
@@ -186,7 +186,7 @@ test("shows unknown, expired and missing windows as ? rather than zero or old va
 	assert.equal(cells.claude, "Claude 5h ? · wk ?");
 
 	const missing = accountQuotaCells(input({ claude: source({ ...fixture, session: undefined }) }), plain);
-	assert.equal(missing.claude, "Claude 5h ? · wk ▮▮▯▯▯");
+	assert.equal(missing.claude, "Claude 5h ? · wk ▮▮▮▯▯");
 	const empty = accountQuotaCells(input({ claude: source({ session: undefined, week: undefined, fetchedAtMs: NOW }) }), plain);
 	assert.equal(empty.claude, "Claude ?");
 });
@@ -199,7 +199,7 @@ test("distinguishes disabled, loading, failed and last-good sources", async () =
 	assert.deepEqual(failed, { gpt: "GPT ?", claude: "Claude ?" });
 	const retained = accountQuotaCells(input({ codex: source(codexFixture(), true), claude: source(fixture, true) }), plain);
 	assert.equal(retained.gpt, "GPT ▮▮▯▯▯");
-	assert.equal(retained.claude, "Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯");
+	assert.equal(retained.claude, "Claude 5h ▮▯▯▯▯ · wk ▮▮▮▯▯");
 });
 
 test("marks snapshots older than the stale interval in text and dims every segment", async () => {
@@ -214,7 +214,7 @@ test("marks snapshots older than the stale interval in text and dims every segme
 		claude: source(await claudeFixture()),
 	}), record);
 	assert.equal(cells.gpt, "~GPT ▮▮▯▯▯");
-	assert.equal(cells.claude, "~Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯");
+	assert.equal(cells.claude, "~Claude 5h ▮▯▯▯▯ · wk ▮▮▮▯▯");
 	assert.ok(tones.length > 0);
 	assert.deepEqual(new Set(tones), new Set(["dim"]));
 });
@@ -231,7 +231,7 @@ test("keeps zero, over-limit, credits-only and unlimited values distinct", async
 		claude: source({ ...fixture, session: { usedPercent: 104, resetsAtMs: NOW + HOUR } }),
 	}), record);
 	assert.equal(cells.gpt, "GPT ▯▯▯▯▯");
-	assert.equal(cells.claude, "Claude 5h ▮▮▮▮▮ >100% 1h · wk ▮▮▯▯▯");
+	assert.equal(cells.claude, "Claude 5h ▮▮▮▮▮ >100% 1h · wk ▮▮▮▯▯");
 	assert.ok(tones.some(([tone, text]) => tone === "error" && text === " >100%"));
 	assert.ok(tones.some(([tone, text]) => tone === "error" && text === "Claude"));
 

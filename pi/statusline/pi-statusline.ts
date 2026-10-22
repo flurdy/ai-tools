@@ -466,8 +466,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					model: theme.fg("success", theme.bold(model)),
 					effort: effort ? theme.fg("accent", effort) : "",
 					session: sessionName ? theme.fg("accent", `◈ ${truncateToWidth(sessionName, 24, "…")}`) : "",
-					bars: `${bar(usage.ctxPct, 3, 34, 67, colors)} ${theme.fg("dim", "ctx")}`,
-					ctx: `${bar(usage.ctxPct, 6, 34, 67, colors)} ${theme.fg("dim", "ctx")}`,
+					ctx: `${bar(usage.ctxPct, fit.gaugeWidth, 34, 67, colors)} ${theme.fg("dim", "ctx")}`,
 					gpt: account.gpt ?? "",
 					claude: account.claude ?? "",
 					claudeTurn: turn,
@@ -502,18 +501,18 @@ export default function piStatusline(pi: ExtensionAPI): void {
 			}
 
 			function compact(width: number): string[] {
-				const fullLine = (c: Segments) => joinCells([c.agent, c.guard, c.model, c.effort, c.bars, c.gpt, c.claude, c.claudeTurn, c.openRouterBalance, c.k8s, c.duration, c.path, c.repo, c.branch, c.divergence, c.pr, c.session]);
+				const fullLine = (c: Segments) => joinCells([c.agent, c.guard, c.model, c.effort, c.ctx, c.gpt, c.claude, c.claudeTurn, c.openRouterBalance, c.k8s, c.duration, c.path, c.repo, c.branch, c.divergence, c.pr, c.session]);
 				const s = fittedSegments((c) => visibleWidth(fullLine(c)) <= width);
 				let line = fullLine(s);
 				if (visibleWidth(line) <= width) return [line];
 				const quotas = [s.gpt, s.claude, s.claudeTurn, s.openRouterBalance];
-				let cells = [joinCells([s.agent, s.guard, s.model, s.effort]), s.bars, ...quotas, s.k8s, s.duration, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
+				let cells = [joinCells([s.agent, s.guard, s.model, s.effort]), s.ctx, ...quotas, s.k8s, s.duration, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
 				line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
-				cells = [joinCells([s.agent, s.guard, s.model, s.effort]), s.bars, ...quotas, s.k8s, s.branch].filter(Boolean);
+				cells = [joinCells([s.agent, s.guard, s.model, s.effort]), s.ctx, ...quotas, s.k8s, s.branch].filter(Boolean);
 				line = joinCells(cells);
 				if (visibleWidth(line) <= width) return [truncateToWidth(line, width)];
-				cells = [s.agent, s.guard, s.model, s.bars, s.k8s, s.branch, s.divergence, s.session].filter(Boolean);
+				cells = [s.agent, s.guard, s.model, s.ctx, s.k8s, s.branch, s.divergence, s.session].filter(Boolean);
 				if (visibleWidth(joinCells(cells)) > width && s.divergence) cells = cells.filter((cell) => cell !== s.divergence);
 				return [truncateToWidth(joinCells(cells), width)];
 			}

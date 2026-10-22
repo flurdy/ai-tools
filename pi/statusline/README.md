@@ -73,19 +73,21 @@ The examples below are schematic: they use placeholder values and omit terminal 
 Compact mode is a single line. As space narrows, less-important cells are dropped before the line is truncated.
 
 ```text
-π │ 🔒 │ Terra 5 │ ⚡Hi │ ▮▯▯ ctx │ GPT ▮▮▯▯▯ │ Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯ │ OR $75 │ 12m │ ~/project │ main │ ⇡10 ⇣2 │ ◈ session
+π │ 🔒 │ Terra 5 │ ⚡Hi │ ▮▯▯▯▯ ctx │ GPT ▮▮▯▯▯ │ Claude 5h ▮▯▯▯▯ · wk ▮▮▮▯▯ │ OR $75 │ 12m │ ~/project │ main │ ⇡10 ⇣2 │ ◈ session
 ```
 
-The full line uses five-block quota gauges. A red `GPT` gauge adds the account's credit balance (`GPT ▮▮▮▮▯ · 126 cr`), see [critical-only credits](#critical-only-credits). When it does not fit, [reset countdowns](#reset-countdowns) are dropped first, then those gauges shrink to three blocks, before the path, duration, PR and session cells are dropped. The guard, `ctx` and quota cells stay until the narrowest fallback, which keeps only the agent, guard, model, `ctx`, Kubernetes context, branch, divergence and session.
+The full line uses five-block context and quota gauges. A red `GPT` gauge adds the account's credit balance (`GPT ▮▮▮▮▯ · 126 cr`), see [critical-only credits](#critical-only-credits). When it does not fit, [reset countdowns](#reset-countdowns) are dropped first, then those gauges shrink to three blocks, before the path, duration, PR and session cells are dropped. The guard, `ctx` and quota cells stay until the narrowest fallback, which keeps only the agent, guard, model, `ctx`, Kubernetes context, branch, divergence and session.
 
 ### Table footer
 
-Table mode uses two bordered rows: location/session information on top, then model, capacity, usage, and session duration below. Like compact mode, it starts with five-block quota gauges and countdowns, then drops the countdowns and tries three blocks if needed before dropping the path or falling back to one line:
+Table mode uses two bordered rows: location/session information on top, then model, capacity, usage, and session duration below. Like compact mode, it starts with five-block context and quota gauges and countdowns, then drops the countdowns and tries three blocks if needed before dropping the path or falling back to one line:
 
 ```text
 row 1: example-host │ ~/project │ main │ ⇡10 ⇣2 │ ◉ P4:4 ◐1 │ ◈ session
-row 2: π │ 🔒2 │ Terra 5 │ ⚡Hi │ ▮▮▯▯▯▯ ctx │ GPT ▮▮▯▯▯ │ Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯ │ OR $75 │ est $0 │ 12m
+row 2: π │ 🔒2 │ Terra 5 │ ⚡Hi │ ▮▯▯▯▯ ctx │ GPT ▮▮▯▯▯ │ Claude 5h ▮▯▯▯▯ · wk ▮▮▮▯▯ │ OR $75 │ est $0 │ 12m
 ```
+
+Filled-block counts round up from the rounded whole usage percentage, with zero empty and fill capped at the gauge width. For example, 14%, 26% and 52% fill one, two and three of five blocks. A five-block gauge is visually full from 81%, or a three-block gauge from 67%; full blocks do not mean the limit is reached. Colour still comes from usage, not block count: context turns yellow at 34% and red at 67%, while GPT and Claude turn yellow at 60% and red at 75%. Context and quota gauges shrink together.
 
 Percentages and reset dates stay in `/quota`, not the footer. Reset times still invalidate expired quota windows, which show `?` until refreshed.
 
@@ -145,7 +147,7 @@ The latest prompt is taken from your submitted input, so it can expose task deta
 - whatever model is active, the cached Codex account's weekly used capacity as `GPT`; its ChatGPT/Codex credit balance (`· 126 cr`, `· 0 cr` or `· ∞ cr`) appears only while that weekly gauge is red
 - whatever model is active, the cached Claude Code account's 5-hour session and all-model weekly usage as `Claude 5h … · wk …`
 - for `pi-claude-cli` models, a separate `Claude turn …` cell when the adapter's latest binding window adds a warning, limit, overage or per-model window the account cell lacks
-- both layouts use five-block quota gauges with a whole-day or whole-hour reset countdown at warning or critical usage; when space is tight the countdowns go first, then the gauges shrink to three blocks; fill is the used share, like `ctx`, and `/quota` provides percentages and exact reset times
+- both layouts use five-block context and quota gauges; account windows show a whole-day or whole-hour reset countdown at warning or critical usage; when space is tight the countdowns go first, then the gauges shrink to three blocks; fill is the used share, like `ctx`, and `/quota` provides percentages and exact reset times
 - optional cached OpenRouter account credit balance labelled `OR`, immediately before the estimated session cost
 - session duration
 - abbreviated cwd
