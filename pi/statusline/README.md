@@ -91,7 +91,7 @@ Percentages and reset dates stay in `/quota`, not the footer. Reset times still 
 
 ### Reset countdowns
 
-Once an account window is more than half used (the same rounded percentage that colours its gauge, so above 50%), its gauge is followed by the time left until that window resets, rounded up: whole days for `GPT` and Claude `wk`, whole hours for Claude `5h`, for example `GPT ▮▮▮▯▯ 3d`, `Claude 5h ▮▮▮▯▯ 2h · wk ▮▮▮▯▯ 1d` or `GPT ▮▮▮▮▯ 3d · 126 cr`. A countdown under one unit shows `1d` or `1h`. It comes from the cached snapshot's reset time and never triggers a lookup. There is none when the provider reported no reset time, and none on a stale (`~`) snapshot; an expired window shows `?` as before. A young snapshot whose latest refresh failed keeps its countdown, as it keeps its gauge. Countdowns are the first quota detail dropped when the footer is tight. Claude `turn` telemetry has no countdown.
+Once an account window reaches yellow/warning usage (60%, using the same rounded percentage that colours its gauge), its gauge is followed by the time left until that window resets, rounded up: whole days for `GPT` and Claude `wk`, whole hours for Claude `5h`, for example `GPT ▮▮▮▯▯ 3d`, `Claude 5h ▮▮▮▯▯ 2h · wk ▮▮▮▯▯ 1d` or `GPT ▮▮▮▮▯ 3d · 126 cr`. Green gauges have no countdown: 59.4% stays green and 59.5% rounds to the warning boundary. This is the same at five or three blocks. A countdown under one unit shows `1d` or `1h`. It comes from the cached snapshot's reset time and never triggers a lookup. There is none when the provider reported no reset time, and none on a stale (`~`) snapshot; an expired window shows `?` as before. A young snapshot whose latest refresh failed keeps its countdown, as it keeps its gauge. Countdowns are the first quota detail dropped when the footer is tight. Claude `turn` telemetry has no countdown.
 
 `PI_STATUSLINE=auto` (the default) selects table mode only when the terminal has at least 45 rows and is at least 100 columns wide. Otherwise it selects compact mode. `PI_STATUSLINE=compact` and `PI_STATUSLINE=table` request a layout explicitly; table mode still falls back to compact if its cells cannot fit.
 
@@ -145,7 +145,7 @@ The latest prompt is taken from your submitted input, so it can expose task deta
 - whatever model is active, the cached Codex account's weekly used capacity as `GPT`; its ChatGPT/Codex credit balance (`· 126 cr`, `· 0 cr` or `· ∞ cr`) appears only while that weekly gauge is red
 - whatever model is active, the cached Claude Code account's 5-hour session and all-model weekly usage as `Claude 5h … · wk …`
 - for `pi-claude-cli` models, a separate `Claude turn …` cell when the adapter's latest binding window adds a warning, limit, overage or per-model window the account cell lacks
-- both layouts use five-block quota gauges with a whole-day or whole-hour reset countdown above half usage; when space is tight the countdowns go first, then the gauges shrink to three blocks; fill is the used share, like `ctx`, and `/quota` provides percentages and exact reset times
+- both layouts use five-block quota gauges with a whole-day or whole-hour reset countdown at warning or critical usage; when space is tight the countdowns go first, then the gauges shrink to three blocks; fill is the used share, like `ctx`, and `/quota` provides percentages and exact reset times
 - optional cached OpenRouter account credit balance labelled `OR`, immediately before the estimated session cost
 - session duration
 - abbreviated cwd

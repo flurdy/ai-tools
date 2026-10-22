@@ -6,7 +6,7 @@
 import type { ClaudeAccountUsage, ClaudeAccountWindow } from "./claude-usage.ts";
 import type { ClaudeQuotaView } from "./claude-quota.ts";
 import { formatCodexCredits, type CodexQuotaSnapshot } from "./codex-quota.ts";
-import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT, codexQuotaTone, QUOTA_COUNTDOWN_PERCENT } from "./quota-display.ts";
+import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT, codexQuotaTone } from "./quota-display.ts";
 
 export type Tone = "success" | "warning" | "error" | "dim";
 export type Paint = (tone: Tone, text: string) => string;
@@ -21,7 +21,7 @@ export interface SourceState<T> {
 export interface QuotaFit {
 	/** Five at full width; three when the footer needs a smaller fit. */
 	gaugeWidth: 3 | 5;
-	/** Reset countdowns on windows used beyond QUOTA_COUNTDOWN_PERCENT. */
+	/** Reset countdowns on windows with warning or critical quota severity. */
 	countdowns: boolean;
 }
 
@@ -64,13 +64,13 @@ function worst(tones: Array<UsageTone | undefined>): Tone {
 
 /** Whole units left until a reported, unexpired reset, rounded up; stale snapshots get none. */
 function countdown(used: number, resetsAtMs: number | null, unit: CountdownUnit, o: GaugeOptions): string {
-	if (!o.countdowns || o.stale || resetsAtMs === null || Math.round(used) <= QUOTA_COUNTDOWN_PERCENT) return "";
+	if (!o.countdowns || o.stale || resetsAtMs === null || codexQuotaTone(used) === "success") return "";
 	return ` ${Math.ceil((resetsAtMs - o.nowMs) / UNIT_MS[unit])}${unit}`;
 }
 
 /**
- * Fill is the used share, like ctx. Resets invalidate old values and, past half
- * usage, add a countdown. One severity paints the fill, the label and credit visibility.
+ * Fill is the used share, like ctx. Resets invalidate old values; warning and
+ * critical windows add a countdown. One severity paints the fill, label and credits.
  */
 function windowGauge(window: UsageWindow | undefined, unit: CountdownUnit, o: GaugeOptions): { text: string; tone?: UsageTone } {
 	const used = window?.usedPercent ?? null;

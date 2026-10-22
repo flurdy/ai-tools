@@ -40,17 +40,20 @@ const source = <T>(value: T | undefined, failed = false) => ({ value, failed, st
 test("renders compact five-block account cells shared by both footer layouts", async () => {
 	const cells = accountQuotaCells(input({ codex: source(codexFixture()), claude: source(await claudeFixture()) }), plain);
 	assert.equal(cells.gpt, "GPT ▮▮▯▯▯");
-	assert.equal(cells.claude, "Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯ 5d");
+	assert.equal(cells.claude, "Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯");
 	assert.doesNotMatch([cells.gpt, cells.claude].join(" │ "), /\d+%|\d\d:\d\d|10-\d\d/);
 });
 
-test("adds reset countdowns above half usage, rounded up to whole days or hours", async () => {
+test("adds reset countdowns at warning usage, rounded up to whole days or hours", async () => {
 	const fixture = await claudeFixture();
 	const gpt = (usedPercent: number, resetsInMs = 96 * HOUR) =>
 		accountQuotaCells(input({ codex: source(codexFixture({ usedPercent, resetsAt: Math.floor((NOW + resetsInMs) / 1000) })) }), plain).gpt;
 	assert.equal(gpt(50), "GPT ▮▮▯▯▯");
 	assert.equal(gpt(50.4), "GPT ▮▮▯▯▯");
-	assert.equal(gpt(50.5), "GPT ▮▮▯▯▯ 4d");
+	assert.equal(gpt(50.5), "GPT ▮▮▯▯▯");
+	assert.equal(gpt(59.4), "GPT ▮▮▯▯▯");
+	assert.equal(gpt(59.5), "GPT ▮▮▮▯▯ 4d");
+	assert.equal(gpt(60), "GPT ▮▮▮▯▯ 4d");
 	assert.equal(gpt(60, 96 * HOUR + 1000), "GPT ▮▮▮▯▯ 5d");
 	assert.equal(gpt(60, 20 * 60_000), "GPT ▮▮▮▯▯ 1d");
 	assert.equal(gpt(80), "GPT ▮▮▮▮▯ 4d · 126 cr");
@@ -61,8 +64,28 @@ test("adds reset countdowns above half usage, rounded up to whole days or hours"
 		week: { usedPercent: week, resetsAtMs: NOW + 30 * HOUR },
 	}) }), plain).claude;
 	assert.equal(claude(60, 90 * 60_000, 50), "Claude 5h ▮▮▮▯▯ 2h · wk ▮▮▯▯▯");
-	assert.equal(claude(51, 2 * HOUR, 70), "Claude 5h ▮▮▯▯▯ 2h · wk ▮▮▮▯▯ 2d");
+	assert.equal(claude(51, 2 * HOUR, 70), "Claude 5h ▮▮▯▯▯ · wk ▮▮▮▯▯ 2d");
 	assert.equal(claude(104, 60_000, 20), "Claude 5h ▮▮▮▮▮ >100% 1h · wk ▮▯▯▯▯");
+});
+
+test("uses the warning boundary for all three windows at both gauge widths", () => {
+	for (const gaugeWidth of [3, 5] as const) {
+		for (const usedPercent of [0, 50, 50.5, 55, 59.4, 59.5, 60, 75, 100]) {
+			const cells = accountQuotaCells(input({
+				gaugeWidth,
+				codex: source(codexFixture({ usedPercent })),
+				claude: source({
+					fetchedAtMs: NOW,
+					session: { usedPercent, resetsAtMs: NOW + 2 * HOUR },
+					week: { usedPercent, resetsAtMs: NOW + 72 * HOUR },
+				}),
+			}), plain);
+			const expected = Math.round(usedPercent) >= 60;
+			assert.equal(/ 4d/.test(cells.gpt ?? ""), expected, `GPT at ${usedPercent}%, ${gaugeWidth} blocks`);
+			assert.equal(/ 2h/.test(cells.claude ?? ""), expected, `Claude 5h at ${usedPercent}%, ${gaugeWidth} blocks`);
+			assert.equal(/ 3d/.test(cells.claude ?? ""), expected, `Claude wk at ${usedPercent}%, ${gaugeWidth} blocks`);
+		}
+	}
 });
 
 test("hides countdowns for stale, unreported resets or a smaller fit, keeping the gauge", async () => {
@@ -77,7 +100,7 @@ test("hides countdowns for stale, unreported resets or a smaller fit, keeping th
 	const stale = accountQuotaCells(input({ nowMs: NOW + STALE + 1, codex: source(critical), claude: source(fixture) }), plain);
 	assert.deepEqual(stale, { gpt: "~GPT ▮▮▮▮▯ · 126 cr", claude: "~Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯" });
 	const failedRefresh = accountQuotaCells(input({ codex: source(critical, true), claude: source(fixture, true) }), plain);
-	assert.deepEqual(failedRefresh, { gpt: "GPT ▮▮▮▮▯ 4d · 126 cr", claude: "Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯ 5d" });
+	assert.deepEqual(failedRefresh, { gpt: "GPT ▮▮▮▮▯ 4d · 126 cr", claude: "Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯" });
 	const smaller = accountQuotaCells(input({ countdowns: false, codex: source(critical), claude: source(fixture) }), plain);
 	assert.deepEqual(smaller, { gpt: "GPT ▮▮▮▮▯ · 126 cr", claude: "Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯" });
 });
@@ -149,7 +172,7 @@ test("never infers GPT exhaustion from missing, expired, stale or other-provider
 test("can shorten account gauges to three blocks without changing labels or credits", async () => {
 	const cells = accountQuotaCells(input({ gaugeWidth: 3, codex: source(codexFixture()), claude: source(await claudeFixture()) }), plain);
 	assert.equal(cells.gpt, "GPT ▮▯▯");
-	assert.equal(cells.claude, "Claude 5h ▯▯▯ · wk ▮▯▯ 5d");
+	assert.equal(cells.claude, "Claude 5h ▯▯▯ · wk ▮▯▯");
 });
 
 test("shows unknown, expired and missing windows as ? rather than zero or old values", async () => {
@@ -163,7 +186,7 @@ test("shows unknown, expired and missing windows as ? rather than zero or old va
 	assert.equal(cells.claude, "Claude 5h ? · wk ?");
 
 	const missing = accountQuotaCells(input({ claude: source({ ...fixture, session: undefined }) }), plain);
-	assert.equal(missing.claude, "Claude 5h ? · wk ▮▮▯▯▯ 5d");
+	assert.equal(missing.claude, "Claude 5h ? · wk ▮▮▯▯▯");
 	const empty = accountQuotaCells(input({ claude: source({ session: undefined, week: undefined, fetchedAtMs: NOW }) }), plain);
 	assert.equal(empty.claude, "Claude ?");
 });
@@ -176,7 +199,7 @@ test("distinguishes disabled, loading, failed and last-good sources", async () =
 	assert.deepEqual(failed, { gpt: "GPT ?", claude: "Claude ?" });
 	const retained = accountQuotaCells(input({ codex: source(codexFixture(), true), claude: source(fixture, true) }), plain);
 	assert.equal(retained.gpt, "GPT ▮▮▯▯▯");
-	assert.equal(retained.claude, "Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯ 5d");
+	assert.equal(retained.claude, "Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯");
 });
 
 test("marks snapshots older than the stale interval in text and dims every segment", async () => {
@@ -208,7 +231,7 @@ test("keeps zero, over-limit, credits-only and unlimited values distinct", async
 		claude: source({ ...fixture, session: { usedPercent: 104, resetsAtMs: NOW + HOUR } }),
 	}), record);
 	assert.equal(cells.gpt, "GPT ▯▯▯▯▯");
-	assert.equal(cells.claude, "Claude 5h ▮▮▮▮▮ >100% 1h · wk ▮▮▯▯▯ 5d");
+	assert.equal(cells.claude, "Claude 5h ▮▮▮▮▮ >100% 1h · wk ▮▮▯▯▯");
 	assert.ok(tones.some(([tone, text]) => tone === "error" && text === " >100%"));
 	assert.ok(tones.some(([tone, text]) => tone === "error" && text === "Claude"));
 
