@@ -112,6 +112,7 @@ test("hides a reading whose window has reset or whose reset is unknown", () => {
 test("takes the more severe of reported state and utilization for its tone", () => {
 	const tone = (fields: Record<string, unknown>) => claudeQuotaTone(view(status(fields))!);
 	assert.equal(tone({ status: "allowed", utilization: 0.2 }), "success");
+	assert.equal(tone({ status: "allowed", utilization: 0.4 }), "warning");
 	assert.equal(tone({ status: "allowed", utilization: 0.7 }), "warning");
 	assert.equal(tone({ status: "allowed_warning", utilization: 0.2 }), "warning");
 	assert.equal(tone({ status: "allowed_warning", utilization: null }), "warning");

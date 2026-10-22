@@ -10,7 +10,7 @@ import {
 	selectCodexQuotaSnapshot,
 } from "./codex-quota.ts";
 import { modelLabel, shortModel } from "./model-label.ts";
-import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT, codexQuotaTone } from "./quota-display.ts";
+import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT, codexQuotaTone, CONTEXT_CRIT_PERCENT, CONTEXT_WARN_PERCENT } from "./quota-display.ts";
 
 const WEEK = 7 * 24 * 60;
 const colors = {
@@ -33,7 +33,7 @@ test("ceil-fill examples retain context and account colours at every width", () 
 	] as const;
 	for (const [pct, three, five, six] of examples) {
 		for (const [width, filled] of [[3, three], [5, five], [6, six]]) {
-			for (const [warn, crit] of [[34, 67], [60, 75]]) {
+			for (const [warn, crit] of [[CONTEXT_WARN_PERCENT, CONTEXT_CRIT_PERCENT], [CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT]]) {
 				const tone = pct >= crit ? "crit" : pct >= warn ? "warn" : "ok";
 				assert.equal(bar(pct, width, warn, crit, colors),
 					`[${tone}:${"▮".repeat(filled)}][empty:${"▯".repeat(width - filled)}]`);
@@ -46,18 +46,20 @@ test("ceil-fill examples retain context and account colours at every width", () 
 	}
 });
 
-test("uses warning and error quota thresholds at 60% and 75%", () => {
-	assert.equal(CODEX_QUOTA_WARN_PERCENT, 60);
+test("turns every gauge yellow at 40%, keeping red at 67% for context and 75% for quotas", () => {
+	assert.equal(CONTEXT_WARN_PERCENT, 40);
+	assert.equal(CONTEXT_CRIT_PERCENT, 67);
+	assert.equal(CODEX_QUOTA_WARN_PERCENT, 40);
 	assert.equal(CODEX_QUOTA_CRIT_PERCENT, 75);
-	assert.equal(codexQuotaTone(59), "success");
-	assert.equal(codexQuotaTone(60), "warning");
+	assert.equal(codexQuotaTone(39), "success");
+	assert.equal(codexQuotaTone(40), "warning");
 	assert.equal(codexQuotaTone(74), "warning");
 	assert.equal(codexQuotaTone(75), "error");
 });
 
 test("rounds severity exactly as the bar rounds its fill colour", () => {
-	assert.equal(codexQuotaTone(59.4), "success");
-	assert.equal(codexQuotaTone(59.5), "warning");
+	assert.equal(codexQuotaTone(39.4), "success");
+	assert.equal(codexQuotaTone(39.5), "warning");
 	assert.equal(codexQuotaTone(74.4), "warning");
 	assert.equal(codexQuotaTone(74.5), "error");
 	assert.equal(bar(74.5, 5, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, colors), "[crit:▮▮▮▮][empty:▯]");

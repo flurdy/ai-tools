@@ -500,7 +500,7 @@ test("shows GPT and Claude account quotas together, independent of the active mo
 			await withFooter(async (footer, statuses, controls) => {
 				process.env.PI_STATUSLINE = "compact";
 				const compact = plainLines(footer.render(300));
-				const quotas = /GPT ▮▮▮▮▯ 1d · 13 cr │ Claude 5h ▮▯▯▯▯ · wk ▮▮▮▯▯(?! \d)/;
+				const quotas = /GPT ▮▮▮▮▯ 1d · 13 cr │ Claude 5h ▮▯▯▯▯ · wk ▮▮▮▯▯ \d+d/;
 				assert.match(compact, quotas, compact);
 				assert.match(compact, /▯{5} ctx/);
 				assert.doesNotMatch(compact, /\d\d:\d\d/);

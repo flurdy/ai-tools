@@ -87,13 +87,13 @@ row 1: example-host │ ~/project │ main │ ⇡10 ⇣2 │ ◉ P4:4 ◐1 │ 
 row 2: π │ 🔒2 │ Terra 5 │ ⚡Hi │ ▮▯▯▯▯ ctx │ GPT ▮▮▯▯▯ │ Claude 5h ▮▯▯▯▯ · wk ▮▮▮▯▯ │ OR $75 │ est $0 │ 12m
 ```
 
-Filled-block counts round up from the rounded whole usage percentage, with zero empty and fill capped at the gauge width. For example, 14%, 26% and 52% fill one, two and three of five blocks. A five-block gauge is visually full from 81%, or a three-block gauge from 67%; full blocks do not mean the limit is reached. Colour still comes from usage, not block count: context turns yellow at 34% and red at 67%, while GPT and Claude turn yellow at 60% and red at 75%. Context and quota gauges shrink together.
+Filled-block counts round up from the rounded whole usage percentage, with zero empty and fill capped at the gauge width. For example, 14%, 26% and 52% fill one, two and three of five blocks. A five-block gauge is visually full from 81%, or a three-block gauge from 67%; full blocks do not mean the limit is reached. Colour still comes from usage, not block count: every gauge turns yellow at 40%; context turns red at 67%, GPT and Claude at 75%. Context and quota gauges shrink together.
 
 Percentages and reset dates stay in `/quota`, not the footer. Reset times still invalidate expired quota windows, which show `?` until refreshed.
 
 ### Reset countdowns
 
-Once an account window reaches yellow/warning usage (60%, using the same rounded percentage that colours its gauge), its gauge is followed by the time left until that window resets, rounded up: whole days for `GPT` and Claude `wk`, whole hours for Claude `5h`, for example `GPT ▮▮▮▯▯ 3d`, `Claude 5h ▮▮▮▯▯ 2h · wk ▮▮▮▯▯ 1d` or `GPT ▮▮▮▮▯ 3d · 126 cr`. Green gauges have no countdown: 59.4% stays green and 59.5% rounds to the warning boundary. This is the same at five or three blocks. A countdown under one unit shows `1d` or `1h`. It comes from the cached snapshot's reset time and never triggers a lookup. There is none when the provider reported no reset time, and none on a stale (`~`) snapshot; an expired window shows `?` as before. A young snapshot whose latest refresh failed keeps its countdown, as it keeps its gauge. Countdowns are the first quota detail dropped when the footer is tight. Claude `turn` telemetry has no countdown.
+Once an account window reaches yellow/warning usage (40%, using the same rounded percentage that colours its gauge), its gauge is followed by the time left until that window resets, rounded up: whole days for `GPT` and Claude `wk`, whole hours for Claude `5h`, for example `GPT ▮▮▮▯▯ 3d`, `Claude 5h ▮▮▮▯▯ 2h · wk ▮▮▮▯▯ 1d` or `GPT ▮▮▮▮▯ 3d · 126 cr`. Green gauges have no countdown: 39.4% stays green and 39.5% rounds to the warning boundary. This is the same at five or three blocks. A countdown under one unit shows `1d` or `1h`. It comes from the cached snapshot's reset time and never triggers a lookup. There is none when the provider reported no reset time, and none on a stale (`~`) snapshot; an expired window shows `?` as before. A young snapshot whose latest refresh failed keeps its countdown, as it keeps its gauge. Countdowns are the first quota detail dropped when the footer is tight. Claude `turn` telemetry has no countdown.
 
 `PI_STATUSLINE=auto` (the default) selects table mode only when the terminal has at least 45 rows and is at least 100 columns wide. Otherwise it selects compact mode. `PI_STATUSLINE=compact` and `PI_STATUSLINE=table` request a layout explicitly; table mode still falls back to compact if its cells cannot fit.
 
@@ -143,7 +143,7 @@ The latest prompt is taken from your submitted input, so it can expose task deta
 - current session name (truncated when necessary)
 - one session guard cell, pinned in narrow and wide layouts, with a worktree count only for multiple implement leases and a documented text fallback
 - `π` agent marker in its own cell; a compact model name such as `Sol 6.1`, `Terra 5.6`, or `Sonnet 5.5`, with `+` for a trailing GPT Pro variant and `OR` only for OpenRouter; and thinking level
-- cautious context-capacity bar labelled `ctx` (green through 33%, yellow through 66%, then red); conversation context only, never subscription usage
+- cautious context-capacity bar labelled `ctx` (green through 39%, yellow through 66%, then red); conversation context only, never subscription usage
 - whatever model is active, the cached Codex account's weekly used capacity as `GPT`; its ChatGPT/Codex credit balance (`· 126 cr`, `· 0 cr` or `· ∞ cr`) appears only while that weekly gauge is red
 - whatever model is active, the cached Claude Code account's 5-hour session and all-model weekly usage as `Claude 5h … · wk …`
 - for `pi-claude-cli` models, a separate `Claude turn …` cell when the adapter's latest binding window adds a warning, limit, overage or per-model window the account cell lacks

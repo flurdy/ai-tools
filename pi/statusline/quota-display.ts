@@ -1,4 +1,7 @@
-export const CODEX_QUOTA_WARN_PERCENT = 60;
+/** Every footer gauge turns yellow at 40%; context turns red sooner than account quotas. */
+export const CONTEXT_WARN_PERCENT = 40;
+export const CONTEXT_CRIT_PERCENT = 67;
+export const CODEX_QUOTA_WARN_PERCENT = 40;
 export const CODEX_QUOTA_CRIT_PERCENT = 75;
 
 type BarColors = {

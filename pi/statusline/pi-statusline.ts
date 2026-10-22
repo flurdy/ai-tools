@@ -13,7 +13,7 @@ import { activeModelLabel, modelLabel } from "./model-label.ts";
 import { OpenRouterCostAdvisory, openRouterAdvisoryConfig, sharedOpenRouterAdvisoryState } from "./openrouter-advisory.ts";
 import { createOpenRouterCreditsCache, openRouterCreditsApiKey } from "./openrouter-credits.ts";
 import { accountQuotaCells, adapterAlertVisible, QUOTA_FITS, type QuotaFit } from "./quota-cells.ts";
-import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT } from "./quota-display.ts";
+import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT, CONTEXT_CRIT_PERCENT, CONTEXT_WARN_PERCENT } from "./quota-display.ts";
 import { formatSessionGuard } from "./session-guard.ts";
 import { quotaCacheDirectory, sharedLoad } from "./shared-snapshot.ts";
 import { SnapshotCache } from "./snapshot-cache.ts";
@@ -466,7 +466,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					model: theme.fg("success", theme.bold(model)),
 					effort: effort ? theme.fg("accent", effort) : "",
 					session: sessionName ? theme.fg("accent", `◈ ${truncateToWidth(sessionName, 24, "…")}`) : "",
-					ctx: `${bar(usage.ctxPct, fit.gaugeWidth, 34, 67, colors)} ${theme.fg("dim", "ctx")}`,
+					ctx: `${bar(usage.ctxPct, fit.gaugeWidth, CONTEXT_WARN_PERCENT, CONTEXT_CRIT_PERCENT, colors)} ${theme.fg("dim", "ctx")}`,
 					gpt: account.gpt ?? "",
 					claude: account.claude ?? "",
 					claudeTurn: turn,
