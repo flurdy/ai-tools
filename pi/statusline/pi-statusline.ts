@@ -12,7 +12,7 @@ import { fetchGitDivergence, findGitWorkspaceRoot, formatGitDivergence, GitDiver
 import { activeModelLabel, modelLabel } from "./model-label.ts";
 import { OpenRouterCostAdvisory, openRouterAdvisoryConfig, sharedOpenRouterAdvisoryState } from "./openrouter-advisory.ts";
 import { createOpenRouterCreditsCache, openRouterCreditsApiKey } from "./openrouter-credits.ts";
-import { accountQuotaCells, adapterAlertVisible } from "./quota-cells.ts";
+import { accountQuotaCells, adapterAlertVisible, QUOTA_FITS, type QuotaFit } from "./quota-cells.ts";
 import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT } from "./quota-display.ts";
 import { formatSessionGuard } from "./session-guard.ts";
 import { quotaCacheDirectory, sharedLoad } from "./shared-snapshot.ts";
@@ -428,7 +428,7 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				return `${label}${gauge}${flags}${extra}`;
 			}
 
-			function segments(gaugeWidth: 3 | 5 = 5) {
+			function segments(fit: QuotaFit = QUOTA_FITS[0]) {
 				const git = getGitInfo(ctx.cwd, footerData.getGitBranch());
 				void gitDivergenceCache?.refresh(git.branch);
 				const divergence = formatGitDivergence(gitDivergenceCache?.divergenceFor(git.branch));
@@ -446,14 +446,14 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				const nowMs = Date.now();
 				const account = accountQuotaCells({
 					nowMs,
-					gaugeWidth,
+					...fit,
 					codex: codexCache && { value: codexCache.value, failed: codexCache.failed, staleAfterMs: codexStaleMs },
 					claude: claudeCache && { value: claudeCache.value, failed: claudeCache.failed, staleAfterMs: claudeStaleMs },
 				}, (tone, text) => theme.fg(tone, text));
 				const claudeSnapshot = claudeCache?.value;
 				const claudeSnapshotFresh = Boolean(claudeSnapshot && nowMs - claudeSnapshot.fetchedAtMs <= claudeStaleMs);
 				const claudeTurn = claudeQuotaView(ctx.model?.provider, statuses.get(CLAUDE_QUOTA_STATUS_KEY), nowMs);
-				const turn = claudeTurn && adapterAlertVisible(claudeTurn, claudeSnapshotFresh) ? claudeTurnCell(claudeTurn, gaugeWidth) : "";
+				const turn = claudeTurn && adapterAlertVisible(claudeTurn, claudeSnapshotFresh) ? claudeTurnCell(claudeTurn, fit.gaugeWidth) : "";
 				const openRouterCredits = openRouterCreditsCache?.credits;
 				const openRouterBalance = openRouterCredits
 					? theme.fg(openRouterCreditsCache.isStale() ? "dim" : "success", `OR $${Math.round(openRouterCredits.remainingCredits)}`)
@@ -489,13 +489,22 @@ export default function piStatusline(pi: ExtensionAPI): void {
 				return cells.filter(Boolean).join(theme.fg("border", " │ "));
 			}
 
+			type Segments = ReturnType<typeof segments>;
+
+			/** The first quota fit that `fits` accepts, otherwise the smallest. */
+			function fittedSegments(fits: (s: Segments) => boolean): Segments {
+				let s = segments(QUOTA_FITS[0]);
+				for (const fit of QUOTA_FITS.slice(1)) {
+					if (fits(s)) break;
+					s = segments(fit);
+				}
+				return s;
+			}
+
 			function compact(width: number): string[] {
-				let s = segments();
-				const fullLine = () => joinCells([s.agent, s.guard, s.model, s.effort, s.bars, s.gpt, s.claude, s.claudeTurn, s.openRouterBalance, s.k8s, s.duration, s.path, s.repo, s.branch, s.divergence, s.pr, s.session]);
-				let line = fullLine();
-				if (visibleWidth(line) <= width) return [line];
-				s = segments(3);
-				line = fullLine();
+				const fullLine = (c: Segments) => joinCells([c.agent, c.guard, c.model, c.effort, c.bars, c.gpt, c.claude, c.claudeTurn, c.openRouterBalance, c.k8s, c.duration, c.path, c.repo, c.branch, c.divergence, c.pr, c.session]);
+				const s = fittedSegments((c) => visibleWidth(fullLine(c)) <= width);
+				let line = fullLine(s);
 				if (visibleWidth(line) <= width) return [line];
 				const quotas = [s.gpt, s.claude, s.claudeTurn, s.openRouterBalance];
 				let cells = [joinCells([s.agent, s.guard, s.model, s.effort]), s.bars, ...quotas, s.k8s, s.duration, s.repo, s.branch, s.divergence, s.pr, s.session].filter(Boolean);
@@ -510,11 +519,9 @@ export default function piStatusline(pi: ExtensionAPI): void {
 			}
 
 			function table(width: number): string[] {
-				let s = segments();
 				const border = (text: string) => theme.fg("border", text);
-				let row1 = [s.host, s.k8s, s.path, s.repo, s.branch, s.divergence, s.pr, s.beads, s.session].filter(Boolean);
-				const usageCells = () => [s.agent, s.guard, s.model, s.effort, s.ctx, s.gpt, s.claude, s.claudeTurn, s.openRouterBalance, s.cost, s.duration].filter(Boolean);
-				let row2 = usageCells();
+				const locationCells = (c: Segments) => [c.host, c.k8s, c.path, c.repo, c.branch, c.divergence, c.pr, c.beads, c.session].filter(Boolean);
+				const usageCells = (c: Segments) => [c.agent, c.guard, c.model, c.effort, c.ctx, c.gpt, c.claude, c.claudeTurn, c.openRouterBalance, c.cost, c.duration].filter(Boolean);
 
 				function widthsFor(cells: string[]): number[] {
 					return cells.map((cell) => visibleWidth(cell) + 2);
@@ -528,16 +535,13 @@ export default function piStatusline(pi: ExtensionAPI): void {
 					return out;
 				}
 
+				const tableWidth = (c: Segments) => Math.max(totalWidth(widthsFor(locationCells(c))), totalWidth(widthsFor(usageCells(c))));
+				const s = fittedSegments((c) => tableWidth(c) <= width);
+				let row1 = locationCells(s);
+				const row2 = usageCells(s);
 				let row1Widths = widthsFor(row1);
 				let row2Widths = widthsFor(row2);
 				let target = Math.max(totalWidth(row1Widths), totalWidth(row2Widths));
-
-				if (target > width) {
-					s = segments(3);
-					row2 = usageCells();
-					row2Widths = widthsFor(row2);
-					target = Math.max(totalWidth(row1Widths), totalWidth(row2Widths));
-				}
 
 				// If the on-disk path still makes the table too wide, drop that cell;
 				// the worktree repo + branch usually carry the more useful context.

@@ -6,7 +6,7 @@
 import type { ClaudeAccountUsage, ClaudeAccountWindow } from "./claude-usage.ts";
 import type { ClaudeQuotaView } from "./claude-quota.ts";
 import { formatCodexCredits, type CodexQuotaSnapshot } from "./codex-quota.ts";
-import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT, codexQuotaTone } from "./quota-display.ts";
+import { bar, CODEX_QUOTA_CRIT_PERCENT, CODEX_QUOTA_WARN_PERCENT, codexQuotaTone, QUOTA_COUNTDOWN_PERCENT } from "./quota-display.ts";
 
 export type Tone = "success" | "warning" | "error" | "dim";
 export type Paint = (tone: Tone, text: string) => string;
@@ -18,10 +18,22 @@ export interface SourceState<T> {
 	staleAfterMs: number;
 }
 
-export interface AccountQuotaInput {
-	nowMs: number;
+export interface QuotaFit {
 	/** Five at full width; three when the footer needs a smaller fit. */
-	gaugeWidth?: 3 | 5;
+	gaugeWidth: 3 | 5;
+	/** Reset countdowns on windows used beyond QUOTA_COUNTDOWN_PERCENT. */
+	countdowns: boolean;
+}
+
+/** Tried in order until the footer fits: countdowns go before the gauges shrink. */
+export const QUOTA_FITS: readonly QuotaFit[] = [
+	{ gaugeWidth: 5, countdowns: true },
+	{ gaugeWidth: 5, countdowns: false },
+	{ gaugeWidth: 3, countdowns: false },
+];
+
+export interface AccountQuotaInput extends Partial<QuotaFit> {
+	nowMs: number;
 	/** Undefined when the source is disabled. */
 	codex: SourceState<CodexQuotaSnapshot> | undefined;
 	claude: SourceState<ClaudeAccountUsage> | undefined;
@@ -29,6 +41,19 @@ export interface AccountQuotaInput {
 
 type UsageWindow = Pick<ClaudeAccountWindow, "usedPercent" | "resetsAtMs">;
 type UsageTone = Exclude<Tone, "dim">;
+type CountdownUnit = "d" | "h";
+
+interface GaugeOptions extends QuotaFit {
+	nowMs: number;
+	stale: boolean;
+	paint: Paint;
+}
+
+const UNIT_MS: Record<CountdownUnit, number> = { d: 24 * 60 * 60_000, h: 60 * 60_000 };
+
+function gaugeOptions(input: AccountQuotaInput, stale: boolean, paint: Paint): GaugeOptions {
+	return { nowMs: input.nowMs, stale, paint, gaugeWidth: input.gaugeWidth ?? 5, countdowns: input.countdowns ?? true };
+}
 
 const TONE_ORDER: readonly UsageTone[] = ["success", "warning", "error"];
 
@@ -37,19 +62,25 @@ function worst(tones: Array<UsageTone | undefined>): Tone {
 	return known.length === 0 ? "dim" : TONE_ORDER[Math.max(...known.map((tone) => TONE_ORDER.indexOf(tone)))];
 }
 
+/** Whole units left until a reported, unexpired reset, rounded up; stale snapshots get none. */
+function countdown(used: number, resetsAtMs: number | null, unit: CountdownUnit, o: GaugeOptions): string {
+	if (!o.countdowns || o.stale || resetsAtMs === null || Math.round(used) <= QUOTA_COUNTDOWN_PERCENT) return "";
+	return ` ${Math.ceil((resetsAtMs - o.nowMs) / UNIT_MS[unit])}${unit}`;
+}
+
 /**
- * Fill is the used share, like ctx. Resets still invalidate old values, but are
- * not rendered. One severity paints the fill, the label and credit visibility.
+ * Fill is the used share, like ctx. Resets invalidate old values and, past half
+ * usage, add a countdown. One severity paints the fill, the label and credit visibility.
  */
-function windowGauge(window: UsageWindow | undefined, nowMs: number, stale: boolean, paint: Paint, gaugeWidth: 3 | 5 = 5): { text: string; tone?: UsageTone } {
+function windowGauge(window: UsageWindow | undefined, unit: CountdownUnit, o: GaugeOptions): { text: string; tone?: UsageTone } {
 	const used = window?.usedPercent ?? null;
-	if (!window || used === null || (window.resetsAtMs !== null && nowMs >= window.resetsAtMs)) return { text: paint("dim", "?") };
+	if (!window || used === null || (window.resetsAtMs !== null && o.nowMs >= window.resetsAtMs)) return { text: o.paint("dim", "?") };
 	const tone = codexQuotaTone(used);
-	const shade = (fill: Tone) => (text: string) => paint(stale ? "dim" : fill, text);
+	const shade = (fill: Tone) => (text: string) => o.paint(o.stale ? "dim" : fill, text);
 	const colors = { ok: shade(tone), warn: shade(tone), crit: shade(tone), empty: shade("dim") };
-	const gauge = bar(used, gaugeWidth, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, colors);
-	const over = used > 100 ? paint(stale ? "dim" : tone, " >100%") : "";
-	return { text: `${gauge}${over}`, tone };
+	const gauge = bar(used, o.gaugeWidth, CODEX_QUOTA_WARN_PERCENT, CODEX_QUOTA_CRIT_PERCENT, colors);
+	const over = used > 100 ? o.paint(o.stale ? "dim" : tone, " >100%") : "";
+	return { text: `${gauge}${over}${countdown(used, window.resetsAtMs, unit, o)}`, tone };
 }
 
 function provider(label: string, tone: Tone, stale: boolean, paint: Paint): string {
@@ -66,7 +97,7 @@ function gptCell(input: AccountQuotaInput, paint: Paint): string | undefined {
 	const snapshot = source?.value;
 	if (!source || !snapshot) return source?.failed ? paint("dim", "GPT ?") : undefined;
 	const stale = input.nowMs - snapshot.fetchedAtMs > source.staleAfterMs;
-	const weekly = windowGauge(snapshot.weekly, input.nowMs, stale, paint, input.gaugeWidth);
+	const weekly = windowGauge(snapshot.weekly, "d", gaugeOptions(input, stale, paint));
 	const label = provider("GPT", worst([weekly.tone]), stale, paint);
 	const credits = weekly.tone === "error" && snapshot.credits && paint(stale ? "dim" : "success", formatCodexCredits(snapshot.credits));
 	return [`${label} ${weekly.text}`, credits].filter(Boolean).join(" · ");
@@ -78,8 +109,9 @@ function claudeCell(input: AccountQuotaInput, paint: Paint): string | undefined 
 	if (!source || !usage) return source?.failed ? paint("dim", "Claude ?") : undefined;
 	if (!usage.session && !usage.week) return paint("dim", "Claude ?");
 	const stale = input.nowMs - usage.fetchedAtMs > source.staleAfterMs;
-	const session = windowGauge(usage.session, input.nowMs, stale, paint, input.gaugeWidth);
-	const week = windowGauge(usage.week, input.nowMs, stale, paint, input.gaugeWidth);
+	const options = gaugeOptions(input, stale, paint);
+	const session = windowGauge(usage.session, "h", options);
+	const week = windowGauge(usage.week, "d", options);
 	const label = provider("Claude", worst([session.tone, week.tone]), stale, paint);
 	const name = (text: string) => stale ? paint("dim", text) : text;
 	return `${label} ${name("5h")} ${session.text} · ${name("wk")} ${week.text}`;

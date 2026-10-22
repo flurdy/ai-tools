@@ -500,7 +500,7 @@ test("shows GPT and Claude account quotas together, independent of the active mo
 			await withFooter(async (footer, statuses, controls) => {
 				process.env.PI_STATUSLINE = "compact";
 				const compact = plainLines(footer.render(300));
-				const quotas = /GPT ▮▮▮▮▯ · 13 cr │ Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯/;
+				const quotas = /GPT ▮▮▮▮▯ 1d · 13 cr │ Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯ \d+d/;
 				assert.match(compact, quotas, compact);
 				assert.doesNotMatch(compact, /\d\d:\d\d/);
 				process.env.PI_STATUSLINE = "table";
@@ -509,15 +509,21 @@ test("shows GPT and Claude account quotas together, independent of the active mo
 				assert.doesNotMatch(table, /\d+%|\d\d:\d\d/);
 				assert.ok(visibleWidth(table.split("\n")[3] ?? "") < 160, table);
 				assert.doesNotMatch(table.split("\n")[3] ?? "", /│ \d\d:\d\d │/);
-				const smallerQuotas = /GPT ▮▮▯ · 13 cr │ Claude 5h ▯▯▯ · wk ▮▯▯/;
-				const tightTableWidth = visibleWidth(footer.render(300)[0] ?? "") - 1;
-				const tightTable = footer.render(tightTableWidth);
-				assert.equal(tightTable.length, 5);
-				assert.ok(tightTable.every(line => visibleWidth(line) <= tightTableWidth));
-				assert.match(plainLines(tightTable), smallerQuotas);
+				// Countdowns go first, then the gauges shrink from five blocks to three.
+				const plainQuotas = /GPT ▮▮▮▮▯ · 13 cr │ Claude 5h ▯▯▯▯▯ · wk ▮▮▯▯▯(?! \d)/;
+				const smallerQuotas = /GPT ▮▮▯ · 13 cr │ Claude 5h ▯▯▯ · wk ▮▯▯(?! \d)/;
+				const tighter = (lines: string[]) => footer.render(visibleWidth(lines[0] ?? "") - 1);
+				const plainTable = tighter(footer.render(300));
+				const tightTable = tighter(plainTable);
+				for (const [lines, expected] of [[plainTable, plainQuotas], [tightTable, smallerQuotas]] as const) {
+					assert.equal(lines.length, 5);
+					assert.match(plainLines(lines), expected);
+				}
+				assert.ok(tightTable.every(line => visibleWidth(line) < visibleWidth(plainTable[0] ?? "")));
 				process.env.PI_STATUSLINE = "compact";
-				const fullLine = footer.render(300)[0] ?? "";
-				const tightLine = plainLines(footer.render(visibleWidth(fullLine) - 1));
+				const plainLine = tighter(footer.render(300));
+				assert.match(plainLines(plainLine), plainQuotas);
+				const tightLine = plainLines(tighter(plainLine));
 				assert.match(tightLine, smallerQuotas);
 				assert.match(tightLine, /layout-test-session/);
 				assert.match(tightLine, /feature\/statusline-layout-test/);

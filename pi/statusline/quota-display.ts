@@ -1,5 +1,7 @@
 export const CODEX_QUOTA_WARN_PERCENT = 60;
 export const CODEX_QUOTA_CRIT_PERCENT = 75;
+/** Account windows used beyond this share show the time left until their reset. */
+export const QUOTA_COUNTDOWN_PERCENT = 50;
 
 type BarColors = {
 	ok: (s: string) => string;
