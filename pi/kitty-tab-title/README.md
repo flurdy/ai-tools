@@ -72,6 +72,9 @@ its title writer in that environment. Disable the Orca titlebar-spinner extensio
 `PI_KITTY_TITLE_ALLOW_ORCA=1` for that session to acknowledge the conflict and enable
 `flurdy-kitty-tab-title.ts`. Do not set the override while both writers are loaded.
 
+Orca's writer already shows the Pi session name. For task-based names in Orca without a second
+title writer, use [task session names](../task-session-name/).
+
 ## Runtime behavior
 
 The extension listens for the optional `rpiv:ask-user:blocked` event emitted by

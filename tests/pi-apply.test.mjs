@@ -10,6 +10,7 @@ const resources = [
 	["extensions/flurdy-statusline", "pi/statusline"],
 	["extensions/flurdy-kitty-tab-title.ts", "pi/kitty-tab-title/pi-kitty-tab-title.ts"],
 	["extensions/flurdy-notify.ts", "pi/notify/pi-notify.ts"],
+	["extensions/flurdy-task-session-name.ts", "pi/task-session-name/pi-task-session-name.ts"],
 	["extensions/flurdy-prompt-shortcuts.ts", "pi/prompt-shortcuts/pi-prompt-shortcuts.ts"],
 	["extensions/flurdy-skill-spotlight.ts", "pi/skill-spotlight/pi-skill-spotlight.ts"],
 	["themes/flurdy-dark.json", "pi/theme/flurdy-dark.json"],
@@ -71,6 +72,9 @@ test("apply and verify-apply install all managed links idempotently without touc
 	rmSync(join(dir, "extensions/flurdy-notify.ts"));
 	assert.notEqual(make(dir, "verify-apply").status, 0, "missing notifier must fail verification");
 	symlinkSync(join(root, "pi/notify/pi-notify.ts"), join(dir, "extensions/flurdy-notify.ts"));
+	rmSync(join(dir, "extensions/flurdy-task-session-name.ts"));
+	assert.notEqual(make(dir, "verify-apply").status, 0, "missing task session naming must fail verification");
+	symlinkSync(join(root, "pi/task-session-name/pi-task-session-name.ts"), join(dir, "extensions/flurdy-task-session-name.ts"));
 	rmSync(join(dir, "extensions/flurdy-prompt-shortcuts.ts"));
 	assert.notEqual(make(dir, "verify-apply").status, 0, "missing quick prompts must fail verification");
 }));

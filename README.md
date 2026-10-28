@@ -21,6 +21,7 @@ This repository is the maintained source for the components documented here. Som
 | [Pi settings starter](pi/settings/) | Pi | Redacted global settings starter, component catalog, and explicit safe-MCP configuration boundary. |
 | [Pi Kitty tab title](pi/kitty-tab-title/) | Pi | Pi extension for showing repo/session state in Kitty tab titles, matching the Claude/Codex workflow. |
 | [Pi completion notifications](pi/notify/) | Pi | Terminal notifications after a run fully settles; defers to Orca's host integration. |
+| [Pi task session names](pi/task-session-name/) | Pi | Names unnamed Orca-hosted sessions after the claimed task or watcher role; never overrides your own name. |
 | [Pi prompt shortcuts](pi/prompt-shortcuts/) | Pi | Manual Continue, Checkpoint, Unblock and Why prompts with idle/draft guards; never approval. |
 | [Pi skill spotlight](pi/skill-spotlight/) | Pi | Opt-in startup tip featuring one loaded skill, outside model context. |
 | [Quota helpers](pi/quota/) | Pi / shell | `codex-quota` and `claude-quota` print the Codex weekly quota and credits, and Claude Code's session and weekly usage, as JSON for the `/quota` prompt or a direct check without a model turn. |
@@ -57,13 +58,13 @@ make apply
 make verify-apply
 ```
 
-This links the statusline, Kitty tab title, completion notifier, prompt shortcuts, skill spotlight, and theme into `~/.pi/agent`, and links the `codex-quota` and `claude-quota` CLIs into `~/bin`. Override the CLI destination with `BIN_DIR`; keep it on Pi's inherited `PATH` (see [quota helper installation](pi/quota/README.md#install)). The installer refuses conflicting resources and leaves unrelated settings untouched. The spotlight remains opt-in via `PI_SKILL_SPOTLIGHT=1` (see [startup tip details](pi/skill-spotlight/README.md)); disable other completion notifiers first (see [notification behavior](pi/notify/README.md)).
+This links the statusline, Kitty tab title, completion notifier, Orca task session names, prompt shortcuts, skill spotlight, and theme into `~/.pi/agent`, and links the `codex-quota` and `claude-quota` CLIs into `~/bin`. Override the CLI destination with `BIN_DIR`; keep it on Pi's inherited `PATH` (see [quota helper installation](pi/quota/README.md#install)). The installer refuses conflicting resources and leaves unrelated settings untouched. The spotlight remains opt-in via `PI_SKILL_SPOTLIGHT=1` (see [startup tip details](pi/skill-spotlight/README.md)); disable other completion notifiers first (see [notification behavior](pi/notify/README.md)).
 
 This does not install settings, launchers, `APPEND_SYSTEM.md`, session-mode, skill-model-router, or watch-loop. Install session-mode separately for guard indicators and `/leases`; the statusline reads its published statuses without a package dependency (see [statusline installation](pi/statusline/README.md)). Restart Pi after first linking an extension; `/reload` loads later changes.
 
 ## Verify
 
-`make check` runs the root suites listed in the [Makefile](Makefile), including both artifact-hygiene gates, extraction contracts, Pi notification, prompt-shortcut and skill-spotlight tests, quota and goal-fixture tests, and Gondolin policy checks. It is not every component's full verification suite. For component-specific tests and checks—such as statusline typechecking, launcher integration tests, or the project-workspace suite—use the commands in that component's README.
+`make check` runs the root suites listed in the [Makefile](Makefile), including both artifact-hygiene gates, extraction contracts, Pi notification, task session naming, prompt-shortcut and skill-spotlight tests, quota and goal-fixture tests, and Gondolin policy checks. It is not every component's full verification suite. For component-specific tests and checks—such as statusline typechecking, launcher integration tests, or the project-workspace suite—use the commands in that component's README.
 
 
 ## Layout
@@ -85,6 +86,7 @@ pi/
   settings/
   kitty-tab-title/
   notify/
+  task-session-name/
   prompt-shortcuts/
   skill-spotlight/
   quota/
