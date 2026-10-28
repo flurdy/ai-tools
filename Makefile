@@ -22,6 +22,7 @@ help:
 	@echo "BIN_DIR=$(BIN_DIR) (override with an absolute directory on your PATH)"
 
 check:
+	node --test tests/response-guidance.test.mjs
 	$(MAKE) -C claude/artifact-hygiene-gate test
 	$(MAKE) -C codex/artifact-hygiene-gate test
 	@tests/test-watch-loop-extraction.sh

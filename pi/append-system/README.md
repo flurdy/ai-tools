@@ -1,6 +1,6 @@
 # Pi `APPEND_SYSTEM.md` example
 
-A small, opt-in system-prompt addition for Pi. It asks agents to finish substantive responses with a focused next action and to require fresh approval before remote Git operations.
+A small, opt-in system-prompt addition for Pi. It separates concise next-state summaries from immediate user instructions and requires fresh approval before remote Git operations.
 
 `APPEND_SYSTEM.md` is appended to Pi's built-in system prompt; it does not replace it. Use it for stable, always-on preferences and safety rules.
 
@@ -43,6 +43,38 @@ Project-local Pi resources require the project to be trusted. The project file a
 - **`SYSTEM.md`**: replaces Pi's default system prompt. Prefer `APPEND_SYSTEM.md` unless replacing the default prompt is intentional.
 
 Keep this file short, portable, and free of credentials, account details, trust decisions, session transcripts, and machine-specific paths.
+
+## Response examples
+
+These are authoring examples, not captured model runs. A summary is not authorization or a
+promise that a paused session will resume automatically.
+
+| Situation | Action placement | Closing summary |
+|---|---|---|
+| Authorized work remains | Do it; use progress updates, not a final-response handoff | No final response yet |
+| A choice is required | Ask the concrete question using the required question/approval tool | `**Next:** Awaiting the scope decision.` |
+| A runtime check needs the user | Put steps and the Pi command before the summary, as below | `**Next:** Waiting for the renamed-session check.` |
+| A push needs approval | Use the required fresh confirmation flow, not a command for the user to run | `**Next:** Publication deferred.` only if actually deferred |
+| Work is complete | No invented user action or follow-up | `**Next:** Nothing required.` |
+| A workflow requires verbatim output or a final protocol line | Preserve that output contract | No added or rewritten footer |
+
+For a screenshot-style runtime check, keep the instructions separate:
+
+````markdown
+Please check the test session:
+
+1. Set its Pi session name:
+   ```text
+   /name orca-dynamic-titles
+   ```
+2. Send one short message, then share the tab/sidebar screenshot after it finishes.
+
+**Next:** Waiting for the renamed-session check.
+````
+
+Keep read-only advice read-only. A summary such as “Implementation awaits approval” neither
+starts implementation nor approves it. Restart Pi after changing an installed system file;
+editing this repository's example does not update an independently copied installation.
 
 ## Adaptation
 
