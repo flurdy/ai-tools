@@ -7,8 +7,9 @@ const TASK_ID_MAX_LENGTH = 64;
 const ROLES = new Set(["watch-release", "watch-prs"]);
 const ROLE_COMMAND = /^\s*(?:\/(?:skill:)?|\$)(watch-release|watch-prs)(?:\s|$)/;
 const BD_VALUE_FLAGS = new Set(["-C", "--directory", "--actor", "--db", "--database", "--dolt-auto-commit"]);
+const BD_SWITCHES = new Set(["--sandbox", "--json", "--readonly", "--no-color", "--quiet", "-q", "--verbose", "-v"]);
+const UPDATE_VALUE_FLAGS = new Set(["--notes", "--append-notes", "--description", "-d", "--title", "--add-label", "--remove-label", "--set-labels"]);
 const SELECT_VALUE_FLAGS = new Set(["--expect-id", "--type"]);
-const OPERATORS = new Set([";", "&", "|", "(", ")", "\n"]);
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
 interface NameState {
@@ -27,14 +28,14 @@ function role(value: unknown): string | undefined {
 	return typeof value === "string" && ROLES.has(value) ? value : undefined;
 }
 
-/** Splits a command into simple-command word lists, honouring quotes; not a full shell parser. */
-function shellSegments(command: string): string[][] {
-	const segments: string[][] = [[]];
+/** Accept only one literal simple command: a shell's final status cannot prove earlier claims. */
+function shellWords(command: string): string[] | undefined {
+	const words: string[] = [];
 	let word = "";
 	let inWord = false;
 	let quote: string | undefined;
 	const endWord = (): void => {
-		if (inWord) segments.at(-1)?.push(word);
+		if (inWord) words.push(word);
 		word = "";
 		inWord = false;
 	};
@@ -44,6 +45,8 @@ function shellSegments(command: string): string[][] {
 		if (quote === "'") {
 			if (character === "'") quote = undefined;
 			else word += character;
+		} else if (character === "$" || character === "`") {
+			return;
 		} else if (quote === '"') {
 			if (character === '"') quote = undefined;
 			else if (character === "\\" && next !== undefined) word += command[++index];
@@ -56,9 +59,8 @@ function shellSegments(command: string): string[][] {
 		} else if (character === "\\" && next !== undefined) {
 			word += command[++index];
 			inWord = true;
-		} else if (OPERATORS.has(character)) {
-			endWord();
-			if (segments.at(-1)?.length) segments.push([]);
+		} else if (/[;&|()<>\n\r]/.test(character) || (character === "#" && !inWord)) {
+			return;
 		} else if (/\s/.test(character)) {
 			endWord();
 		} else {
@@ -66,8 +68,9 @@ function shellSegments(command: string): string[][] {
 			inWord = true;
 		}
 	}
+	if (quote || command.endsWith("\\")) return;
 	endWord();
-	return segments.filter((segment) => segment.length > 0);
+	return words;
 }
 
 function selectedTask(args: string[]): string | undefined {
@@ -75,44 +78,60 @@ function selectedTask(args: string[]): string | undefined {
 	let expected: string | undefined;
 	for (let index = 0; index < args.length; index++) {
 		const arg = args[index] ?? "";
-		if (arg === "--expect-id") expected = args[index + 1];
-		if (arg.startsWith("--expect-id=")) expected = arg.slice("--expect-id=".length);
-		if (SELECT_VALUE_FLAGS.has(arg)) index++;
-		else if (!arg.startsWith("-")) selector ??= arg;
+		const [flag] = arg.split("=", 1);
+		if (SELECT_VALUE_FLAGS.has(flag ?? "")) {
+			const value = arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : args[++index];
+			if (value === undefined) return;
+			if (flag === "--expect-id") expected = value;
+		} else if (["--avoid-busy", "--allow-other-machine"].includes(arg)) {
+			continue;
+		} else if (arg.startsWith("-") || selector !== undefined) {
+			return;
+		} else selector = arg;
 	}
 	if (!selector) return;
-	return taskId(/^\d+$/.test(selector) ? expected : selector.slice(selector.indexOf(":") + 1));
+	const selected = taskId(/^\d+$/.test(selector) ? expected : selector.slice(selector.indexOf(":") + 1));
+	return expected !== undefined && selected !== expected ? undefined : selected;
 }
 
 function updatedTask(args: string[]): string | undefined {
-	let command = 0;
-	while (command < args.length && args[command]?.startsWith("-")) {
-		command += BD_VALUE_FLAGS.has(args[command] ?? "") ? 2 : 1;
+	let at = 0;
+	while (args[at]?.startsWith("-")) {
+		const arg = args[at] ?? "";
+		const flag = arg.split("=", 1)[0] ?? "";
+		if (BD_VALUE_FLAGS.has(flag)) at += arg.includes("=") ? 1 : 2;
+		else if (BD_SWITCHES.has(arg)) at++;
+		else return;
 	}
-	if (args[command] !== "update") return;
-	const rest = args.slice(command + 1);
-	const firstFlag = rest.findIndex((arg) => arg.startsWith("-"));
-	const ids = firstFlag < 0 ? rest : rest.slice(0, firstFlag);
-	const claims = rest.some((arg, index) =>
-		arg === "--claim" ||
-		arg === "--status=in_progress" ||
-		((arg === "--status" || arg === "-s") && rest[index + 1] === "in_progress"));
-	return ids.length === 1 && claims ? taskId(ids[0]) : undefined;
+	if (args[at++] !== "update") return;
+	const id = taskId(args[at++]);
+	if (!id) return;
+	let claim = false;
+	let status: string | undefined;
+	for (; at < args.length; at++) {
+		const arg = args[at] ?? "";
+		const flag = arg.split("=", 1)[0] ?? "";
+		if (arg === "--claim") claim = true;
+		else if (flag === "--status" || flag === "-s" || UPDATE_VALUE_FLAGS.has(flag)) {
+			const value = arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : args[++at];
+			if (value === undefined) return;
+			if (flag === "--status" || flag === "-s") status = value;
+		} else if (!BD_SWITCHES.has(arg)) return;
+	}
+	if (status !== undefined && status !== "in_progress") return;
+	return claim || status === "in_progress" ? id : undefined;
 }
 
-/** Returns the single task a shell command claims, preferring the last claim in a chain. */
+/** Infer a claim only when the observed tool result covers one supported literal command. */
 export function claimedTask(command: string): string | undefined {
-	let claimed: string | undefined;
-	for (const words of shellSegments(command)) {
-		const at = words.findIndex((word) => !ASSIGNMENT.test(word));
-		const program = basename(words[at] ?? "");
-		const args = words.slice(at + 1);
-		const task = program === "next-select" && args[0] === "start"
-			? selectedTask(args.slice(1))
-			: program === "bd" ? updatedTask(args) : undefined;
-		claimed = task ?? claimed;
-	}
-	return claimed;
+	const words = shellWords(command);
+	if (!words) return;
+	const at = words.findIndex((word) => !ASSIGNMENT.test(word));
+	const program = basename(words[at] ?? "");
+	const args = words.slice(at + 1);
+	return program === "next-select" && args[0] === "start"
+		? selectedTask(args.slice(1))
+		: program === "bd" ? updatedTask(args) : undefined;
 }
 
 function restore(entries: readonly Entry[], currentName: string | undefined): { task?: string; role?: string; owned?: string } {
@@ -135,25 +154,19 @@ function restore(entries: readonly Entry[], currentName: string | undefined): { 
 export default function registerTaskSessionName(pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env): void {
 	if (!env.ORCA_PANE_KEY) return;
 
-	let task: string | undefined;
-	let currentRole: string | undefined;
-	let ownedName: string | undefined;
-
 	const update = (ctx: ExtensionContext, change: { task?: string; role?: string }): void => {
 		if (!ctx.hasUI) return;
-		task = change.task ?? task;
-		currentRole = change.role ?? currentRole;
-		const name = [task, currentRole].filter(Boolean).join(" · ");
 		const existing = pi.getSessionName();
-		if (!name || name === existing || (existing !== undefined && existing !== ownedName)) return;
-		ownedName = name;
+		// Pi names are session-global metadata, so use the same full entry order as getSessionName().
+		const previous = restore(ctx.sessionManager.getEntries(), existing);
+		if (existing !== undefined && existing !== previous.owned) return;
+		const task = change.task ?? previous.task;
+		const currentRole = change.role ?? previous.role;
+		const name = [task, currentRole].filter(Boolean).join(" · ");
+		if (!name || name === existing) return;
 		pi.setSessionName(name);
 		pi.appendEntry<NameState>(ENTRY_TYPE, { name, task, role: currentRole });
 	};
-
-	pi.on("session_start", (_event, ctx) => {
-		({ task, role: currentRole, owned: ownedName } = restore(ctx.sessionManager.getEntries(), pi.getSessionName()));
-	});
 
 	pi.on("tool_result", (event, ctx) => {
 		if (event.toolName !== "bash" || event.isError || typeof event.input.command !== "string") return;

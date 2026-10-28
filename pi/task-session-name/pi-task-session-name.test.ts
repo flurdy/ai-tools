@@ -6,7 +6,7 @@ import registerTaskSessionName, { claimedTask } from "./pi-task-session-name.ts"
 type Entry = { type: string; name?: string; customType?: string; data?: unknown };
 
 function harness(options: { env?: NodeJS.ProcessEnv; entries?: Entry[]; hasUI?: boolean } = {}) {
-	const entries: Entry[] = options.entries ?? [];
+	let entries: Entry[] = options.entries ?? [];
 	const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
 	const name = (): string | undefined => {
 		for (let index = entries.length - 1; index >= 0; index--) {
@@ -24,7 +24,8 @@ function harness(options: { env?: NodeJS.ProcessEnv; entries?: Entry[]; hasUI?: 
 	const emit = (event: string, payload: object) => handlers.get(event)?.({ type: event, ...payload }, ctx);
 	emit("session_start", { reason: "startup" });
 	return {
-		entries,
+		get entries() { return entries; },
+		switchEntries: (next: Entry[]) => { entries = next; emit("session_start", { reason: "resume" }); },
 		handlers,
 		name,
 		bash: (command: string, isError = false) => emit("tool_result", { toolName: "bash", input: { command }, isError, content: [] }),
@@ -67,12 +68,23 @@ test("extracts the claimed task from successful claim commands only", () => {
 	for (const [command, expected] of claims) assert.equal(claimedTask(command), expected, command);
 });
 
-test("the last claim in a chained command wins", () => {
-	assert.equal(
-		claimedTask(`bd update agents-go1 --claim && ${SELECT} start ai-tools:ai-tools-8hy --expect-id ai-tools-8hy`),
-		"ai-tools-8hy",
-	);
-	assert.equal(claimedTask(`${SELECT} start agents-go1; bd show agents-go1`), "agents-go1");
+test("ignores compound shell syntax whose final exit status cannot prove a claim succeeded", () => {
+	for (const command of [
+		`${SELECT} start agents-go1; echo done`,
+		`false && ${SELECT} start agents-go1; true`,
+		`bd update agents-go1 --claim | tee log`,
+		`# ignored; bd update agents-go1 --claim`,
+		`cat <<EOF\nbd update agents-go1 --claim\nEOF`,
+		`${SELECT} start agents-go1 &`,
+		`bd update agents-go1 --claim > log`,
+		`bd update agents-go1 --claim\necho done`,
+		`bd update agents-go1 --claim$(false)`,
+		`bd update agents-go1 --claim \`false\``,
+		`${SELECT} start agents-go1 && ${SELECT} start agents-dmm`,
+		`${SELECT} start 'agents-go1`,
+		`${SELECT} start agents-go1 --unknown`,
+		`bd update agents-go1 --notes '--claim' --status open`,
+	]) assert.equal(claimedTask(command), undefined, command);
 });
 
 test("names an unnamed Orca session after a successful claim and records ownership", () => {
@@ -119,6 +131,15 @@ test("never replaces a name the user set, before or after automatic naming", () 
 	assert.equal(h.name(), "orca-dynamic-titles");
 });
 
+test("re-entering the automatic name manually takes ownership immediately, without reload", () => {
+	const h = harness();
+	h.bash("bd update agents-go1 --claim");
+	h.userName("agents-go1");
+	h.bash("bd update agents-dmm --claim");
+	assert.equal(h.name(), "agents-go1");
+	assert.equal(h.entries.length, 3);
+});
+
 test("a cleared name returns control to automatic naming on the next signal", () => {
 	const h = harness({ entries: [{ type: "session_info", name: "manual" }] });
 	h.userName("");
@@ -141,6 +162,18 @@ test("ownership and context survive reload and resume", () => {
 	const resumed = harness({ entries: reloaded.entries });
 	resumed.bash("bd update agents-fu4 --claim");
 	assert.equal(resumed.name(), "renamed by me");
+});
+
+test("switching sessions cannot carry a prior task or watcher role into another session", () => {
+	const h = harness();
+	h.input("/watch-release");
+	h.bash("bd update agents-go1 --claim");
+	h.switchEntries([]);
+	h.bash("bd update agents-dmm --claim");
+	assert.equal(h.name(), "agents-dmm");
+	h.switchEntries([{ type: "session_info", name: "user session" }]);
+	h.input("/watch-prs");
+	assert.equal(h.name(), "user session");
 });
 
 test("restored entries are validated rather than trusted", () => {

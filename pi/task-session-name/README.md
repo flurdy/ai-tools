@@ -23,9 +23,14 @@ its Orca guard and is unchanged.
 
 A later claim replaces the task; the role persists. Task IDs must match a strict Beads-style ID of at
 most 64 characters, and roles come from the fixed list above, so prompt text, tool output, file
-contents and arbitrary arguments never reach the name. Failed commands, other tools, multi-ID updates
-and flags before the ID are ignored. No model or provider calls are made. Jira keys and branches are
-not used; Orca already shows the branch on the worktree card.
+contents and arbitrary arguments never reach the name. This is a command-shape heuristic, not a
+tracker lookup: an executable named `bd` or `next-select` with a successful tool result supplies the
+signal. Failed commands, other tools, multi-ID updates, unsupported flags and flags before an update
+ID are ignored. Only a standalone literal command is accepted; chains, pipelines, redirections,
+substitutions, comments and scripts are ignored because their final exit status cannot prove the
+claim ran successfully. Quoted values and backslash-newline continuations are supported. No model
+or provider calls are made. Jira keys and branches are not used; Orca already shows the branch on
+the worktree card.
 
 ## Precedence
 
@@ -35,9 +40,10 @@ not used; Orca already shows the branch on the worktree card.
 3. Without either signal the session stays unnamed and Orca keeps its own fallback label.
 
 Each automatic name appends a `session_info` entry and a `flurdy-task-session-name` custom entry to
-the session file. At every session start (including reload and resume), ownership is reconstructed from those entries:
-a later `session_info` you wrote, or an entry that fails validation, leaves the name yours. Clearing
-the name returns control to automatic naming on the next signal. Automatic names also appear in
+the session file. Before each update, ownership is reconstructed from the current session's entries;
+there is no cached session context or subprocess handle. A later `session_info` you wrote, even for
+the same name, leaves the name yours immediately and across reload/resume. Clearing the name
+returns control to automatic naming on the next signal. Automatic names also appear in
 `/resume`, and stay with the session if you later open it outside Orca.
 
 The extension is active only when `ORCA_PANE_KEY` is set and the session has a UI (interactive or
@@ -61,6 +67,7 @@ make check-task-session-name
 pi/statusline/node_modules/.bin/tsc -p pi/task-session-name/tsconfig.json
 ```
 
-The tests cover claim parsing, quoting and chained commands, failure and tool filtering, user-name
-precedence, clearing, reload/resume ownership, forged entries, the role vocabulary, and the Orca/UI
+The tests cover claim parsing, quoting, rejection of compound shell syntax, failure and tool filtering,
+user-name precedence (including same-name manual edits), clearing, reload/resume ownership,
+forged entries, the role vocabulary, and the Orca/UI
 gates. They do not prove what Orca renders; check the sidebar row and tab in an attended session.
