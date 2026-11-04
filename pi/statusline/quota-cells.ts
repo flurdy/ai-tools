@@ -112,9 +112,11 @@ function claudeCell(input: AccountQuotaInput, paint: Paint): string | undefined 
 	const options = gaugeOptions(input, stale, paint);
 	const session = windowGauge(usage.session, "h", options);
 	const week = windowGauge(usage.week, "d", options);
-	const label = provider("Claude", worst([session.tone, week.tone]), stale, paint);
+	const label = provider("Claude", worst([usage.session && session.tone, week.tone]), stale, paint);
 	const name = (text: string) => stale ? paint("dim", text) : text;
-	return `${label} ${name("5h")} ${session.text} · ${name("wk")} ${week.text}`;
+	// Plans without a session limit report no session window at all; that is absence, not unknown.
+	const sessionPart = usage.session ? `${name("5h")} ${session.text} · ` : "";
+	return `${label} ${sessionPart}${name("wk")} ${week.text}`;
 }
 
 export function accountQuotaCells(input: AccountQuotaInput, paint: Paint): { gpt: string | undefined; claude: string | undefined } {

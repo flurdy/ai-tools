@@ -12,8 +12,8 @@ model_id=$(echo "$input" | jq -r '.model.id // empty')
 cost_usd=$(echo "$input" | jq -r '.cost.total_cost_usd // 0')
 duration_ms=$(echo "$input" | jq -r '.cost.total_duration_ms // 0')
 ctx_pct=$(echo "$input" | jq -r '.context_window.used_percentage // 0')
-rate_5h_pct=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // 0')
-rate_7d_pct=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // 0')
+rate_5h_pct=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
+rate_7d_pct=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
 session_id=$(echo "$input" | jq -r '.session_id // empty')
 
 host=$(hostname -s)
@@ -653,15 +653,21 @@ fi
 
 # ===== LINE 2: Usage segments =====
 
-# 5-hour rate limit bar
-pct_5h=${rate_5h_pct%.*}
-bar_5h=$(progress_bar "$pct_5h" 8)
-segment_5h="${bar_5h} ${C_LABEL}5h${RST}"
+# Rate-limit bars: a window absent from the payload (plans without a 5-hour limit) is
+# unknown, not zero, so its segment is dropped rather than drawn empty.
+segment_5h=""
+pct_5h=""
+if [ -n "$rate_5h_pct" ]; then
+  pct_5h=${rate_5h_pct%.*}
+  segment_5h="$(progress_bar "$pct_5h" 8) ${C_LABEL}5h${RST}"
+fi
 
-# 7-day rate limit bar
-pct_7d=${rate_7d_pct%.*}
-bar_7d=$(progress_bar "$pct_7d" 6)
-segment_7d="${bar_7d} ${C_LABEL}7d${RST}"
+segment_7d=""
+pct_7d=""
+if [ -n "$rate_7d_pct" ]; then
+  pct_7d=${rate_7d_pct%.*}
+  segment_7d="$(progress_bar "$pct_7d" 6) ${C_LABEL}7d${RST}"
+fi
 
 # Context window — tighter thresholds: bloat starts ~20%, painful ~50% on 1M models
 pct_ctx=${ctx_pct%.*}
@@ -725,7 +731,9 @@ render_compact() {
     printf "%b%s%b%s%b" "$fill_color" "$bar" "$C_BAR_EMPTY" "$ebar" "$RST"
   }
   local seg_bars
-  seg_bars="$(mini_bar "$pct_ctx" 20 50) $(mini_bar "$pct_5h") $(mini_bar "$pct_7d")"
+  seg_bars="$(mini_bar "$pct_ctx" 20 50)"
+  [ -n "$pct_5h" ] && seg_bars+=" $(mini_bar "$pct_5h")"
+  [ -n "$pct_7d" ] && seg_bars+=" $(mini_bar "$pct_7d")"
 
   # Memoised display width — visible_len forks (sed|wc); cells repeat across
   # truncate/drop passes, so cache by content and return via a global.
@@ -900,7 +908,9 @@ render_table() {
   # Row 2: Claude session info
   local r2_segs=("$segment_agent" "$segment_model")
   [ -n "$segment_effort" ] && r2_segs+=("$segment_effort")
-  r2_segs+=("$segment_ctx" "$segment_5h" "$segment_7d")
+  r2_segs+=("$segment_ctx")
+  [ -n "$segment_5h" ] && r2_segs+=("$segment_5h")
+  [ -n "$segment_7d" ] && r2_segs+=("$segment_7d")
   [ -n "$segment_beads" ] && r2_segs+=("$segment_beads")
   r2_segs+=("$segment_cost" "$segment_time" "$segment_clock")
 

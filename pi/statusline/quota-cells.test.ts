@@ -185,7 +185,9 @@ test("shows unknown, expired and missing windows as ? rather than zero or old va
 	assert.equal(cells.claude, "Claude 5h ? · wk ?");
 
 	const missing = accountQuotaCells(input({ claude: source({ ...fixture, session: undefined }) }), plain);
-	assert.equal(missing.claude, "Claude 5h ? · wk ▮▮▮▯▯ 5d");
+	assert.equal(missing.claude, "Claude wk ▮▮▮▯▯ 5d");
+	const unreadable = accountQuotaCells(input({ claude: source({ ...fixture, session: { usedPercent: null, resetsAtMs: null } }) }), plain);
+	assert.equal(unreadable.claude, "Claude 5h ? · wk ▮▮▮▯▯ 5d");
 	const empty = accountQuotaCells(input({ claude: source({ session: undefined, week: undefined, fetchedAtMs: NOW }) }), plain);
 	assert.equal(empty.claude, "Claude ?");
 });

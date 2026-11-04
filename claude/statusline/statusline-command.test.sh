@@ -118,15 +118,13 @@ clear_git_status_cache() {
 
 render() {
   local cwd=$1 mode=${2:-table} command_path=${3:-$TEST_ROOT/bin:$PATH}
-  jq -cn --arg cwd "$cwd" '{
+  local limits=${RATE_LIMITS:-'{"five_hour":{"used_percentage":20},"seven_day":{"used_percentage":30}}'}
+  jq -cn --arg cwd "$cwd" --argjson limits "$limits" '{
     cwd: $cwd,
     model: {id: "claude-opus-4-8", display_name: "Opus"},
     cost: {total_cost_usd: 1.23, total_duration_ms: 65000},
     context_window: {used_percentage: 10},
-    rate_limits: {
-      five_hour: {used_percentage: 20},
-      seven_day: {used_percentage: 30}
-    },
+    rate_limits: $limits,
     session_id: "beads-statusline-test"
   }' | env \
     PATH="$command_path" \
@@ -157,6 +155,15 @@ assert_not_contains() {
 
 output=$(render "$TEST_ROOT/plain")
 assert_not_contains "$output" "◉"
+assert_contains "$output" "5h"
+assert_contains "$output" "7d"
+
+output=$(RATE_LIMITS='{"seven_day":{"used_percentage":30}}' render "$TEST_ROOT/plain" table)
+assert_not_contains "$output" "5h"
+assert_contains "$output" "7d"
+output=$(RATE_LIMITS='{}' render "$TEST_ROOT/plain" table)
+assert_not_contains "$output" "5h"
+assert_not_contains "$output" "7d"
 
 cat > "$TEST_ROOT/bin/kubectl" <<'EOF'
 #!/usr/bin/env bash
