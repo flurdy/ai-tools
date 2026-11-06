@@ -13,7 +13,7 @@ function harness(options: { probeTimeoutMs?: number; runtimeVersion?: () => Prom
 	const sendOptions: unknown[] = [];
 	const notices: string[] = [];
 	const listeners = new Set<InputListener>();
-	let availableCommands = [{ name: "plan", source: "extension" }, { name: "implement", source: "extension" }];
+	let availableCommands = [{ name: "plan", source: "extension" }];
 	let scopeInput: () => Promise<string | undefined> = async () => undefined;
 	let throwOnSend = false;
 	registerPromptShortcuts({
@@ -222,30 +222,32 @@ test("the probe sees original legacy bytes; compatibility resumes after the capt
 	h.events.get("session_shutdown")!();
 });
 
-for (const [name, key] of [["yes", "y"], ["approved", "a"]]) {
+for (const [name, key, text] of [["yes", "y", "yes"], ["approved", "a", "approved"], ["implement", "i", "/implement"]]) {
 	test(`${name}: inserts exact text without sending and preserves an existing draft`, async () => {
 		const h = harness();
 		const state = { draft: "" };
 		const ctx = h.context(state);
 		await h.shortcuts.get(`shift+alt+${key}`)!(ctx);
-		assert.equal(state.draft, name);
+		assert.equal(state.draft, text);
 		assert.deepEqual(h.sent, []);
 		await h.shortcuts.get(`shift+alt+${key}`)!(ctx);
-		assert.equal(state.draft, name, "duplicate press cannot append/replace the draft");
+		assert.equal(state.draft, text, "duplicate press cannot append/replace the draft");
 		assert.match(h.notices.at(-1)!, /draft/);
 		state.draft = "";
 		await h.commands.get(`quick-${name}`)!("", ctx);
-		assert.equal(state.draft, name, "clearing allows a later deliberate insertion");
+		assert.equal(state.draft, text, "clearing allows a later deliberate insertion");
 		assert.deepEqual(h.sent, []);
 	});
 }
 
-for (const name of ["yes", "approved", "plan", "implement"]) {
+for (const name of ["yes", "approved", "plan", "implement"] as const) {
 	test(`${name}: refuses busy, queued, non-TUI, draft, unreadable editor and command arguments`, async () => {
-		for (const state of [{ idle: false }, { pending: true }, { mode: "rpc" }, { mode: "print" }, { draft: "half typed" }, { draft: " " }, { draft: new Error("unavailable") }]) {
+		for (const state of [{ idle: false }, { pending: true }, { mode: "rpc" }, { mode: "print" }, { draft: "half typed" }, { draft: " " }, { draft: "\n" }, { draft: new Error("unavailable") }]) {
 			const h = harness();
 			const ctx = h.context(state);
 			await h.commands.get(`quick-${name}`)!("", ctx);
+			const key = { yes: "y", approved: "a", plan: "p", implement: "i" }[name]!;
+			await h.shortcuts.get(`shift+alt+${key}`)!(ctx);
 			assert.deepEqual(h.sent, []);
 			if (state.draft instanceof Error) assert.throws(() => ctx.ui.getEditorText());
 			else assert.equal(ctx.ui.getEditorText(), state.draft ?? "");
@@ -270,18 +272,15 @@ test("Plan dispatches the exact registered command without a model-turn latch", 
 	assert.equal(h.sent.length, 3, "pending model submission still blocks mode shortcuts");
 });
 
-for (const name of ["plan", "implement"]) {
-	test(`${name}: absent, ambiguous and non-extension commands never fall through to a model`, async () => {
-		for (const commands of [[], [{ name: `${name}:1`, source: "extension" }, { name: `${name}:2`, source: "extension" }], [{ name, source: "prompt" }], [{ name, source: "extension" }, { name, source: "extension" }]]) {
-			const h = harness();
-			h.setCommands(commands);
-			h.setScopeInput(async () => "/tmp/worktree");
-			await h.commands.get(`quick-${name}`)!("", h.context());
-			assert.deepEqual(h.sent, []);
-			assert.match(h.notices.at(-1)!, /registered extension command/);
-		}
-	});
-}
+test("Plan: absent, ambiguous and non-extension commands never fall through to a model", async () => {
+	for (const commands of [[], [{ name: "plan:1", source: "extension" }, { name: "plan:2", source: "extension" }], [{ name: "plan", source: "prompt" }], [{ name: "plan", source: "extension" }, { name: "plan", source: "extension" }]]) {
+		const h = harness();
+		h.setCommands(commands);
+		await h.commands.get("quick-plan")!("", h.context());
+		assert.deepEqual(h.sent, []);
+		assert.match(h.notices.at(-1)!, /registered extension command/);
+	}
+});
 
 test("mode dispatch refuses older or unknown Pi APIs instead of sending slash-command prose", async () => {
 	for (const version of ["0.80.6", "1.3.0", "unknown"]) {
@@ -292,54 +291,59 @@ test("mode dispatch refuses older or unknown Pi APIs instead of sending slash-co
 	}
 });
 
-test("Implement requires an explicit literal absolute worktree path and does not latch later commands", async () => {
-	const h = harness();
-	const root = '/tmp/worktree with spaces/quote"and\\slash';
-	h.setScopeInput(async () => root);
-	await h.shortcuts.get("shift+alt+i")!(h.context());
-	assert.deepEqual(h.sent, [`/implement ${JSON.stringify(root)}`]);
-	assert.deepEqual(h.sendOptions, [{ expandPromptTemplates: true }]);
-	await h.commands.get("quick-plan")!("", h.context());
-	assert.equal(h.sent.at(-1), "/plan");
-	for (const answer of [undefined, "", "  ", "relative/path", '""', "/tmp/a\n/tmp/b", "/tmp/a\t", "/tmp/a\x00", `/${"a".repeat(4096)}`]) {
-		const refused = harness();
-		refused.setScopeInput(async () => answer);
-		await refused.commands.get("quick-implement")!("", refused.context());
-		assert.deepEqual(refused.sent, [], JSON.stringify(answer));
-	}
-});
-
-test("Implement protects the scope dialog and rechecks state after the user answers", async () => {
-	for (const change of ["busy", "queue", "draft", "provider", "session", "shutdown"] as const) {
-		const h = harness();
-		const state = { idle: true, pending: false, draft: "" };
-		const ctx = h.context(state);
-		let answer!: (value: string) => void;
-		h.setScopeInput(() => new Promise((resolve) => { answer = resolve; }));
-		const running = h.commands.get("quick-implement")!("", ctx);
-		await h.commands.get("quick-implement")!("", ctx);
-		await h.commands.get("quick-plan")!("", ctx);
-		assert.deepEqual(h.sent, [], "no shortcut dispatch while scope selection is open");
-		if (change === "busy") state.idle = false;
-		if (change === "queue") state.pending = true;
-		if (change === "draft") state.draft = "new draft";
-		if (change === "provider") h.setCommands([]);
-		if (change === "session") h.start();
-		if (change === "shutdown") h.events.get("session_shutdown")!();
-		answer("/tmp/worktree");
-		await running;
-		assert.deepEqual(h.sent, [], change);
-	}
-});
-
-test("Implement dialog errors release our guard without dispatching or swallowing later actions", async () => {
-	const h = harness();
-	h.setScopeInput(async () => { throw new Error("dialog failed"); });
-	await h.commands.get("quick-implement")!("", h.context());
+test("Implement only inserts editable command text, without a dialog, dispatch or runtime lookup", async () => {
+	let versionLookups = 0;
+	const h = harness({ runtimeVersion: async () => { versionLookups++; throw new Error("unavailable"); } });
+	h.setCommands([]);
+	let dialogs = 0;
+	h.setScopeInput(async () => { dialogs++; return "/tmp/should-not-be-used"; });
+	const state = { draft: "" };
+	const ctx = h.context(state);
+	await h.shortcuts.get("shift+alt+i")!(ctx);
+	assert.equal(state.draft, "/implement");
+	assert.equal(dialogs, 0);
+	assert.equal(versionLookups, 0);
 	assert.deepEqual(h.sent, []);
-	assert.match(h.notices.at(-1)!, /failed/);
-	await h.commands.get("quick-plan")!("", h.context());
+	assert.deepEqual(h.sendOptions, []);
+	assert.deepEqual(h.notices, []);
+	state.draft += " /tmp/chosen-worktree";
+	await h.commands.get("quick-implement")!("", ctx);
+	assert.equal(state.draft, "/implement /tmp/chosen-worktree", "user edits are preserved");
+	assert.deepEqual(h.sent, []);
+	state.draft = "";
+	await h.commands.get("quick-implement")!("", ctx);
+	assert.equal(state.draft, "/implement", "clearing cancels the draft and permits another deliberate insertion");
+	assert.equal(dialogs, 0);
+	assert.deepEqual(h.sent, []);
+});
+
+test("Implement insertion does not latch subsequent Plan dispatch or Continue submission", async () => {
+	const h = harness();
+	const state = { draft: "" };
+	const ctx = h.context(state);
+	await h.shortcuts.get("shift+alt+i")!(ctx);
+	assert.equal(state.draft, "/implement");
+	await h.commands.get("quick-plan")!("", ctx);
+	assert.deepEqual(h.sent, [], "the inserted draft protects against other actions");
+	state.draft = "";
+	await h.commands.get("quick-plan")!("", ctx);
 	assert.deepEqual(h.sent, ["/plan"]);
+	await h.shortcuts.get(PRESETS[0].shortcut)!(ctx);
+	assert.equal(h.sent.length, 2, "no agent_settled event is needed after insertion");
+});
+
+test("pending prompt submission blocks Implement insertion until agent_settled", async () => {
+	const h = harness();
+	const state = { draft: "" };
+	const ctx = h.context(state);
+	h.shortcuts.get(PRESETS[0].shortcut)!(ctx);
+	await h.commands.get("quick-implement")!("", ctx);
+	assert.equal(state.draft, "");
+	assert.match(h.notices.at(-1)!, /submission/);
+	h.events.get("agent_settled")!();
+	await h.commands.get("quick-implement")!("", ctx);
+	assert.equal(state.draft, "/implement");
+	assert.equal(h.sent.length, 1, "only the earlier prompt was sent");
 });
 
 test("stale host-version lookup cannot dispatch after session replacement", async () => {

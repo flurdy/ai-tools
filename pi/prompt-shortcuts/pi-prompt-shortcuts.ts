@@ -1,4 +1,3 @@
-import { isAbsolute } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const NOT_APPROVAL = "This is not approval for any pending question or any new scope, write access, remote, destructive, package, billing or production action. Preserve all existing permission and confirmation gates.";
@@ -31,7 +30,7 @@ const ACTIONS = [
 	{ name: "yes", shortcut: "shift+alt+y", kind: "draft", text: "yes", description: "Insert yes for review and manual Enter" },
 	{ name: "approved", shortcut: "shift+alt+a", kind: "draft", text: "approved", description: "Insert approved for review and manual Enter" },
 	{ name: "plan", shortcut: "shift+alt+p", kind: "mode", description: "Run /plan through normal command dispatch" },
-	{ name: "implement", shortcut: "shift+alt+i", kind: "mode", description: "Choose one explicit worktree and run /implement" },
+	{ name: "implement", shortcut: "shift+alt+i", kind: "draft", text: "/implement", description: "Insert /implement for editing and manual Enter" },
 ] as const;
 
 const LEGACY_CHORDS = new Map(ACTIONS.map(({ shortcut }) => {
@@ -64,7 +63,6 @@ export default function registerPromptShortcuts(pi: ExtensionAPI, options: {
 	// sendUserMessage is fire-and-forget; preflight can await before isIdle becomes false.
 	let submitted = false;
 	let epoch = 0;
-	let selectingScope: symbol | undefined;
 	let stopProbe: (() => void) | undefined;
 	let stopCompatibility: (() => void) | undefined;
 	let runtimeVersion: Promise<string> | undefined;
@@ -72,7 +70,6 @@ export default function registerPromptShortcuts(pi: ExtensionAPI, options: {
 	pi.on("session_start", (_event, ctx) => {
 		epoch++;
 		submitted = false;
-		selectingScope = undefined;
 		stopProbe?.();
 		stopCompatibility?.();
 		stopCompatibility = undefined;
@@ -87,7 +84,6 @@ export default function registerPromptShortcuts(pi: ExtensionAPI, options: {
 	pi.on("agent_settled", () => { submitted = false; });
 	pi.on("session_shutdown", () => {
 		epoch++;
-		selectingScope = undefined;
 		stopProbe?.();
 		stopCompatibility?.();
 		stopCompatibility = undefined;
@@ -101,12 +97,8 @@ export default function registerPromptShortcuts(pi: ExtensionAPI, options: {
 		return false;
 	}
 
-	function ready(ctx: ExtensionContext, name: string, checkDraft: boolean, ownSelection?: symbol): boolean {
+	function ready(ctx: ExtensionContext, name: string, checkDraft: boolean): boolean {
 		if (ctx.mode !== "tui" || busy(ctx, name)) return false;
-		if (selectingScope && selectingScope !== ownSelection) {
-			ctx.ui.notify("A worktree scope selection is already open.", "info");
-			return false;
-		}
 		if (submitted) {
 			ctx.ui.notify("A shortcut submission is still pending. If it failed before starting, resolve the error and /reload before retrying.", "warning");
 			return false;
@@ -151,28 +143,7 @@ export default function registerPromptShortcuts(pi: ExtensionAPI, options: {
 					return;
 				}
 				if (!ready(ctx, action.name, true) || !hasModeCommand(ctx, action.name)) return;
-				let command = `/${action.name}`;
-				if (action.name === "implement") {
-					const ticket = epoch;
-					const selection = Symbol();
-					selectingScope = selection;
-					try {
-						const answer = await ctx.ui.input("Implement: choose one worktree", "Absolute worktree path, without surrounding quotes; no default");
-						if (ticket !== epoch) return;
-						if (!answer?.trim()) {
-							ctx.ui.notify("Implement cancelled: no worktree selected.", "info");
-							return;
-						}
-						if (answer.length > 4096 || /[\x00-\x1f\x7f-\x9f]/.test(answer) || !isAbsolute(answer.trim())) {
-							ctx.ui.notify("Implement needs one literal absolute worktree path without control characters.", "warning");
-							return;
-						}
-						if (!ready(ctx, action.name, true, selection) || !hasModeCommand(ctx, action.name)) return;
-						command += ` ${JSON.stringify(answer.trim())}`;
-					} finally {
-						if (selectingScope === selection) selectingScope = undefined;
-					}
-				}
+				const command = `/${action.name}`;
 				// Commands have no completion signal or agent_settled event. Their native owner handles overlapping requests.
 				pi.sendUserMessage(command, commandOptions);
 			}
