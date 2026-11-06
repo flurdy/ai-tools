@@ -20,7 +20,21 @@ Each invocation sends the fixed text in [`PRESETS`](pi-prompt-shortcuts.ts) as a
 - Pi's `sendUserMessage` API does not return a completion promise. If authentication, another extension's input handler, or another preflight check prevents the run from starting, the latch remains closed. Resolve the error, then `/reload` before deliberately retrying. No automatic retries or timeout resets.
 - Prompt wording is guidance, **not an enforcement boundary**. Existing session guards, scope, billing consent and action-specific confirmations remain authoritative. Other extensions can transform input. No filesystem, network, shell, model selection, telemetry, or persistent state is added here.
 
-Modified letter chords need a terminal that reports their modifiers (usually Kitty keyboard protocol). No terminal is inferred from `$TERM`, and Enter combinations are deliberately avoided. `/hotkeys` shows registered bindings, not proof your terminal delivers them. If keys are intercepted or unavailable, use the commands. Check autocomplete for the actual invocation names if another extension also defines a `quick-*` command; Pi can suffix collisions. Do not load duplicate copies.
+Modified letter chords need a terminal that reports their modifiers (usually Kitty keyboard protocol). No terminal is inferred from `$TERM`, and Enter combinations are deliberately avoided. `/hotkeys` shows registered bindings, not proof your terminal delivers them. If keys are intercepted or unavailable, use the commands.
+
+## Key probe
+
+`/quick-keyprobe` shows whether a chord reaches Pi, and in which encoding, without starting a model turn. It waits up to ten seconds for the next key sequence, consumes that one sequence so no shortcut fires, reports it in a notification, then unsubscribes. Nothing is written to disk or the session, and ordinary text is reported as a byte count only; only sequences starting with a control byte are shown as hex.
+
+| Report | Meaning |
+| --- | --- |
+| `1b 5b 31 31 39 3a 38 37 3b 34 75 (ESC[119:87;4u)` | Kitty encoding of Alt+Shift+W; Pi's matcher accepts it as `shift+alt+w` |
+| `1b 57 (ESCW)` | Legacy encoding; Pi does not map `ESC`+uppercase to `shift+alt`, so the chord cannot match as registered |
+| `ESC[120:67;4u` for a key labelled C | The terminal reports the physical key (`x`) as primary and the layout's letter as shifted; Pi matches the primary letter |
+| `1 byte(s) of ordinary text` | The modifier was dropped before Pi saw the key |
+| timeout | Nothing reached Pi: the terminal, the OS, or another input listener consumed it |
+
+The probe reports delivery into Pi; it does not change bindings, terminal settings, or the shortcuts above. Check autocomplete for the actual invocation names if another extension also defines a `quick-*` command; Pi can suffix collisions. Do not load duplicate copies.
 
 ## Install and verify
 
@@ -39,6 +53,6 @@ make verify-apply
 
 Installation adds `~/.pi/agent/extensions/flurdy-prompt-shortcuts.ts`. Restart Pi after the initial link; `/reload` loads later source changes. The installer refuses conflicting destinations and leaves unrelated settings untouched. No upstream `pi-continue` package is required.
 
-The implementation targets Pi 1.3.0's extension API. Unit tests cover exact message delivery, non-TUI/busy/queue/draft refusal, argument rejection, duplicate submission and passive reset behavior. Installer tests use disposable `.artifacts/` profiles and cover links, missing resources and collisions. Automated tests do not prove terminal delivery or model compliance with prompt wording.
+The implementation targets Pi 1.3.0's extension API. Unit tests cover exact message delivery, non-TUI/busy/queue/draft refusal, argument rejection, duplicate submission, passive reset behavior, and the key probe's one-shot consume, timeout, release pass-through and no-echo rules. Installer tests use disposable `.artifacts/` profiles and cover links, missing resources and collisions. Automated tests do not prove terminal delivery or model compliance with prompt wording.
 
 For an attended terminal check, start with an empty editor and press Alt+Shift+W: expect one visible Why prompt. Repeat with an editor draft (expect refusal and unchanged text), then during an active run (expect refusal). This starts ordinary billed/subscription model turns; perform it deliberately in your normal profile after installation. Preset text and keys can be adjusted together in `PRESETS` as usage warrants; update the tests alongside them. No runtime log collection is installed.
