@@ -1,58 +1,73 @@
 # Pi prompt shortcuts
 
-Four manual quick prompts, maintained here without an upstream package dependency. They save typing; they do not fix unnecessary agent stops or automatically restart work.
+Manual quick actions that save typing; they never automatically restart work or answer native confirmation dialogs.
 
-| Intent | Shortcut | Command fallback |
-| --- | --- | --- |
-| Continue already-authorized work (including “go on” / “go”) | Alt+Shift+C | `/quick-continue` |
-| Checkpoint: done, verified, left, blockers | Alt+Shift+S | `/quick-checkpoint` |
-| Decisions or approvals still needed | Alt+Shift+U | `/quick-unblock` |
-| Explain the last recommendation or decision | Alt+Shift+W | `/quick-why` |
+| Intent | Shortcut | Command fallback | Behavior |
+| --- | --- | --- | --- |
+| Continue already-authorized work (“go on” / “continue”) | Alt+Shift+C | `/quick-continue` | Send one visible prompt |
+| Checkpoint: done, verified, left, blockers | Alt+Shift+S | `/quick-checkpoint` | Send one read-only prompt |
+| Decisions or approvals still needed | Alt+Shift+U | `/quick-unblock` | Send one read-only prompt |
+| Explain the last recommendation or decision | Alt+Shift+W | `/quick-why` | Send one read-only prompt |
+| Reply yes | Alt+Shift+Y | `/quick-yes` | Insert `yes`; manual Enter required |
+| Reply approved | Alt+Shift+A | `/quick-approved` | Insert `approved`; manual Enter required |
+| Guard writes and release scopes | Alt+Shift+P | `/quick-plan` | Dispatch the registered `/plan` command |
+| Select a worktree for implementation | Alt+Shift+I | `/quick-implement` | Ask for one explicit path, then dispatch `/implement` |
 
-Each invocation sends the fixed text in [`PRESETS`](pi-prompt-shortcuts.ts) as a visible user message and starts a normal model turn. Continue explicitly withholds new approval and asks the agent to restate any pending decision and stop. The other prompts request read-only responses. There are deliberately no “yes”, “do it”, approval, or permission-grant presets. Type an exact approval yourself when appropriate; these prompts never substitute for native confirmation dialogs.
+Continue explicitly withholds new approval and stops for pending decisions. The four prompt actions start normal model turns; the other actions do not. Inserted replies have their normal contextual meaning only after you review and submit them. They never select an answer in a dialog.
 
 ## Input behavior and limits
 
-- TUI only; busy agents and pending message queues reject sends rather than steering or queueing them.
-- Shortcuts refuse any editor text, including whitespace, and fail closed if the editor cannot be read. They do not clear or replace drafts. Submitted slash commands use Pi's normal editor submission path instead.
-- Commands reject arguments instead of silently discarding qualifications. For custom instructions, type a normal message.
-- A shared latch refuses duplicate presses while a submission is starting or running. Only session start or final `agent_settled` re-arms it; intermediate run ends do not. Those listeners never send messages.
-- Pi's `sendUserMessage` API does not return a completion promise. If authentication, another extension's input handler, or another preflight check prevents the run from starting, the latch remains closed. Resolve the error, then `/reload` before deliberately retrying. No automatic retries or timeout resets.
-- Prompt wording is guidance, **not an enforcement boundary**. Existing session guards, scope, billing consent and action-specific confirmations remain authoritative. Other extensions can transform input. No filesystem, network, shell, model selection, telemetry, or persistent state is added here.
+- TUI only; busy agents and pending message queues refuse actions instead of steering or queueing them.
+- Shortcuts preserve every editor draft, including whitespace, and fail closed if the editor cannot be read. Reply actions never clear or replace a draft. Submitted prompt-command fallbacks use Pi's normal editor submission path.
+- All `quick-*` commands reject arguments rather than silently discard qualifications. Type a normal message or native command for custom instructions.
+- A shared submission latch refuses duplicate prompt presses while a model submission is starting/running. Only session start or final `agent_settled` re-arms it; intermediate run ends never do. If authentication or preflight prevents the run from starting, resolve the error and `/reload` before deliberately retrying. No automatic retries or timeout resets.
+- Reply actions need no model-turn latch: the inserted draft prevents another insertion, and clearing/submitting it allows a later deliberate action.
+- Mode shortcuts require Pi 1.4.0 or newer. They check for an exact, unambiguous registered extension command before dispatch; missing, conflicting/suffixed, or non-extension commands refuse instead of falling through to an LLM prompt. Existing session-mode scope, lease, contention and confirmation checks still apply.
+- Implement asks for **one literal absolute worktree path without surrounding quotes**, with no cwd default or inferred scope. Spaces, quotes and backslashes are passed literally to the native command. Cancel, empty/relative paths and control characters refuse; mode, queue, draft, session and command availability are rechecked after the dialog. Repeat for another root, or type the native `/implement` command for multiple roots.
+- The scope-entry dialog blocks other quick actions while open. After dispatch, mode actions rely on normal session-mode handling of overlapping requests. Pi provides no command-completion signal, so modes do not use the model-turn latch: repeated Plan presses may reissue `/plan`; identical in-flight Implement requests are handled by session-mode. This behavior is deliberate, not automatic retry.
+- Prompt wording is guidance, **not an enforcement boundary**. Existing guards, billing consent and action-specific confirmations remain authoritative. No shell, account request, model selection, telemetry or persistent configuration is added here.
 
-Modified letter chords need a terminal that reports their modifiers (usually Kitty keyboard protocol). No terminal is inferred from `$TERM`, and Enter combinations are deliberately avoided. `/hotkeys` shows registered bindings, not proof your terminal delivers them. If keys are intercepted or unavailable, use the commands.
+## Orca legacy encoding
+
+Some Orca Pi panes deliver Alt+Shift+letter as `ESC` followed by an uppercase letter, even though a plain shell can enable Kitty reporting. Pi's matcher does not recognise that legacy form. A session-scoped input adapter translates **only the exact two-byte forms for the eight advertised chords** into their matching CSI-u encoding.
+
+The adapter never consumes input or invokes a handler: normal focused-editor/overlay/dialog routing still decides what happens. It leaves lowercase Alt bindings, legacy `ESC B`/`ESC F` word-navigation aliases, Kitty input, bracketed pastes, longer chunks and unrelated keys unchanged. No terminal setting is changed. The listener is replaced on session start and removed on shutdown.
+
+Legacy input cannot distinguish these chords from Caps Lock + Alt, or Escape followed immediately by an uppercase letter when both arrive in one input event. Avoid those spellings for unrelated input. `ESC P` can incur a short terminal-parser delay because it also prefixes a control string.
+
+This fix deliberately does not reinterpret Kitty's primary key on remapped layouts. For example, `ESC[120:67;4u` reports primary `x`, shifted `C`; Pi still matches `x`. `/hotkeys` proves registration, not delivery. Use the command fallbacks if Orca or the OS intercepts a binding. Check autocomplete for actual fallback names when another extension registers the same command; Pi can suffix collisions. Do not load duplicate copies.
 
 ## Key probe
 
-`/quick-keyprobe` shows whether a chord reaches Pi, and in which encoding, without starting a model turn. It waits up to ten seconds for the next key sequence, consumes that one sequence so no shortcut fires, reports it in a notification, then unsubscribes. Nothing is written to disk or the session, and ordinary text is reported as a byte count only; only sequences starting with a control byte are shown as hex.
+`/quick-keyprobe` waits up to ten seconds for one input event and consumes it, so no shortcut or model turn starts. It temporarily steps ahead of compatibility translation and reports the **original** bytes in a notification. It then unsubscribes; timeout, session replacement and shutdown also clean it up. Only short recognised key-sequence shapes are shown as hex; ordinary text, pasted content and other input are reported as a byte count only. Nothing is persisted.
 
 | Report | Meaning |
 | --- | --- |
-| `1b 5b 31 31 39 3a 38 37 3b 34 75 (ESC[119:87;4u)` | Kitty encoding of Alt+Shift+W; Pi's matcher accepts it as `shift+alt+w` |
-| `1b 57 (ESCW)` | Legacy encoding; Pi does not map `ESC`+uppercase to `shift+alt`, so the chord cannot match as registered |
-| `ESC[120:67;4u` for a key labelled C | The terminal reports the physical key (`x`) as primary and the layout's letter as shifted; Pi matches the primary letter |
-| `1 byte(s) of ordinary text` | The modifier was dropped before Pi saw the key |
-| timeout | Nothing reached Pi: the terminal, the OS, or another input listener consumed it |
-
-The probe reports delivery into Pi; it does not change bindings, terminal settings, or the shortcuts above. Check autocomplete for the actual invocation names if another extension also defines a `quick-*` command; Pi can suffix collisions. Do not load duplicate copies.
+| `1b 57 (ESCW)` | Original legacy Alt+Shift+W; normal input now translates this before Pi matches shortcuts |
+| `ESC[119:87;4u` | Kitty Alt+Shift+W; Pi matches it directly |
+| `ESC[120:67;4u` for C | Primary `x`, shifted `C`; separate layout identity issue, not rewritten |
+| byte count only | Input was not a recognised bounded key sequence; text was withheld |
+| timeout | No eligible input reached the probe: nothing was pressed, or an earlier layer consumed it |
 
 ## Install and verify
 
-After reviewing the source, from the repository root:
+From the repository root:
 
 ```bash
 make check-prompt-shortcuts
 node --test tests/pi-apply.test.mjs
-# Optional typecheck with the existing statusline development dependencies:
 pi/statusline/node_modules/.bin/tsc -p pi/prompt-shortcuts/tsconfig.json
+```
 
-# Separate live-install step; links all managed resources, not just this one:
+The optional real-host matcher test accepts `PI_TUI_KEYS_MODULE`, an absolute path or file URL to the installed Pi's `pi-tui/dist/keys.js`. Without it, only that host-integration test is skipped; normal unit tests need no Pi runtime dependencies. Local development declarations may be older than Pi 1.4.0; mode dispatch also checks the actual loaded host version before using its newer API.
+
+Initial installation is separate:
+
+```bash
 make apply
 make verify-apply
 ```
 
-Installation adds `~/.pi/agent/extensions/flurdy-prompt-shortcuts.ts`. Restart Pi after the initial link; `/reload` loads later source changes. The installer refuses conflicting destinations and leaves unrelated settings untouched. No upstream `pi-continue` package is required.
+This links all managed resources, not just this extension, and refuses conflicting destinations. The extension link is `~/.pi/agent/extensions/flurdy-prompt-shortcuts.ts`. Restart after initial installation; `/reload` loads later live-linked changes. No upstream package is required.
 
-The implementation targets Pi 1.3.0's extension API. Unit tests cover exact message delivery, non-TUI/busy/queue/draft refusal, argument rejection, duplicate submission, passive reset behavior, and the key probe's one-shot consume, timeout, release pass-through and no-echo rules. Installer tests use disposable `.artifacts/` profiles and cover links, missing resources and collisions. Automated tests do not prove terminal delivery or model compliance with prompt wording.
-
-For an attended terminal check, start with an empty editor and press Alt+Shift+W: expect one visible Why prompt. Repeat with an editor draft (expect refusal and unchanged text), then during an active run (expect refusal). This starts ordinary billed/subscription model turns; perform it deliberately in your normal profile after installation. Preset text and keys can be adjusted together in `PRESETS` as usage warrants; update the tests alongside them. No runtime log collection is installed.
+For attended Orca checks after reloading, use an empty editor and try each advertised chord. Prompt actions start normal billed/subscription model turns; Plan changes guard state, and Implement requests write scopes, so exercise them deliberately. Verify Y/A only insert, native dialogs are not answered, drafts survive, busy/queued refusals work, and subsequent actions still work. Automated tests cover byte translation, the real host matcher when selected, mixed dispatch, scope-dialog cancellation/state changes, duplicate protection and probe cleanup; they do not prove live terminal delivery or model compliance.

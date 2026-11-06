@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const NOT_APPROVAL = "This is not approval for any pending question or any new scope, write access, remote, destructive, package, billing or production action. Preserve all existing permission and confirmation gates.";
@@ -25,6 +26,19 @@ export const PRESETS = [
 	},
 ] as const;
 
+const ACTIONS = [
+	...PRESETS.map((preset) => ({ ...preset, kind: "prompt" as const })),
+	{ name: "yes", shortcut: "shift+alt+y", kind: "draft", text: "yes", description: "Insert yes for review and manual Enter" },
+	{ name: "approved", shortcut: "shift+alt+a", kind: "draft", text: "approved", description: "Insert approved for review and manual Enter" },
+	{ name: "plan", shortcut: "shift+alt+p", kind: "mode", description: "Run /plan through normal command dispatch" },
+	{ name: "implement", shortcut: "shift+alt+i", kind: "mode", description: "Choose one explicit worktree and run /implement" },
+] as const;
+
+const LEGACY_CHORDS = new Map(ACTIONS.map(({ shortcut }) => {
+	const letter = shortcut.at(-1)!;
+	return [`\x1b${letter.toUpperCase()}`, `\x1b[${letter.charCodeAt(0)};4u`];
+}));
+
 export const KEY_PROBE_TIMEOUT_MS = 10_000;
 const KEY_PROBE_MAX_BYTES = 32;
 // Kitty keyboard protocol release events end in ":3" before the final letter, for example
@@ -34,7 +48,8 @@ const KITTY_RELEASE = /;\d+:3[A-Z~u]$/;
 /** Describes one raw terminal input for the key probe without echoing ordinary text. */
 export function describeKeyProbeInput(data: string): string {
 	const bytes = Buffer.from(data, "utf8");
-	if (bytes.length === 0 || bytes[0]! >= 0x20 || bytes.length > KEY_PROBE_MAX_BYTES) {
+	const keySequence = /^[\x00-\x1f\x7f]$|^\x1b[A-Za-z0-9]$|^\x1b\[[0-9:;]+[uA-D~]$/;
+	if (bytes.length > KEY_PROBE_MAX_BYTES || !keySequence.test(data)) {
 		return `Key probe received ${bytes.length} byte(s) of ordinary text, not shown.`;
 	}
 	const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(" ");
@@ -42,13 +57,41 @@ export function describeKeyProbeInput(data: string): string {
 	return `Key probe received escape sequence: ${hex} (${readable}). Nothing was sent.`;
 }
 
-export default function registerPromptShortcuts(pi: ExtensionAPI, options: { probeTimeoutMs?: number } = {}): void {
+export default function registerPromptShortcuts(pi: ExtensionAPI, options: {
+	probeTimeoutMs?: number;
+	runtimeVersion?: () => Promise<string>;
+} = {}): void {
 	// sendUserMessage is fire-and-forget; preflight can await before isIdle becomes false.
 	let submitted = false;
+	let epoch = 0;
+	let selectingScope: symbol | undefined;
 	let stopProbe: (() => void) | undefined;
-	pi.on("session_start", () => { submitted = false; });
+	let stopCompatibility: (() => void) | undefined;
+	let runtimeVersion: Promise<string> | undefined;
+	const commandOptions: NonNullable<Parameters<ExtensionAPI["sendUserMessage"]>[1]> & { expandPromptTemplates: true } = { expandPromptTemplates: true };
+	pi.on("session_start", (_event, ctx) => {
+		epoch++;
+		submitted = false;
+		selectingScope = undefined;
+		stopProbe?.();
+		stopCompatibility?.();
+		stopCompatibility = undefined;
+		if (ctx.mode === "tui") {
+			stopCompatibility = ctx.ui.onTerminalInput((data) => {
+				if (stopProbe) return undefined;
+				const translated = LEGACY_CHORDS.get(data);
+				return translated ? { data: translated } : undefined;
+			});
+		}
+	});
 	pi.on("agent_settled", () => { submitted = false; });
-	pi.on("session_shutdown", () => { stopProbe?.(); });
+	pi.on("session_shutdown", () => {
+		epoch++;
+		selectingScope = undefined;
+		stopProbe?.();
+		stopCompatibility?.();
+		stopCompatibility = undefined;
+	});
 
 	function busy(ctx: ExtensionContext, name: string): boolean {
 		if (!ctx.isIdle() || ctx.hasPendingMessages()) {
@@ -58,29 +101,85 @@ export default function registerPromptShortcuts(pi: ExtensionAPI, options: { pro
 		return false;
 	}
 
-	function send(ctx: ExtensionContext, preset: (typeof PRESETS)[number], checkDraft: boolean): void {
-		if (ctx.mode !== "tui") return;
-		if (busy(ctx, preset.name)) return;
+	function ready(ctx: ExtensionContext, name: string, checkDraft: boolean, ownSelection?: symbol): boolean {
+		if (ctx.mode !== "tui" || busy(ctx, name)) return false;
+		if (selectingScope && selectingScope !== ownSelection) {
+			ctx.ui.notify("A worktree scope selection is already open.", "info");
+			return false;
+		}
 		if (submitted) {
 			ctx.ui.notify("A shortcut submission is still pending. If it failed before starting, resolve the error and /reload before retrying.", "warning");
-			return;
+			return false;
 		}
 		if (checkDraft) {
 			try {
 				if (ctx.ui.getEditorText() !== "") {
-					ctx.ui.notify(`${preset.name} not sent: editor contains a draft.`, "info");
-					return;
+					ctx.ui.notify(`${name} not sent: editor contains a draft.`, "info");
+					return false;
 				}
 			} catch {
-				ctx.ui.notify(`${preset.name} not sent: cannot check the editor.`, "warning");
-				return;
+				ctx.ui.notify(`${name} not sent: cannot check the editor.`, "warning");
+				return false;
 			}
 		}
-		submitted = true;
+		return true;
+	}
+
+	function hasModeCommand(ctx: ExtensionContext, name: string): boolean {
+		const matches = pi.getCommands().filter((command) => command.name === name);
+		if (matches.length === 1 && matches[0]!.source === "extension") return true;
+		ctx.ui.notify(`/${name} is not an unambiguous registered extension command; nothing was sent.`, "warning");
+		return false;
+	}
+
+	async function run(ctx: ExtensionContext, action: (typeof ACTIONS)[number], checkDraft: boolean): Promise<void> {
+		if (!ready(ctx, action.name, checkDraft || action.kind !== "prompt")) return;
 		try {
-			pi.sendUserMessage(preset.text);
+			if (action.kind === "prompt") {
+				submitted = true;
+				pi.sendUserMessage(action.text);
+			} else if (action.kind === "draft") {
+				ctx.ui.setEditorText(action.text);
+			} else {
+				const runtimeTicket = epoch;
+				runtimeVersion ??= options.runtimeVersion ? options.runtimeVersion() : import("@earendil-works/pi-coding-agent").then((module) => module.VERSION);
+				const version = await runtimeVersion;
+				if (runtimeTicket !== epoch) return;
+				const match = /^(\d+)\.(\d+)\.(\d+)(?:$|[-+])/.exec(version);
+				if (!match || (Number(match[1]) < 1 || (Number(match[1]) === 1 && Number(match[2]) < 4))) {
+					ctx.ui.notify("Mode shortcuts require Pi 1.4.0 or newer for real command dispatch; use the native command directly.", "warning");
+					return;
+				}
+				if (!ready(ctx, action.name, true) || !hasModeCommand(ctx, action.name)) return;
+				let command = `/${action.name}`;
+				if (action.name === "implement") {
+					const ticket = epoch;
+					const selection = Symbol();
+					selectingScope = selection;
+					try {
+						const answer = await ctx.ui.input("Implement: choose one worktree", "Absolute worktree path, without surrounding quotes; no default");
+						if (ticket !== epoch) return;
+						if (!answer?.trim()) {
+							ctx.ui.notify("Implement cancelled: no worktree selected.", "info");
+							return;
+						}
+						if (answer.length > 4096 || /[\x00-\x1f\x7f-\x9f]/.test(answer) || !isAbsolute(answer.trim())) {
+							ctx.ui.notify("Implement needs one literal absolute worktree path without control characters.", "warning");
+							return;
+						}
+						if (!ready(ctx, action.name, true, selection) || !hasModeCommand(ctx, action.name)) return;
+						command += ` ${JSON.stringify(answer.trim())}`;
+					} finally {
+						if (selectingScope === selection) selectingScope = undefined;
+					}
+				}
+				// Commands have no completion signal or agent_settled event. Their native owner handles overlapping requests.
+				pi.sendUserMessage(command, commandOptions);
+			}
 		} catch {
-			ctx.ui.notify("Shortcut submission failed. Resolve the error and /reload before retrying.", "error");
+			ctx.ui.notify(action.kind === "prompt"
+				? "Shortcut submission failed. Resolve the error and /reload before retrying."
+				: `${action.name} action failed; no automatic retry.`, "error");
 		}
 	}
 
@@ -114,19 +213,19 @@ export default function registerPromptShortcuts(pi: ExtensionAPI, options: { pro
 		ctx.ui.notify(`Key probe armed for ${Math.round(timeoutMs / 1000)}s: press one quick-prompt chord. Its bytes are reported, not sent.`, "info");
 	}
 
-	for (const preset of PRESETS) {
-		pi.registerShortcut(preset.shortcut, {
-			description: preset.description,
-			handler: (ctx) => send(ctx, preset, true),
+	for (const action of ACTIONS) {
+		pi.registerShortcut(action.shortcut, {
+			description: action.description,
+			handler: (ctx) => run(ctx, action, true),
 		});
-		pi.registerCommand(`quick-${preset.name}`, {
-			description: preset.description,
+		pi.registerCommand(`quick-${action.name}`, {
+			description: action.description,
 			handler: async (args, ctx) => {
 				if (args.trim()) {
-					ctx.ui.notify("Quick prompts do not accept arguments. Type a normal message for custom instructions.", "warning");
+					ctx.ui.notify("Quick actions do not accept arguments. Type a normal message or command for custom instructions.", "warning");
 					return;
 				}
-				send(ctx, preset, false);
+				await run(ctx, action, false);
 			},
 		});
 	}
