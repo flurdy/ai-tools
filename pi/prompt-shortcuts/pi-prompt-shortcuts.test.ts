@@ -201,7 +201,7 @@ test("legacy Orca Alt+Shift chords are translated without bypassing normal focus
 		});
 	}
 	assert.deepEqual(h.sent, [], "raw input translation never directly invokes a shortcut");
-	for (const data of ["\x1bw", "\x1bB", "\x1bF", "\x1bX", "\x1bWx", "x\x1bW", "\x1b\x1bW", "\x1b[200~\x1bW\x1b[201~", "\x1b[120:67;4u", "\x1b[119:87;4:3u", "W"]) {
+	for (const data of ["\x1bw", "\x1bB", "\x1bF", "\x1bX", "\x1bWx", "x\x1bW", "\x1b\x1bW", "\x1b[200~\x1bW\x1b[201~", "\x1b[119:87;4:3u", "W"]) {
 		assert.deepEqual(h.input(data), { data, consumed: false });
 	}
 	assert.equal(h.listeners.size, 1);
@@ -209,6 +209,29 @@ test("legacy Orca Alt+Shift chords are translated without bypassing normal focus
 	assert.equal(h.listeners.size, 1, "repeated session_start replaces the listener");
 	h.events.get("session_shutdown")!();
 	assert.equal(h.listeners.size, 0);
+});
+
+test("Kitty-protocol chords follow the typed shifted letter, not the reported primary key", () => {
+	const h = harness();
+	h.start();
+	const cases: [string, string][] = [
+		["\x1b[105:85;4u", "\x1b[117;4u"], // Colemak U on the QWERTY I position: Unblock, not Implement
+		["\x1b[105:85;4:1u", "\x1b[117;4u"], // explicit press event
+		["\x1b[105:85:105;4u", "\x1b[117;4u"], // with base-layout key
+		["\x1b[105:85;132u", "\x1b[117;4u"], // Num Lock bit
+		["\x1b[120:67;4u", "\x1b[99;4u"], // typed C on primary x
+		["\x1b[115:82;4u", "\x1b[114;4u"], // typed R on primary s must not trigger Checkpoint
+	];
+	for (const [data, translated] of cases) assert.deepEqual(h.input(data), { data: translated, consumed: false }, JSON.stringify(data));
+	for (const data of [
+		"\x1b[119:87;4u", // primary already matches the typed letter
+		"\x1b[110:75;4u", // neither letter is a quick action
+		"\x1b[105:85;4:2u", "\x1b[105:85;4:3u", // repeat and release
+		"\x1b[105:85;5u", "\x1b[105:85;3u", "\x1b[105:85;8u", // other modifier combinations
+		"\x1b[105:49;4u", "\x1b[49:85;4u", "\x1b[105:99999999999999999999;4u",
+	]) assert.deepEqual(h.input(data), { data, consumed: false }, JSON.stringify(data));
+	assert.deepEqual(h.sent, []);
+	h.events.get("session_shutdown")!();
 });
 
 test("the probe sees original legacy bytes; compatibility resumes after the capture", async () => {
@@ -365,6 +388,10 @@ test("compatibility output matches the actual Pi host parser", { skip: !process.
 		assert.equal(matchesKey(raw, key), false, "regression fixture fails on the host without translation");
 		assert.equal(matchesKey(h.input(raw).data, key), true, `translated ${key} matches the host parser`);
 	}
+	assert.equal(matchesKey("\x1b[105:85;4u", "shift+alt+i"), true, "regression fixture: the host matches the primary key");
+	assert.equal(matchesKey(h.input("\x1b[105:85;4u").data, "shift+alt+u"), true);
+	assert.equal(matchesKey(h.input("\x1b[105:85;4u").data, "shift+alt+i"), false);
+	assert.equal(matchesKey(h.input("\x1b[115:82;4u").data, "shift+alt+s"), false);
 	assert.equal(matchesKey(h.input("\x1bY").data, "y"), false, "translation cannot answer a modal as an unmodified y");
 	assert.equal(matchesKey(h.input("\x1bY").data, "enter"), false);
 	h.events.get("session_shutdown")!();

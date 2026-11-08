@@ -38,6 +38,31 @@ const LEGACY_CHORDS = new Map(ACTIONS.map(({ shortcut }) => {
 	return [`\x1b${letter.toUpperCase()}`, `\x1b[${letter.charCodeAt(0)};4u`];
 }));
 
+const ACTION_LETTERS = new Set(ACTIONS.map(({ shortcut }) => shortcut.charCodeAt(shortcut.length - 1)));
+// Kitty-protocol press: primary:shifted[:base-layout];modifiers[:press]u. Lock bits (Caps 64, Num 128) are ignored.
+const KITTY_LETTER_PRESS = /^\x1b\[(\d{1,7}):(\d{1,7})(?::\d{1,7})?;(\d{1,4})(?::1)?u$/;
+const ALT_SHIFT = 3;
+const LOCK_BITS = 64 | 128;
+
+/**
+ * Rewrites one of our Alt+Shift chords into the CSI-u form Pi matches, keyed by the letter actually typed.
+ * Legacy terminals send ESC + uppercase letter. Kitty-protocol reports can name a different primary key than
+ * the typed shifted letter (Orca reports Colemak U as primary i, shifted U); the typed letter wins whenever
+ * either letter belongs to a quick action, so a remapped key neither misses nor triggers the wrong action.
+ */
+function translateChord(data: string): string | undefined {
+	const legacy = LEGACY_CHORDS.get(data);
+	if (legacy) return legacy;
+	const match = KITTY_LETTER_PRESS.exec(data);
+	if (!match || ((Number(match[3]) - 1) & ~LOCK_BITS) !== ALT_SHIFT) return undefined;
+	const primary = Number(match[1]);
+	const shifted = Number(match[2]);
+	if (primary < 97 || primary > 122 || shifted < 65 || shifted > 90) return undefined;
+	const typed = shifted + 32;
+	if (typed === primary || (!ACTION_LETTERS.has(typed) && !ACTION_LETTERS.has(primary))) return undefined;
+	return `\x1b[${typed};4u`;
+}
+
 export const KEY_PROBE_TIMEOUT_MS = 10_000;
 const KEY_PROBE_MAX_BYTES = 32;
 // Kitty keyboard protocol release events end in ":3" before the final letter, for example
@@ -76,7 +101,7 @@ export default function registerPromptShortcuts(pi: ExtensionAPI, options: {
 		if (ctx.mode === "tui") {
 			stopCompatibility = ctx.ui.onTerminalInput((data) => {
 				if (stopProbe) return undefined;
-				const translated = LEGACY_CHORDS.get(data);
+				const translated = translateChord(data);
 				return translated ? { data: translated } : undefined;
 			});
 		}

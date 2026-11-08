@@ -27,15 +27,20 @@ Continue explicitly withholds new approval and stops for pending decisions. The 
 - Plan relies on normal session-mode handling of overlapping requests. Pi provides no command-completion signal, so Plan does not use the model-turn latch: repeated Plan presses may reissue `/plan`. This behavior is deliberate, not automatic retry.
 - Prompt wording is guidance, **not an enforcement boundary**. Existing guards, billing consent and action-specific confirmations remain authoritative. No shell, account request, model selection, telemetry or persistent configuration is added here.
 
-## Orca legacy encoding
+## Orca key encodings
 
-Some Orca Pi panes deliver Alt+Shift+letter as `ESC` followed by an uppercase letter, even though a plain shell can enable Kitty reporting. Pi's matcher does not recognise that legacy form. A session-scoped input adapter translates **only the exact two-byte forms for the eight advertised chords** into their matching CSI-u encoding.
+Orca Pi panes deliver Alt+Shift+letter in one of two forms, and Pi matches neither reliably:
 
-The adapter never consumes input or invokes a handler: normal focused-editor/overlay/dialog routing still decides what happens. It leaves lowercase Alt bindings, legacy `ESC B`/`ESC F` word-navigation aliases, Kitty input, bracketed pastes, longer chunks and unrelated keys unchanged. No terminal setting is changed. The listener is replaced on session start and removed on shutdown.
+- **Legacy:** `ESC` followed by the uppercase letter. Pi's matcher does not recognise it.
+- **Kitty keyboard protocol** (a protocol Orca speaks, not the Kitty terminal): Orca can report a *primary* key that differs from the typed letter. On a Colemak layout, U arrives as `ESC[105:85;4u` — primary `i`, shifted `U` — and Pi matches the primary, so Alt+Shift+U ran Implement.
+
+A session-scoped input adapter rewrites both forms to the CSI-u encoding of the **typed letter**. Legacy translation covers only the exact two-byte forms of the eight advertised chords. Kitty translation covers only Alt+Shift presses (lock keys ignored) whose typed shifted letter and primary letter differ, where **either** letter is a quick action. A remapped key therefore neither misses its action nor triggers another one: typed R on primary `s` no longer runs Checkpoint. No layout table is hard-coded.
+
+The adapter never consumes input or invokes a handler: normal focused-editor/overlay/dialog routing still decides what happens. It leaves lowercase Alt bindings, legacy `ESC B`/`ESC F` word-navigation aliases, consistent Kitty reports, repeat/release events, other modifier combinations, bracketed pastes, longer chunks and unrelated keys unchanged. No terminal setting is changed. The listener is replaced on session start and removed on shutdown.
 
 Legacy input cannot distinguish these chords from Caps Lock + Alt, or Escape followed immediately by an uppercase letter when both arrive in one input event. Avoid those spellings for unrelated input. `ESC P` can incur a short terminal-parser delay because it also prefixes a control string.
 
-This fix deliberately does not reinterpret Kitty's primary key on remapped layouts. For example, `ESC[120:67;4u` reports primary `x`, shifted `C`; Pi still matches `x`. `/hotkeys` proves registration, not delivery. Use the command fallbacks if Orca or the OS intercepts a binding. Check autocomplete for actual fallback names when another extension registers the same command; Pi can suffix collisions. Do not load duplicate copies.
+Other extensions' Alt+Shift bindings still follow Pi's primary-key matching, except where the reported primary letter is one of ours. `/hotkeys` proves registration, not delivery. Use the command fallbacks if Orca or the OS intercepts a binding. Check autocomplete for actual fallback names when another extension registers the same command; Pi can suffix collisions. Do not load duplicate copies.
 
 ## Key probe
 
@@ -43,9 +48,9 @@ This fix deliberately does not reinterpret Kitty's primary key on remapped layou
 
 | Report | Meaning |
 | --- | --- |
-| `1b 57 (ESCW)` | Original legacy Alt+Shift+W; normal input now translates this before Pi matches shortcuts |
-| `ESC[119:87;4u` | Kitty Alt+Shift+W; Pi matches it directly |
-| `ESC[120:67;4u` for C | Primary `x`, shifted `C`; separate layout identity issue, not rewritten |
+| `1b 57 (ESCW)` | Original legacy Alt+Shift+W; normal input translates this before Pi matches shortcuts |
+| `ESC[119:87;4u` | Kitty Alt+Shift+W, primary and typed letter agree; Pi matches it directly |
+| `ESC[105:85;4u` | Kitty primary `i`, typed `U`; normal input rewrites it to Alt+Shift+U |
 | byte count only | Input was not a recognised bounded key sequence; text was withheld |
 | timeout | No eligible input reached the probe: nothing was pressed, or an earlier layer consumed it |
 
@@ -70,4 +75,4 @@ make verify-apply
 
 This links all managed resources, not just this extension, and refuses conflicting destinations. The extension link is `~/.pi/agent/extensions/flurdy-prompt-shortcuts.ts`. Restart after initial installation; `/reload` loads later live-linked changes. No upstream package is required.
 
-For attended Orca checks after reloading, use an empty editor and try each advertised chord. Prompt actions start normal billed/subscription model turns; Plan changes guard state. Verify Y/A only insert replies, I only inserts `/implement` without a dialog or execution, native dialogs are not answered, drafts survive, busy/queued refusals work, and subsequent actions still work. Pressing Enter on an inserted `/implement` requests write scopes through native command handling; exercise that separately and deliberately. Automated tests cover byte translation, the real host matcher when selected, mixed dispatch, editable command insertion without sending, duplicate protection and probe cleanup; they do not prove live terminal delivery or model compliance.
+For attended Orca checks after reloading, use an empty editor and try each advertised chord. Prompt actions start normal billed/subscription model turns; Plan changes guard state. Verify Y/A only insert replies, I only inserts `/implement` without a dialog or execution, native dialogs are not answered, drafts survive, busy/queued refusals work, and subsequent actions still work. Pressing Enter on an inserted `/implement` requests write scopes through native command handling; exercise that separately and deliberately. Automated tests cover legacy and Kitty translation, the real host matcher when selected, mixed dispatch, editable command insertion without sending, duplicate protection and probe cleanup; they do not prove live terminal delivery or model compliance.
