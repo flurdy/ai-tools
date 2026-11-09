@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import piStatusline, { CLAUDE_QUOTA_REFRESH_MS, CLAUDE_QUOTA_STALE_MS, CLAUDE_QUOTA_TIMEOUT_MS } from "./pi-statusline.ts";
+import piStatusline, { abbrevPath, CLAUDE_QUOTA_REFRESH_MS, CLAUDE_QUOTA_STALE_MS, CLAUDE_QUOTA_TIMEOUT_MS } from "./pi-statusline.ts";
 
 type Handler = (event: any, context: any) => unknown;
 
@@ -39,6 +39,21 @@ function context(sessionId: string, tokens: number | null, notifications: string
 		ui: { notify: (message: string) => notifications.push(message) },
 	};
 }
+
+test("abbreviates paths against the distrobox host home before HOME", (t) => {
+	const env = { HOME: process.env.HOME, DISTROBOX_HOST_HOME: process.env.DISTROBOX_HOST_HOME };
+	t.after(() => {
+		for (const [key, value] of Object.entries(env)) {
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
+	});
+	process.env.HOME = "/home/ivar/Code/disney/home";
+	delete process.env.DISTROBOX_HOST_HOME;
+	assert.equal(abbrevPath("/home/ivar/Code/disney/hello-zio"), "/hom/iva/Cod/dis/hello-zio");
+	process.env.DISTROBOX_HOST_HOME = "/home/ivar";
+	assert.equal(abbrevPath("/home/ivar/Code/disney/hello-zio"), "~/Cod/dis/hello-zio");
+});
 
 test("wires manual model selection to a visible OpenRouter warning", () => {
 	const notifications: string[] = [];

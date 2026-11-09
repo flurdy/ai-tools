@@ -45,11 +45,11 @@ const prCache = new Map<string, { at: number; value: string | null; refreshing: 
 let k8sContextCache: { at: number; value: string | null } | undefined;
 
 function stripHome(path: string): string {
-	const home = process.env.HOME;
+	const home = process.env.DISTROBOX_HOST_HOME || process.env.HOME;
 	return home && path.startsWith(home) ? `~${path.slice(home.length)}` : path;
 }
 
-function abbrevPath(path: string): string {
+export function abbrevPath(path: string): string {
 	const p = stripHome(path);
 	const parts = p.split("/");
 	return parts
