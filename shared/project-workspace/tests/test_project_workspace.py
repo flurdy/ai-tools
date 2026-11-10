@@ -611,6 +611,7 @@ class ProjectWorkspaceTest(unittest.TestCase):
             check=True,
             capture_output=True,
         )
+        (repository / ".gitignore").write_text("other/\n", encoding="utf-8")
         workspace = repository / "workspace"
 
         preview = self.run_cli(
@@ -630,6 +631,51 @@ class ProjectWorkspaceTest(unittest.TestCase):
             self.assertIn("existing Git work tree", rejected.stderr)
         self.assertFalse(workspace.exists())
         self.assertFalse(self.command_log.exists())
+
+    @unittest.skipUnless(
+        shutil.which("git"), "Git is required for containment validation"
+    )
+    def test_real_git_init_allows_output_ignored_by_existing_work_tree(self) -> None:
+        real_git = self.use_real_git()
+        for name, ignore_rules in (
+            ("allowlist", "/*\n!/.gitignore\n"),
+            ("directory-pattern", "workspace/\n"),
+        ):
+            with self.subTest(name):
+                self.assert_ignored_output_initialises(real_git, name, ignore_rules)
+
+    def assert_ignored_output_initialises(
+        self, real_git: str, name: str, ignore_rules: str
+    ) -> None:
+        repository = self.root / name
+        repository.mkdir()
+        subprocess.run(
+            [real_git, "init", "-b", "main"],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+        )
+        (repository / ".gitignore").write_text(ignore_rules, encoding="utf-8")
+        workspace = repository / "workspace"
+
+        preview = self.run_cli(
+            "init", "Workspace", "--output", str(workspace), "--dry-run"
+        )
+        self.assertFalse(workspace.exists())
+        result = self.run_cli("init", "Workspace", "--output", str(workspace))
+
+        self.assertNotIn("existing Git work tree", preview.stderr)
+        self.assertIn(f"Initialised workspace: {workspace}", result.stdout)
+        self.assertTrue((workspace / ".git").is_dir())
+        self.assertTrue((workspace / "workspace.json").is_file())
+        untracked = subprocess.run(
+            [real_git, "status", "--porcelain", "--untracked-files=all", "--", "workspace"],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual("", untracked.stdout)
 
     @unittest.skipUnless(
         shutil.which("git"), "Git is required for containment validation"

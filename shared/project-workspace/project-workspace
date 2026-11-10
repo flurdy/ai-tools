@@ -417,6 +417,20 @@ def git_worktree_root(path: Path) -> Path | None:
     return Path(result.stdout.strip()).resolve()
 
 
+def git_ignores_directory(worktree_root: Path, path: Path) -> bool:
+    """Whether the enclosing work tree ignores directory path, so nesting records no gitlink."""
+    # The trailing slash lets directory-only patterns match a directory not yet created.
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(worktree_root), "check-ignore", "-q", "--", f"{path}/"],
+            capture_output=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return False
+    return result.returncode == 0
+
+
 def git_metadata_root(path: Path) -> Path | None:
     candidate = path
     while not candidate.exists():
@@ -470,7 +484,11 @@ def preflight(workspace: Workspace, files: dict[Path, str], dry_run: bool) -> bo
         if dry_run
         else git_worktree_root(workspace.root)
     )
-    if worktree_root is not None and worktree_root != workspace.root.resolve():
+    if (
+        worktree_root is not None
+        and worktree_root != workspace.root.resolve()
+        and not git_ignores_directory(worktree_root, workspace.root.resolve())
+    ):
         raise WorkspaceError(
             f"refusing to scaffold inside an existing Git work tree: {workspace.root}"
         )

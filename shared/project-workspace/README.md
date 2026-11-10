@@ -336,6 +336,9 @@ service so the error remains actionable.
 - Existing matching output is left unchanged, so the same command is safe to rerun.
 - Conflicting files or links stop the command rather than being overwritten.
 - Existing Git repositories cannot be reused as workspace output accidentally.
+- Output inside another Git work tree is refused unless that work tree's ignore rules
+  ignore the output directory (`git check-ignore`), so the parent never records an
+  embedded repository. Dry-run and real runs apply the same rule.
 - The workspace root and managed directories cannot be symlinks, preventing writes
   through them into unrelated locations.
 - Existing repositories and infrastructure sources must remain separate from the
