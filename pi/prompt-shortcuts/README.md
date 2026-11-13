@@ -13,7 +13,11 @@ Manual quick actions that save typing; they never automatically restart work or 
 | Guard writes and release scopes | Alt+Shift+P | `/quick-plan` | Dispatch the registered `/plan` command |
 | Prepare implementation command | Alt+Shift+I | `/quick-implement` | Insert `/implement`; edit paths if needed, then press Enter |
 
-Continue explicitly withholds new approval and stops for pending decisions. The four prompt actions start normal model turns; the other actions do not. Inserted replies have their normal contextual meaning only after you review and submit them. Inserted `/implement` executes only after a separate Enter. No shortcut selects an answer in a dialog.
+Continue and `/quick-continue` immediately send the same compact prompt:
+
+> Continue with the already-authorized steps. This is not approval for pending decisions or new scope. Preserve all existing permission and confirmation gates. If a decision or approval is pending, restate it and stop.
+
+The other prompt actions retain their full non-approval disclaimer. The four prompt actions start normal model turns; the other actions do not. Inserted replies have their normal contextual meaning only after you review and submit them. Inserted `/implement` executes only after a separate Enter. No shortcut selects an answer in a dialog.
 
 ## Input behavior and limits
 

@@ -6,7 +6,7 @@ export const PRESETS = [
 	{
 		name: "continue", shortcut: "shift+alt+c",
 		description: "Continue already-authorized work (not approval)",
-		text: `Continue with the already-authorized steps. ${NOT_APPROVAL} If a decision or approval is pending, restate it and stop.`,
+		text: "Continue with the already-authorized steps. This is not approval for pending decisions or new scope. Preserve all existing permission and confirmation gates. If a decision or approval is pending, restate it and stop.",
 	},
 	{
 		name: "checkpoint", shortcut: "shift+alt+s",

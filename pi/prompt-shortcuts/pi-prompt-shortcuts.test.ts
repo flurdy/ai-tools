@@ -66,6 +66,13 @@ test("registers quick prompts, draft replies, mode actions and the key probe", (
 	assert.deepEqual(h.sent, []);
 });
 
+test("Continue uses the shorter non-approval prompt without changing other presets", () => {
+	assert.equal(PRESETS[0].text, "Continue with the already-authorized steps. This is not approval for pending decisions or new scope. Preserve all existing permission and confirmation gates. If a decision or approval is pending, restate it and stop.");
+	assert.ok(PRESETS[0].text.length < 225, "Continue stays compact instead of reusing the full disclaimer");
+	const disclaimer = "This is not approval for any pending question or any new scope, write access, remote, destructive, package, billing or production action. Preserve all existing permission and confirmation gates.";
+	for (const preset of PRESETS.slice(1)) assert.ok(preset.text.endsWith(disclaimer));
+});
+
 for (const preset of PRESETS) {
 	test(`${preset.name}: shortcut and command send the same fixed text`, async () => {
 		const shortcut = harness();
@@ -400,9 +407,12 @@ test("compatibility output matches the actual Pi host parser", { skip: !process.
 test("presets preserve authorization boundaries; affirmative actions never reuse these prompt sends", () => {
 	for (const preset of PRESETS) {
 		assert.match(preset.text, /not approval/);
-		assert.match(preset.text, /billing/);
+		assert.match(preset.text, /Preserve all existing permission and confirmation gates/);
 	}
 	assert.match(PRESETS[0].text, /already.authorized/);
 	assert.match(PRESETS[0].text, /restate it and stop/);
-	for (const preset of PRESETS.slice(1)) assert.match(preset.text, /read-only/);
+	for (const preset of PRESETS.slice(1)) {
+		assert.match(preset.text, /read-only/);
+		assert.match(preset.text, /billing/);
+	}
 });
