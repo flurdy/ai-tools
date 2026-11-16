@@ -1216,6 +1216,23 @@ def status_targets(
     ]
 
 
+def sync_targets(
+    root: Path, manifest: dict[str, object], selectors: list[str] | None
+) -> list[tuple[str, str, Path]]:
+    targets = status_targets(root, manifest)
+    if selectors is None:
+        return targets
+    if len(selectors) != 1 or re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", selectors[0]) is None:
+        raise WorkspaceError("repository selector must name exactly one registered repository (not empty)")
+    selected = [target for target in targets[1:] if target[0] == selectors[0]]
+    if not selected:
+        choices = ", ".join(name for name, _, _ in targets[1:]) or "(none)"
+        raise WorkspaceError(
+            f"unknown repository selector {selectors[0]!r}; registered repositories: {choices}"
+        )
+    return selected
+
+
 def tracked_in_workspace_store(repository: dict[str, object]) -> bool:
     return repository.get("beadsStore") == "workspace"
 
@@ -1753,7 +1770,11 @@ def display_count(value: int | None) -> str:
 
 def git_status(root: Path, manifest: dict[str, object]) -> bool:
     print("=== GIT STATUS ===")
-    rows = git_status_rows(status_targets(root, manifest))
+    print("Evidence: local working trees and cached upstream refs; no remote contact.")
+    return print_git_status_rows(git_status_rows(status_targets(root, manifest)))
+
+
+def print_git_status_rows(rows: list[GitStatusRow]) -> bool:
     width = max((len(row.label) for row in rows), default=0)
     success = True
     for row in rows:
@@ -2349,13 +2370,32 @@ def sync_repository(
     return integrate_repository(directory, label, status, dry_run, assume_yes)
 
 
-def sync_workspace(root: Path, dry_run: bool, assume_yes: bool) -> bool:
+def sync_status(root: Path, selectors: list[str] | None) -> bool:
     workspace_root = Path(os.path.abspath(root.expanduser()))
     manifest, _readme = load_workspace_manifest(workspace_root)
+    targets = sync_targets(workspace_root, manifest, selectors)
+    print("=== GIT SYNC STATUS (offline; cached refs) ===")
+    print("Evidence: local working trees and cached upstream refs; no remote contact.")
+    if selectors is not None:
+        print(f"Selected repository: {selectors[0]} (workspace root and siblings excluded).")
+    rows = [
+        GitStatusRow(f"{name} ({path})", *repository_git_status(directory))
+        for name, path, directory in targets
+    ]
+    return print_git_status_rows(rows)
+
+
+def sync_workspace(
+    root: Path, dry_run: bool, assume_yes: bool, selectors: list[str] | None = None
+) -> bool:
+    workspace_root = Path(os.path.abspath(root.expanduser()))
+    manifest, _readme = load_workspace_manifest(workspace_root)
+    targets = sync_targets(workspace_root, manifest, selectors)
     print("=== WORKSPACE SYNC ===")
     print("Scope: registered checkouts only; alternate worktrees are not synced.")
+    if selectors is not None:
+        print(f"Selected repository: {selectors[0]} (workspace root and siblings excluded).")
     success = True
-    targets = status_targets(workspace_root, manifest)
     width = label_width(targets)
     for name, relative_path, directory in targets:
         label = f"{name} ({relative_path})"
@@ -2553,7 +2593,7 @@ def parser() -> argparse.ArgumentParser:
         "--workspace", type=Path, default=Path.cwd(), help="workspace root"
     )
     sync.add_argument(
-        "--dry-run", action="store_true", help="preview without integrating or pushing"
+        "--dry-run", action="store_true", help="fetch and preview without integrating or pushing"
     )
     sync.add_argument(
         "--yes",
@@ -2561,6 +2601,18 @@ def parser() -> argparse.ArgumentParser:
         dest="assume_yes",
         help="rebase diverged branches without prompting",
     )
+
+    sync_status_parser = subcommands.add_parser(
+        "sync-status", help="show offline Git sync status using cached upstream refs"
+    )
+    sync_status_parser.add_argument(
+        "--workspace", type=Path, default=Path.cwd(), help="workspace root"
+    )
+    for scoped in (sync, sync_status_parser):
+        scoped.add_argument(
+            "--repo", action="append", metavar="NAME",
+            help="exactly one registered repository; omit for workspace root and all repositories",
+        )
 
     beads_sync = subcommands.add_parser(
         "beads-sync", help="pull then push every unique Beads store"
@@ -2608,9 +2660,12 @@ def main() -> int:
                 workspace_root, manifest, arguments.stale_after_days
             )
             return 0 if succeeded else 1
+        elif arguments.command == "sync-status":
+            succeeded = sync_status(arguments.workspace, arguments.repo)
+            return 0 if succeeded else 1
         elif arguments.command == "sync":
             succeeded = sync_workspace(
-                arguments.workspace, arguments.dry_run, arguments.assume_yes
+                arguments.workspace, arguments.dry_run, arguments.assume_yes, arguments.repo
             )
             return 0 if succeeded else 1
         elif arguments.command == "beads-sync":

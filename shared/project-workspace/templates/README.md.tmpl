@@ -41,8 +41,12 @@ make git-status
 make git-inventory
 make beads-status
 make all-status
+make sync-status
+make sync-status REPO=example-api
 make sync
 make sync-check
+make beads-sync
+make beads-sync-check
 make doctor
 ```
 
@@ -55,10 +59,28 @@ lists every local branch and worktree with checkout linkage and commit age; use
 `project-workspace git-inventory --workspace . --stale-after-days DAYS` to classify age
 against an explicit threshold. Without that option, freshness remains unclassified.
 Collection fails visibly above 1,000 branches or 200 worktrees per shared Git directory.
-`make sync` and
-`make sync-check` operate only on the workspace root and registered checkout paths;
-they never rebase or push alternate worktree branches implicitly. Beads stores remain
-independent and are never synchronized by status commands.
+`make sync-status` reuses Git status collection/rendering for sync targets only, without alternate
+worktrees. Both status views label upstream refs as cached/local evidence, not fresh remote state.
+
+| Target | Effects | Optional scope |
+|---|---|---|
+| `make sync-status` | Offline; no remote contact or mutation | `REPO=<registered-name>` |
+| `make sync-check` | Fetch and preview; no integration or push | Same selector |
+| `make sync` | Fetch again, integrate and publish | Same selector |
+
+An omitted `REPO` means workspace root plus all registered repositories. A supplied selector includes
+only that checkout, not the root or siblings. Empty, malformed/multiple, unknown or unavailable
+selections fail before remote contact, never widening scope. The CLI accepts `--repo=NAME` on
+`sync-status` and `sync`; repeated `--repo` is invalid. Full local topology validation still runs.
+Synchronization is centralized; children need no Makefile. Alternate worktrees are never synced.
+
+Follow attended confirmations, destination/refspec checks, native Pi publication gates and stricter
+member rules. Preview is not publication approval; sync fetches again and is not atomic. Agent runs
+omit `--yes`; divergence requires separately approved handling. No automatic retries or recovery.
+
+Beads synchronization is independent: `make beads-sync-check` previews unique stores offline;
+`make beads-sync` pulls then pushes that set after separate approval. Git `REPO` does not narrow it.
+Status commands never synchronize either Git or Beads.
 
 For workspace-specific checks, add an unowned `workspace.mk` file and extend the
 combined target, for example `all-status: ci-status deploy-status`. Keep CI,

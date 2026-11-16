@@ -164,6 +164,8 @@ make git-status
 make git-inventory
 make beads-status
 make all-status
+make sync-status
+make sync-status REPO=example-api
 make sync
 make sync-check
 make beads-sync
@@ -254,12 +256,34 @@ adding those domains to the generated core:
 all-status: ci-status deploy-status
 ```
 
-`make sync` fetches each repository and then integrates and publishes its branch in
-one pass; `make sync-check` previews the same decisions without integrating or pushing.
-Sync is the only command that contacts remotes, so it stays separate from the local
-read-only status views. Its integration and publication scope is the workspace root and
-registered checkout paths only: alternate worktree branches are never rebased or pushed
-implicitly. A registered checkout is skipped, and reported, when its branch has no
+### Git synchronization scope and evidence
+
+| Target | Evidence / effects | Scope |
+|---|---|---|
+| `make git-status` | Offline working trees and cached upstream refs, including actionable alternate worktrees | Workspace-wide diagnostic view |
+| `make sync-status [REPO=name]` | Offline sync-target status using the same Git collector and renderer; cached refs are not fresh remote evidence | Registered checkout targets only |
+| `make sync-check [REPO=name]` | **Fetches**, updating remote-tracking refs; no merge, rebase or push | Same selected sync targets |
+| `make sync [REPO=name]` | Fetches again, integrates and publishes | Same selected sync targets |
+
+For the three scoped targets, an omitted `REPO` means workspace root plus every registered
+repository. `REPO=example-api` selects only that registered checkout, excluding the workspace
+root and siblings. The corresponding CLI forms are `project-workspace sync-status --repo=example-api`
+and `project-workspace sync --repo=example-api [--dry-run]`, both accepting `--workspace PATH`.
+A supplied empty, malformed, multiple, unknown or unavailable selector fails before any remote
+contact, never falling back to the whole workspace. Repeat `--repo` is invalid, even for the same
+name. Select a manifest repository name, not a path, infrastructure name or root alias.
+Full workspace topology validation still runs, so a broken sibling may refuse a scoped operation;
+validation is local and does not widen the selected execution set.
+
+The Makefile passes an explicitly defined `REPO` (including one from the environment) literally
+to the CLI; an undefined variable is the only all-repository default. This does not make untrusted
+Make syntax safe to execute. Orchestration stays centralized; selected children need no Makefile
+or sync target. `git-status` retains its existing workspace-wide behavior; `sync-status` deliberately
+omits alternate worktrees because they are not sync targets.
+
+`make sync` fetches each selected repository and then integrates and publishes its branch in
+one pass; `make sync-check` fetches and previews those decisions without integrating or pushing.
+Alternate worktree branches are never rebased or pushed implicitly. A registered checkout is skipped, and reported, when its branch has no
 upstream or its working tree is dirty, so unpublished branches and in-progress edits are
 never published or rebased implicitly. Otherwise a branch that is only behind is
 fast-forwarded, one that is only ahead is pushed, and one that has diverged is rebased
@@ -267,7 +291,11 @@ onto its upstream and then pushed. Divergence requires consent: sync prompts, sk
 repository when the answer is no or the run is non-interactive, and proceeds unattended
 only with `--yes`. A conflicting rebase is aborted so the branch is left as it was found.
 Pushes are never forced. Per-repository failures are reported and the remaining
-repositories still run, then the command returns non-zero.
+repositories still run, then the command returns non-zero. These CLI capabilities do not grant
+agent authority: preserve attended confirmations, destination/refspec checks, native Pi exact-commit
+publication gates and stricter member rules. A preview is not push approval. For attended agent
+work, run non-interactively without `--yes`; divergence requires separately authorized handling.
+The operation is non-atomic and remote state may change between preview and execution.
 
 `make beads-sync` is the Beads counterpart: for each unique store it runs `bd dolt pull`
 then `bd dolt push` against `origin` (`project-workspace beads-sync --remote NAME`
@@ -277,8 +305,9 @@ and sync, counts, and status query the root store once for it. Uninitialized sto
 skipped and reported. `bd` refuses conflicting merges and non-fast-forward pushes itself, so
 a failing store is reported, the remaining stores still run, and the command returns
 non-zero; resolve that store by hand and rerun. `make beads-sync-check` lists the store
-set and the intended action without contacting any remote. Run `make beads-sync` when
-leaving one machine and again on arriving at the other.
+set and the intended action without contacting any remote. Git `REPO` selection does not narrow
+Beads synchronization; it always covers the unique-store set and requires separate confirmation.
+Neither status nor Git sync automatically starts Beads synchronization.
 
 `make doctor` uses the installed `project-workspace` command as the authoritative
 manifest, relative-link, Git-repository, orphan-path, and generated-README validator.
@@ -329,7 +358,8 @@ service so the error remains actionable.
 
 ## Safety and reruns
 
-- `--dry-run` performs no writes. Named greenfield previews do not require `git` or
+- Scaffold and registration `--dry-run` perform no writes; **sync `--dry-run` still fetches**.
+  Named greenfield previews do not require `git` or
   `bd`; repository registration, repository-backed init, and doctor use Git to verify
   repository roots.
 - A normal run preflights every managed file and link before creating anything.

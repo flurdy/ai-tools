@@ -1,15 +1,23 @@
 SHELL := /usr/bin/env bash
 
-.PHONY: help status git-status git-inventory beads-status all-status sync sync-check beads-sync beads-sync-check doctor
+.PHONY: help status git-status git-inventory beads-status all-status sync-status sync sync-check beads-sync beads-sync-check doctor
+
+# Preserve omitted versus explicitly empty REPO, without interpolating its value into shell code.
+ifneq ($(origin REPO),undefined)
+override REPO := $(value REPO)
+export REPO
+endif
 
 help:
 	@echo "make status        # show combined repository and work status"
-	@echo "make git-status    # show actionable Git state"
+	@echo "make git-status    # offline Git state using cached upstream refs"
 	@echo "make git-inventory # list every local branch and worktree"
 	@echo "make beads-status  # show active and ready work across Beads stores"
 	@echo "make all-status    # show Git, Beads, and workspace health"
-	@echo "make sync          # fetch, integrate, and publish repository work"
-	@echo "make sync-check    # preview sync without integrating or pushing"
+	@echo "make sync-status [REPO=name] # offline sync targets, cached upstream refs"
+	@echo "make sync-check [REPO=name]  # fetch and preview; no integration or push"
+	@echo "make sync [REPO=name]        # fetch, integrate, and publish selected work"
+	@echo "Omit REPO for workspace root + all registered repositories; empty REPO is invalid."
 	@echo "make beads-sync    # pull then push every unique Beads store"
 	@echo "make beads-sync-check # list Beads stores without contacting remotes"
 	@echo "make doctor        # validate the workspace structure"
@@ -30,13 +38,17 @@ beads-status:
 
 all-status: git-status beads-status doctor
 
+sync-status:
+	@command -v project-workspace >/dev/null 2>&1 || { echo "ERROR: project-workspace is required" >&2; exit 127; }
+	@project-workspace sync-status --workspace . $(if $(filter undefined,$(origin REPO)),,--repo="$$REPO")
+
 sync:
 	@command -v project-workspace >/dev/null 2>&1 || { echo "ERROR: project-workspace is required" >&2; exit 127; }
-	@project-workspace sync --workspace .
+	@project-workspace sync --workspace . $(if $(filter undefined,$(origin REPO)),,--repo="$$REPO")
 
 sync-check:
 	@command -v project-workspace >/dev/null 2>&1 || { echo "ERROR: project-workspace is required" >&2; exit 127; }
-	@project-workspace sync --workspace . --dry-run
+	@project-workspace sync --workspace . --dry-run $(if $(filter undefined,$(origin REPO)),,--repo="$$REPO")
 
 beads-sync:
 	@command -v project-workspace >/dev/null 2>&1 || { echo "ERROR: project-workspace is required" >&2; exit 127; }

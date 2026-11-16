@@ -117,6 +117,9 @@ class ProjectWorkspaceTest(unittest.TestCase):
             "  fi\n"
             "  exit\n"
             "fi\n"
+            'if [[ "$1" == status || "$1" == fetch || "$1" == push || "$1" == merge || "$1" == rebase ]]; then\n'
+            '  printf "%s|%s\\n" "$(pwd -P)" "$*" >> "$COMMAND_LOG.targets"\n'
+            "fi\n"
             'if [[ "$1" == "status" ]]; then\n'
             '  if [[ "${GIT_NO_LAZY_FETCH:-}" != 1 || "${GIT_OPTIONAL_LOCKS:-}" != 0 ]]; then\n'
             '    echo "git status environment is not read-only" >&2\n'
@@ -2883,6 +2886,164 @@ all-status: custom-status
         makefile = (workspace / "Makefile").read_text(encoding="utf-8")
         self.assertIn("beads-sync:", makefile)
         self.assertIn("beads-sync-check:", makefile)
+
+    def sync_selection_fixture(self) -> Path:
+        workspace = self.sync_workspace_with("selection", ["service", "sibling"])
+        for directory in (workspace, self.root / "service", self.root / "sibling"):
+            self.set_tracking_status(directory, ahead=2, behind=0)
+        self.command_log.write_text("")
+        return workspace
+
+    def assert_no_sync_mutations(self) -> None:
+        commands = self.command_log.read_text()
+        for verb in ("fetch", "merge", "rebase", "push"):
+            self.assertNotIn(f"git {verb}", commands)
+        self.assertNotIn("bd ", commands)
+
+    def sync_target_commands(self) -> list[tuple[str, str]]:
+        return [tuple(line.split("|", 1)) for line in Path(f"{self.command_log}.targets").read_text().splitlines()]
+
+    def test_sync_status_is_offline_cached_and_exactly_scoped(self) -> None:
+        workspace = self.sync_selection_fixture()
+        self.set_tracking_status(self.root / "service", ahead=99, behind=0, after_fetch=True)
+        for selector, expected in (([], ["workspace", "service", "sibling"]), (["--repo=service"], ["service"])):
+            with self.subTest(selector=selector):
+                self.command_log.write_text("")
+                Path(f"{self.command_log}.targets").write_text("")
+                result = self.run_cli("sync-status", "--workspace", str(workspace), *selector)
+                expected_paths = [str(workspace if name == "workspace" else self.root / name) for name in expected]
+                self.assertEqual([path for path, _ in self.sync_target_commands()], expected_paths)
+                self.assertIn("offline", result.stdout)
+                self.assertIn("cached", result.stdout)
+                if selector:
+                    self.assertIn("Selected repository: service (workspace root and siblings excluded).", result.stdout)
+                rows = [line.split(" (", 1)[0] for line in result.stdout.splitlines() if " | branch " in line]
+                self.assertEqual(rows, expected)
+                self.assertIn("ahead 2", result.stdout)
+                self.assertNotIn("ahead 99", result.stdout)
+                self.assert_no_sync_mutations()
+                self.assertEqual(self.command_log.read_text().count("git status "), len(expected))
+                self.assertNotIn("git worktree list", self.command_log.read_text())
+
+    def test_sync_selection_limits_fetch_and_publication_to_one_checkout(self) -> None:
+        workspace = self.sync_selection_fixture()
+        for flags, expected in ((["--dry-run"], "would push 2"), ([], "pushed 2")):
+            with self.subTest(flags=flags):
+                self.command_log.write_text("")
+                Path(f"{self.command_log}.targets").write_text("")
+                result = self.run_cli("sync", "--workspace", str(workspace), "--repo=service", *flags)
+                self.assertEqual({path for path, _ in self.sync_target_commands()}, {str(self.root / "service")})
+                self.assertIn(expected, result.stdout)
+                self.assertNotIn("workspace (.)", result.stdout)
+                self.assertNotIn("sibling (", result.stdout)
+                commands = self.command_log.read_text()
+                self.assertEqual(commands.count("git fetch --quiet"), 1)
+                self.assertEqual(commands.count("git push"), 0 if flags else 1)
+                self.assertEqual(commands.count("git status "), 2)
+                self.assertNotIn("git merge", commands)
+                self.assertNotIn("git rebase", commands)
+                self.assertFalse((self.root / "service" / "Makefile").exists())
+
+    def test_sync_selectors_fail_closed_without_remote_contact(self) -> None:
+        workspace = self.sync_selection_fixture()
+        for command in ("sync", "sync-status"):
+            for selector in ("", " ", "unknown", "service sibling", "service,sibling", "../service", "--yes", "Service"):
+                with self.subTest(command=command, selector=selector):
+                    self.command_log.write_text("")
+                    result = self.run_cli(command, "--workspace", str(workspace), f"--repo={selector}", check=False)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("repository selector", result.stderr)
+                    self.assert_no_sync_mutations()
+            for selectors in (("service", "sibling"), ("service", "service")):
+                self.command_log.write_text("")
+                result = self.run_cli(command, "--workspace", str(workspace), *(f"--repo={name}" for name in selectors), check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("exactly one", result.stderr)
+                self.assert_no_sync_mutations()
+
+    def test_sync_missing_selected_checkout_fails_before_fetch(self) -> None:
+        workspace = self.sync_selection_fixture()
+        shutil.rmtree(self.root / "service")
+        for flags in (("sync-status",), ("sync",), ("sync", "--dry-run")):
+            self.command_log.write_text("")
+            result = self.run_cli(*flags, "--workspace", str(workspace), "--repo=service", check=False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("registered path is broken: repos/service", result.stderr)
+            self.assert_no_sync_mutations()
+
+    def test_generated_make_sync_selector_forwarding(self) -> None:
+        workspace = self.sync_selection_fixture()
+        for target in ("sync-status", "sync-check", "sync"):
+            for selection in ([], ["REPO=service"], ["REPO="], ["REPO=service sibling"], ["REPO=unknown"]):
+                with self.subTest(target=target, selection=selection):
+                    self.command_log.write_text("")
+                    Path(f"{self.command_log}.targets").write_text("")
+                    result = subprocess.run(
+                        ["make", "--no-print-directory", target, *selection], cwd=workspace,
+                        env=self.environment, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                    )
+                    valid = not selection or selection == ["REPO=service"]
+                    self.assertEqual(result.returncode == 0, valid, result.stderr)
+                    if not valid:
+                        self.assertIn("repository selector", result.stderr)
+                        self.assert_no_sync_mutations()
+                        continue
+                    count = 1 if selection else 3
+                    expected_paths = {str(self.root / "service")} if selection else {str(workspace), str(self.root / "service"), str(self.root / "sibling")}
+                    self.assertEqual({path for path, _ in self.sync_target_commands()}, expected_paths)
+                    commands = self.command_log.read_text()
+                    if selection:
+                        self.assertNotIn("workspace (.)", result.stdout)
+                        self.assertNotIn("sibling (", result.stdout)
+                    if target == "sync-status":
+                        self.assert_no_sync_mutations()
+                        self.assertEqual(commands.count("git status "), count)
+                    else:
+                        self.assertEqual(commands.count("git fetch --quiet"), count)
+                        self.assertEqual(commands.count("git push"), count if target == "sync" else 0)
+                        self.assertNotIn("git merge", commands)
+                        self.assertNotIn("git rebase", commands)
+
+    def test_make_repo_from_environment_is_literal_and_empty_is_not_omitted(self) -> None:
+        workspace = self.sync_selection_fixture()
+        for selection in ("service", "", 'service"; touch injected; #', "`touch injected`", "$(touch injected)"):
+            with self.subTest(selection=selection):
+                self.command_log.write_text("")
+                result = subprocess.run(
+                    ["make", "--no-print-directory", "sync-check"], cwd=workspace,
+                    env={**self.environment, "REPO": selection},
+                    capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                )
+                self.assertEqual(result.returncode == 0, selection == "service", result.stderr)
+                self.assertFalse((workspace / "injected").exists())
+                if selection != "service":
+                    self.assert_no_sync_mutations()
+
+    def test_make_command_line_repo_is_not_expanded_as_make_code(self) -> None:
+        workspace = self.sync_selection_fixture()
+        for selection in ("service$(UNDEFINED_SELECTOR_SUFFIX)", "$(shell touch injected)", 'service"; touch injected; #'):
+            with self.subTest(selection=selection):
+                (workspace / "injected").unlink(missing_ok=True)
+                self.command_log.write_text("")
+                result = subprocess.run(
+                    ["make", "--no-print-directory", "sync-check", f"REPO={selection}"],
+                    cwd=workspace, env=self.environment, capture_output=True, text=True,
+                    stdin=subprocess.DEVNULL,
+                )
+                self.assertFalse((workspace / "injected").exists())
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("repository selector", result.stderr)
+                self.assert_no_sync_mutations()
+
+    def test_selected_sync_status_failure_does_not_fall_back_to_other_roots(self) -> None:
+        workspace = self.sync_selection_fixture()
+        (self.root / "service/.git/project-workspace-status-fail").write_text("status unavailable")
+        result = self.run_cli("sync-status", "--workspace", str(workspace), "--repo=service", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("status unavailable", result.stdout)
+        self.assertNotIn("sibling (", result.stdout)
+        self.assertNotIn("workspace (.)", result.stdout)
+        self.assert_no_sync_mutations()
 
     def test_sync_publishes_ahead_work_and_reports_skips(self) -> None:
         workspace = self.sync_workspace_with(
