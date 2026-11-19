@@ -405,6 +405,7 @@ RST='\033[0m'
 BOLD='\033[1m'
 
 C_HOST='\033[38;2;37;94;135m'
+C_CONTAINER='\033[38;2;175;95;175m'
 C_K8S='\033[38;2;95;135;175m'
 C_PATH='\033[38;2;153;153;153m'
 C_DIR='\033[1;37m'
@@ -546,8 +547,13 @@ model_short=$(short_model "$model_id")
 segment_agent="${C_MODEL}${BOLD}✦${RST}"
 segment_model="${C_MODEL}${BOLD}${model_short}${RST}"
 
-# Hostname (using nerd font icon - screen/monitor F108)
-segment_host="${C_HOST}${BOLD}$(printf '\xef\x84\x88') ${host}${RST}"
+# Hostname (nerd font monitor F108). Distrobox shares the host's hostname, so a
+# container is shown as name@host with a container icon (nf-oct-container F4B7).
+if [ -n "$CONTAINER_ID" ] || [ -f /run/.containerenv ]; then
+  segment_host="${C_CONTAINER}${BOLD}$(printf '\xef\x92\xb7') ${CONTAINER_ID:-container}@${host}${RST}"
+else
+  segment_host="${C_HOST}${BOLD}$(printf '\xef\x84\x88') ${host}${RST}"
+fi
 
 # K8s context
 segment_k8s=""
