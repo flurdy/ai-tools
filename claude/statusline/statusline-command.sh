@@ -114,6 +114,8 @@ cache_git_divergence() {
   [ "${CLAUDE_STATUSLINE_GIT_DIVERGENCE:-1}" = "0" ] && return
   root=$(cd "$cwd" 2>/dev/null && pwd -P) || return
   if is_project_workspace_root "$root"; then
+    command -v project-workspace >/dev/null 2>&1 || return
+    command -v jq >/dev/null 2>&1 || return
     workspace_mode=1
     default_timeout=2
     branch=workspace
@@ -165,9 +167,10 @@ cache_git_divergence() {
           if aggregate=$("$timeout_cmd" --signal=KILL "$timeout_seconds" project-workspace git-counts --workspace "$root" --timeout "$source_timeout" 2>/dev/null) &&
             formatted=$(printf '%s' "$aggregate" | jq -er '
               def count: type == "number" and . >= 0 and . <= 9007199254740991 and floor == .;
+              (.noUpstreamSources // 0) as $no_upstream |
               if .version == 1 and (.repositories | type == "array") and
-                 (.successfulSources | count) and (.unavailableSources | count) and
-                 .successfulSources + .unavailableSources > 0 and
+                 (.successfulSources | count) and (.unavailableSources | count) and ($no_upstream | count) and
+                 .successfulSources + .unavailableSources + $no_upstream > 0 and
                  (.repositories | length) == .successfulSources and
                  (.diagnostics | type == "array") and
                  (.diagnostics | length) == .unavailableSources and
@@ -175,7 +178,7 @@ cache_git_divergence() {
                  all(.repositories[]; (.repository | type == "string") and (.path | type == "string") and (.ahead | count) and (.behind | count))
               then [
                 (.repositories[] | (if .ahead > 0 then "⇡\(.ahead)" else empty end), (if .behind > 0 then "⇣\(.behind)" else empty end)),
-                (if .successfulSources == 0 then "?" else empty end),
+                (if .successfulSources == 0 and $no_upstream == 0 then "?" else empty end),
                 (if .unavailableSources > 0 then "⚠\(.unavailableSources)" else empty end)
               ] | join(" ")
               else error("invalid workspace Git counts") end

@@ -2050,9 +2050,20 @@ def load_status_issues(
     return issues, None
 
 
+def checked_out_branch_lacks_upstream(
+    directory: Path, deadline: float, timeout: float, environment: dict[str, str]
+) -> bool:
+    result, error = run_repository_command_before(
+        ["git", "for-each-ref", "--format=%(HEAD)%(upstream)", "refs/heads/"],
+        directory, deadline, timeout, environment,
+    )
+    return error is None and result is not None and "*" in result.stdout.splitlines()
+
+
 def read_git_counts(
     directory: Path, deadline: float, timeout: float
 ) -> tuple[tuple[int, int] | None, str | None]:
+    """Return (counts, None), (None, error), or (None, None) when no upstream is configured."""
     environment = os.environ.copy()
     environment["GIT_NO_LAZY_FETCH"] = "1"
     environment["GIT_OPTIONAL_LOCKS"] = "0"
@@ -2061,6 +2072,10 @@ def read_git_counts(
         directory, deadline, timeout, environment,
     )
     if error is not None:
+        if not error.startswith("timed out after ") and checked_out_branch_lacks_upstream(
+            directory, deadline, timeout, environment
+        ):
+            return None, None
         return None, error
     assert result is not None
     match = re.fullmatch(r"([0-9]+)\s+([0-9]+)", result.stdout.strip())
@@ -2082,12 +2097,14 @@ def git_count_payload(
         ]
     repositories: list[dict[str, object]] = []
     diagnostics: list[str] = []
+    no_upstream_sources = 0
     for name, path, future in futures:
         counts, error = future.result()
         if error is not None:
             diagnostics.append(f"{name} ({path}): {error}")
+        elif counts is None:
+            no_upstream_sources += 1
         else:
-            assert counts is not None
             ahead, behind = counts
             repositories.append({
                 "repository": name, "path": path, "ahead": ahead, "behind": behind,
@@ -2097,6 +2114,7 @@ def git_count_payload(
         "repositories": repositories,
         "successfulSources": len(repositories),
         "unavailableSources": len(diagnostics),
+        "noUpstreamSources": no_upstream_sources,
         "diagnostics": diagnostics,
     }
 

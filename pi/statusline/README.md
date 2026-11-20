@@ -172,7 +172,7 @@ At a validated project-workspace root, the divergence cell uses `project-workspa
 
 Detection checks only the canonical cwd, never a parent workspace. Inside a member or outside a workspace, the existing cache-keyed `<branch>@{upstream}...<branch>` comparison remains unchanged. Counts use local tracking refs, disable lazy object fetching, and never fetch from remotes. The asynchronous lookup is cached and timeout-bounded; workspace collectors own a process group cleaned on completion, timeout or abort on Unix-like hosts.
 
-Healthy workspace counts survive individual source failures, with `⚠N` for unavailable sources (including missing upstreams, detached or unborn branches). If all sources fail, the cell shows `? ⚠N`; unavailable collectors, invalid topology or malformed output show `? ⚠` with no invented source count. These failures are cached too. A fully clean workspace hides the cell. Single-repository zero counts and unavailable data still stay hidden.
+Healthy workspace counts survive individual source failures, with `⚠N` for unavailable sources (including detached or unborn branches and missing upstream refs). A checked-out branch with no upstream configured has nothing to compare and adds nothing. If all sources fail, the cell shows `? ⚠N`; failing collectors, invalid topology or malformed output show `? ⚠` with no invented source count. The cell is hidden when `project-workspace` is not installed. These failures are cached too. A fully clean workspace hides the cell. Single-repository zero counts and unavailable data still stay hidden.
 
 ## Beads count source
 

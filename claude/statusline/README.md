@@ -46,7 +46,7 @@ At a validated project-workspace root, the warning-coloured divergence cell uses
 
 Only the canonical cwd is checked, not parent workspaces. Members and non-workspace repositories keep their existing `<branch>@{upstream}...<branch>` comparison. The detached, cached lookup never fetches (including lazy object fetching), so counts reflect locally available tracking refs. The timeout covers the collector process group and is clamped to 1–10 seconds; workspace mode defaults to 2 seconds.
 
-Workspace source failures retain healthy groups and add `⚠N`; missing upstreams, detached and unborn branches are unavailable, not zero. An entirely unavailable set shows `? ⚠N`. Missing collectors, invalid topology, malformed output and outer timeouts show `? ⚠`, without inventing how many sources failed. Failure results are cached. A fully clean workspace hides the cell; single-repository failures and zero counts remain hidden.
+Workspace source failures retain healthy groups and add `⚠N`; detached and unborn branches and missing upstream refs are unavailable, not zero. A checked-out branch with no upstream configured has nothing to compare and adds nothing. An entirely unavailable set shows `? ⚠N`. Invalid topology, malformed output and outer timeouts show `? ⚠`, without inventing how many sources failed. Failure results are cached. The cell is hidden when `project-workspace` or `jq` is not installed. A fully clean workspace hides the cell; single-repository failures and zero counts remain hidden.
 
 ## Beads work
 

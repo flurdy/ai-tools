@@ -10,6 +10,7 @@ interface RepositoryDivergence {
 interface WorkspaceDivergence {
 	repositories: RepositoryDivergence[];
 	unavailableSources: number | null;
+	noUpstreamSources: number;
 }
 
 export type GitDivergence = RepositoryDivergence | WorkspaceDivergence;
@@ -26,10 +27,11 @@ export function findGitWorkspaceRoot(cwd: string): string | undefined {
 function parseWorkspaceDivergence(stdout: string): WorkspaceDivergence {
 	const payload = JSON.parse(stdout);
 	const count = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
+	const noUpstreamSources = payload?.noUpstreamSources ?? 0;
 	if (
 		!payload || payload.version !== 1 || !Array.isArray(payload.repositories) ||
-		!count(payload.successfulSources) || !count(payload.unavailableSources) ||
-		payload.successfulSources + payload.unavailableSources === 0 ||
+		!count(payload.successfulSources) || !count(payload.unavailableSources) || !count(noUpstreamSources) ||
+		payload.successfulSources + payload.unavailableSources + noUpstreamSources === 0 ||
 		payload.repositories.length !== payload.successfulSources ||
 		!Array.isArray(payload.diagnostics) || payload.diagnostics.length !== payload.unavailableSources ||
 		payload.diagnostics.some((value: unknown) => typeof value !== "string") ||
@@ -39,6 +41,7 @@ function parseWorkspaceDivergence(stdout: string): WorkspaceDivergence {
 	return {
 		repositories: payload.repositories.map(({ ahead, behind }: RepositoryDivergence) => ({ ahead, behind })),
 		unavailableSources: payload.unavailableSources,
+		noUpstreamSources,
 	};
 }
 
@@ -50,7 +53,7 @@ export interface FetchGitDivergenceOptions {
 }
 
 export interface GitDivergenceCacheOptions {
-	load: (branch: string, signal: AbortSignal) => Promise<GitDivergence>;
+	load: (branch: string, signal: AbortSignal) => Promise<GitDivergence | undefined>;
 	workspace?: boolean;
 	ttlMs: number;
 	onChange?: () => void;
@@ -60,7 +63,7 @@ export function formatGitDivergence(divergence: GitDivergence | undefined): stri
 	if (!divergence) return "";
 	if ("repositories" in divergence) {
 		const parts = divergence.repositories.map(formatGitDivergence).filter(Boolean);
-		if (divergence.repositories.length === 0) parts.push("?");
+		if (divergence.repositories.length === 0 && divergence.noUpstreamSources === 0) parts.push("?");
 		if (divergence.unavailableSources === null) parts.push("⚠");
 		else if (divergence.unavailableSources > 0) parts.push(`⚠${divergence.unavailableSources}`);
 		return parts.join(" ");
@@ -74,17 +77,23 @@ export async function fetchGitDivergence(
 	cwd: string,
 	branch: string,
 	options: FetchGitDivergenceOptions = {},
-): Promise<GitDivergence> {
+): Promise<GitDivergence | undefined> {
 	const workspaceRoot = findGitWorkspaceRoot(cwd);
 	if (workspaceRoot) {
 		const timeoutMs = options.timeoutMs ?? 2000;
-		const stdout = await runCountCommand(
-			options.workspaceCommand ?? "project-workspace",
-			workspaceRoot,
-			["git-counts", "--workspace", workspaceRoot, "--timeout", String(Math.max(0.05, (timeoutMs - 100) / 1000))],
-			{ ...options, timeoutMs },
-			"Git count query",
-		);
+		let stdout: string;
+		try {
+			stdout = await runCountCommand(
+				options.workspaceCommand ?? "project-workspace",
+				workspaceRoot,
+				["git-counts", "--workspace", workspaceRoot, "--timeout", String(Math.max(0.05, (timeoutMs - 100) / 1000))],
+				{ ...options, timeoutMs },
+				"Git count query",
+			);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+			throw error;
+		}
 		return parseWorkspaceDivergence(stdout);
 	}
 	return new Promise((resolve, reject) => {
@@ -153,7 +162,7 @@ export class GitDivergenceCache {
 			if (!this.#disposed && this.#controller === controller) this.#snapshot = { branch, divergence };
 		} catch {
 			if (!this.#disposed && this.#controller === controller) {
-				this.#snapshot = { branch, divergence: this.#workspace ? { repositories: [], unavailableSources: null } : undefined };
+				this.#snapshot = { branch, divergence: this.#workspace ? { repositories: [], unavailableSources: null, noUpstreamSources: 0 } : undefined };
 			}
 		} finally {
 			if (this.#controller === controller) this.#controller = undefined;

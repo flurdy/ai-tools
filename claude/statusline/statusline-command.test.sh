@@ -452,6 +452,32 @@ for fixture in \
   assert_not_contains "$output" "⇡"
 done
 
+# Branches without an upstream have nothing to compare, so they are not warnings.
+render_git_counts_fixture() {
+  printf '%s\n' "$1" > "$PROJECT_WORKSPACE_FIXTURES/git-counts.json"
+  clear_git_divergence_cache "$TEST_ROOT/project" workspace
+  CLAUDE_STATUSLINE_GIT_DIVERGENCE=1 CLAUDE_STATUSLINE_BEADS=0 render "$TEST_ROOT/project" >/dev/null
+  wait_for_git_divergence_cache "$TEST_ROOT/project" workspace
+  CLAUDE_STATUSLINE_GIT_DIVERGENCE=1 CLAUDE_STATUSLINE_BEADS=0 render "$TEST_ROOT/project"
+}
+output=$(render_git_counts_fixture '{"version":1,"repositories":[],"successfulSources":0,"unavailableSources":0,"noUpstreamSources":1,"diagnostics":[]}')
+assert_not_contains "$output" "⚠"
+assert_not_contains "$output" "? "
+output=$(render_git_counts_fixture '{"version":1,"repositories":[{"repository":"service","path":"repos/service","ahead":2,"behind":0}],"successfulSources":1,"unavailableSources":0,"noUpstreamSources":1,"diagnostics":[]}')
+assert_contains "$output" "⇡2"
+assert_not_contains "$output" "⚠"
+output=$(render_git_counts_fixture '{"version":1,"repositories":[],"successfulSources":0,"unavailableSources":1,"noUpstreamSources":1,"diagnostics":["detached"]}')
+assert_contains "$output" "⚠1"
+assert_not_contains "$output" "? ⚠"
+
+# A missing project-workspace hides the box, including any stale cached warning.
+output=$(render_git_counts_fixture '{"version":1,"repositories":[],"successfulSources":0,"unavailableSources":2,"diagnostics":["a","b"]}')
+assert_contains "$output" "? ⚠"
+: > "$PROJECT_WORKSPACE_FIXTURES/git-calls"
+output=$(CLAUDE_STATUSLINE_GIT_DIVERGENCE=1 CLAUDE_STATUSLINE_BEADS=0 render "$TEST_ROOT/project" table "/usr/bin:/bin")
+assert_not_contains "$output" "⚠"
+[ ! -s "$PROJECT_WORKSPACE_FIXTURES/git-calls" ]
+
 # The collector timeout is detached; failures are visible and cached.
 touch "$PROJECT_WORKSPACE_FIXTURES/git-delay"
 clear_git_divergence_cache "$TEST_ROOT/project" workspace

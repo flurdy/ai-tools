@@ -19,11 +19,17 @@ async function withScript(body: string, run: (script: string) => Promise<void>):
 test("formats workspace sources separately, preserving order and failures", () => {
 	assert.equal(formatGitDivergence({
 		repositories: [{ ahead: 1, behind: 0 }, { ahead: 0, behind: 0 }, { ahead: 4, behind: 2 }, { ahead: 0, behind: 3 }],
-		unavailableSources: 2,
+		unavailableSources: 2, noUpstreamSources: 0,
 	}), "⇡1 ⇡4 ⇣2 ⇣3 ⚠2");
-	assert.equal(formatGitDivergence({ repositories: [], unavailableSources: 2 }), "? ⚠2");
-	assert.equal(formatGitDivergence({ repositories: [{ ahead: 0, behind: 0 }], unavailableSources: 0 }), "");
-	assert.equal(formatGitDivergence({ repositories: [], unavailableSources: null }), "? ⚠");
+	assert.equal(formatGitDivergence({ repositories: [], unavailableSources: 2, noUpstreamSources: 0 }), "? ⚠2");
+	assert.equal(formatGitDivergence({ repositories: [{ ahead: 0, behind: 0 }], unavailableSources: 0, noUpstreamSources: 0 }), "");
+	assert.equal(formatGitDivergence({ repositories: [], unavailableSources: null, noUpstreamSources: 0 }), "? ⚠");
+});
+
+test("treats branches without an upstream as nothing to show", () => {
+	assert.equal(formatGitDivergence({ repositories: [], unavailableSources: 0, noUpstreamSources: 1 }), "");
+	assert.equal(formatGitDivergence({ repositories: [{ ahead: 2, behind: 0 }], unavailableSources: 0, noUpstreamSources: 1 }), "⇡2");
+	assert.equal(formatGitDivergence({ repositories: [], unavailableSources: 1, noUpstreamSources: 1 }), "⚠1");
 });
 
 test("formats only non-zero divergence directions", () => {
@@ -65,10 +71,17 @@ test("workspace reads validate payloads, stay exact-cwd scoped, and bound collec
 		};
 		await writeFile(collector, `#!/usr/bin/env node\nif(process.argv[2] !== 'git-counts' || process.argv[3] !== '--workspace' || process.argv[4] !== ${JSON.stringify(root)}) process.exit(2);\nsetTimeout(()=>console.log(${JSON.stringify(JSON.stringify(payload))}), 550);\n`, { mode: 0o755 });
 		assert.deepEqual(await fetchGitDivergence(root, "", { workspaceCommand: collector }), {
-			repositories: [{ ahead: 4, behind: 2 }], unavailableSources: 1,
+			repositories: [{ ahead: 4, behind: 2 }], unavailableSources: 1, noUpstreamSources: 0,
 		});
+		const noUpstream = { version: 1, repositories: [], successfulSources: 0, unavailableSources: 0, noUpstreamSources: 1, diagnostics: [] };
+		await writeFile(collector, `#!/usr/bin/env node\nconsole.log(${JSON.stringify(JSON.stringify(noUpstream))});\n`);
+		assert.deepEqual(await fetchGitDivergence(root, "", { workspaceCommand: collector }), {
+			repositories: [], unavailableSources: 0, noUpstreamSources: 1,
+		});
+		assert.equal(await fetchGitDivergence(root, "", { workspaceCommand: join(root, "not-installed") }), undefined);
 		assert.deepEqual(await fetchGitDivergence(member, "main", { command, workspaceCommand: "/not-installed", timeoutMs: 1000 }), { ahead: 4, behind: 2 });
 		for (const malformed of [null, {}, { ...payload, successfulSources: 2 }, { ...payload, unavailableSources: -1 },
+			{ ...payload, noUpstreamSources: -1 }, { ...payload, successfulSources: 0, repositories: [], unavailableSources: 0, diagnostics: [] },
 			{ ...payload, repositories: [{ repository: "workspace", path: ".", ahead: true, behind: 0 }] }]) {
 			await writeFile(collector, `#!/usr/bin/env node\nconsole.log(${JSON.stringify(JSON.stringify(malformed))});\n`);
 			await assert.rejects(fetchGitDivergence(root, "main", { workspaceCommand: collector }), /Invalid project-workspace/);
@@ -86,7 +99,7 @@ test("workspace cache works without a root branch and shows failed refreshes", a
 	const cache = new GitDivergenceCache({ workspace: true, ttlMs: 1000, load: async () => {
 		calls++;
 		if (calls > 1) throw Error("collector unavailable");
-		return { repositories: [{ ahead: 2, behind: 0 }], unavailableSources: 1 };
+		return { repositories: [{ ahead: 2, behind: 0 }], unavailableSources: 1, noUpstreamSources: 0 };
 	} });
 	await cache.refresh(null, 1000);
 	assert.equal(formatGitDivergence(cache.divergenceFor(null)), "⇡2 ⚠1");
@@ -96,6 +109,13 @@ test("workspace cache works without a root branch and shows failed refreshes", a
 	assert.equal(formatGitDivergence(cache.divergenceFor(null)), "? ⚠");
 	await cache.refresh(null, 2500);
 	assert.equal(calls, 2);
+	cache.dispose();
+});
+
+test("workspace cache hides the box when project-workspace is not installed", async () => {
+	const cache = new GitDivergenceCache({ workspace: true, ttlMs: 1000, load: async () => undefined });
+	await cache.refresh(null, 1000);
+	assert.equal(formatGitDivergence(cache.divergenceFor(null)), "");
 	cache.dispose();
 });
 
